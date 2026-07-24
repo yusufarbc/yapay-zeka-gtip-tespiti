@@ -1,0 +1,605 @@
+
+Aklınızı kurcalayabilecek *"Yapay zeka gümrükte hata yaptırır mı?"* şüphesini tamamen ortadan kaldıracak, işinizi inanılmaz hızlandıracak bir sistem kurguladık. Kısaca bahsetmek isterim:
+
+Bu sistem kafasına göre GTİP sallayan bir yapay zeka değil; tam aksine **yanınızda çalışan, hafızası kusursuz ama son kararı size bırakan dijital bir Kıdemli Müşavir Yardımcısı.** 🤖💼
+
+Sistem tam olarak şöyle çalışıyor:
+
+1️⃣ **Sert Kural Motoru var:** Siz faturayı veya görseli yüklüyorsunuz (Örn: %60 Pamuk / %40 Polyester kumaş). Sistem yapay zekaya bırakmadan arkadaki gümrük kuralıyla Sentetik kumaş fasıllarını otomatik kapatıyor. Uydurma ihtimali sıfırlanıyor.
+
+2️⃣ **Bütün BTB'ler Hafızasında:** Ticaret Bakanlığı’nın son yıllardaki binlerce emsal BTB kararını ve izahnamelerini 3 saniyede tarıyor. Size sadece kod önermiyor; *"Bakanlık bu ürüne şu tarihte şu BTB ile bu kodu verdi"* diyerek **resmi dayanağını da önünüze koyuyor.**
+
+3️⃣ **Denetçi Ajan Kontrol Ediyor:** Arka planda ikinci bir denetim çalışıyor. Seçilen GTİP'in şartlarını (gramaj, motor gücü vb.) eldeki evrakla karşılaştırıyor.
+
+4️⃣ **Emin Olmadığında Size Soruyor:** Eğer bir detay eksikse (örn: kumaş gramajı), kendi kafasından karar vermiyor. Anında ekranınızda *"Ahmet Bey bu ürün 130 gramın altında mı üstünde mi?"* diye netleştirici bir soru açıyor. Siz seçtiğiniz an nokta atışı sonucu getiriyor.
+
+Özetle; sizin yerinize imza atmayan, ama **45 dakikalık BTB ve mevzuat arama hammaliyesini 3 saniyeye indiren** müthiş bir karar destek asistanı oldu.
+
+Harika, bir gümrük müşavirine (örneğin "Ahmet Bey") WhatsApp üzerinden samimi, anlaşılır ve ikna edici bir dille atabileceğin mesaj metni şu şekilde:
+
+---
+
+
+
+Sistemi kurarken en kritik aşamaya geldik: **Veri Kaynağı ve Güncellik Mimarisi.**
+
+Türk Gümrük Tarife Cetveli (TGTC) ve Genel Yorum Kuralları (GİR) her yıl **31 Aralık'ı 1 Ocak'a bağlayan gece** Resmi Gazete’de yayımlanan Cumhurbaşkanı Kararı ile (ve yıl içinde Resmi Gazete'deki tebliğlerle) güncellenir.
+
+Bu verileri nereden bulacağını, sisteme nasıl aktaracağını ve **Resmi Gazete güncellemelerini otomatik/yarı-otomatik olarak sisteme nasıl yansıtacağını** aşağıda adım adım açıklıyorum.
+
+---
+
+## 1. Verileri Nereden Bulacaksın? (Resmi Kaynaklar)
+
+Sisteme yükleyeceğimiz 3 temel resmi veri kaynağı vardır:
+
+### A. Türk Gümrük Tarife Cetveli (TGTC) & Genel İzahname
+
+* **Ticaret Bakanlığı Bilgi Bankası:** Ticaret Bakanlığı’nın resmi sitesinde her yıl güncel TGTC Excel/PDF olarak veya web portalı üzerinden yayımlanır (*[Ticaret Bakanlığı Gümrük Tarife Cetveli Portal](https://www.google.com/search?q=https://bilgibankasi.ticaret.gov.tr/)*).
+* **Gümrük Kanunu Ek-1 (GİR - Genel Yorum Kuralları):** Gümrük Cetvelinin en başında yer alan 6 ana kuraldır. Statiktir, çok nadir değişir.
+
+### B. BTB (Bağlayıcı Tarife Bilgisi) Kararları Veritabanı *(En Önemli Kısım)*
+
+* Ticaret Bakanlığı'nın **GÜM BİS (Gümrük Bilgi Sistemi)** ve web arayüzünde yayımlanan binlerce emsal BTB kararı bulunur.
+* **Nasıl Alınır?** Ticaret Bakanlığı'nın açık BTB portalından veriler Python tabanlı bir scraper (scraping script) ile veya izinli API kanallarıyla çekilerek JSON formatına dönüştürülür.
+
+---
+
+## 2. Verileri Sisteme Nasıl İndirip Ekleyeceğiz? (Data Ingestion Pipeline)
+
+Verileri doğrudan metin olarak LLM'e vermiyoruz. Aşağıdaki formatta hazırlayıp **Vertex AI Vector Search** ve **Cloud Firestore**'a yüklüyoruz:
+
+```text
+[Ham Veri: PDF/Excel/HTML]
+        │
+        ▼
+[Python ETL Scripti] ──► (Metin Temizleme + JSON Dönüştürme)
+        │
+        ├─► 1. Deterministik Kural Verisi ──► Cloud Firestore (Hiyerarşik Tree/Graph)
+        │
+        └─► 2. Metin & BTB İzahnameleri ──► Vertex AI Vector Search (Vektör Embeddings)
+
+```
+
+### JSON Veri Yapısı Örneği (Firestore İçin):
+
+```json
+{
+  "gtip_code": "8471.30.00.00.11",
+  "chapter": "84",
+  "heading": "8471",
+  "description": "Ağırlığı 10 kg'ı geçmeyen dizüstü bilgisayarlar",
+  "gir_rules": ["GIR-1", "GIR-6"],
+  "exclusions": ["95. Fasıldaki oyun konsolları hariçtir."],
+  "valid_year": 2026
+}
+
+```
+
+---
+
+## 3. Resmi Gazete Güncellendikçe Ne Yapacağız? (Güncellik Mimarisi)
+
+Verileri veritabanına bir kez gömüp bırakırsak sistem 1 yıl sonra geçerliliğini yitirir. Güncelliği korumak için **2 aşamalı bir mimari** kurmalıyız:
+
+### A. Otomatik Resmi Gazete Takipçisi (Cloud Scheduler + Cloud Functions)
+
+GCP üzerinde günlük çalışan bir **Serverless Crawler (Scraper)** kuracağız:
+
+1. **Cloud Scheduler:** Her gece saat 02:00'de bir Python Cloud Function tetikler.
+2. **Cloud Function:** Resmi Gazete'nin (`resmigazete.gov.tr`) günlük RSS/API/HTML akışını taranır.
+3. **Keyword Trigger:** Başlıkta *"İthalat Rejimi Kararında Değişiklik"*, *"Gümrük Tarife Cetveli Hakkında Karar"* veya *"Tarife Kontenjanı"* kelimeleri geçerse sistem yöneticiye **Slack/E-posta uyarısı** gönderir ve yeni PDF'i **Cloud Storage (GCS)** içine indirir.
+
+```text
+[Cloud Scheduler (Her Gece)]
+       │
+       ▼
+[Cloud Function (Resmi Gazete Scraper)]
+       │
+       ├─► Değişiklik Yok ──► (Sonlan)
+       │
+       └─► Yeni Tebliğ/Tarife Var!
+               │
+               ▼
+   [Cloud Storage (GCS Bucket)] ──► [Admin Alert & Otomatik ETL Pipeline]
+
+```
+
+### B. Versiyonlu Vektör İndeksi (Vector Index Versioning)
+
+Gümrük verilerini güncellerken eski verinin üzerini silip yazmak yerine **Versiyonlama (Versioning)** yapılır:
+
+* **Firestore'da `valid_until` Alanı:** Değişen bir GTİP kodunun son geçerlilik tarihi güncellenir (`valid_until: "2026-12-31"`). Böylece sistem geçmişe dönük beyannameleri de kontrol edebilir.
+* **Vertex AI Index Versioning:** Her yılın 1 Ocak tarihinde `gtc-index-2026`, `gtc-index-2027` adıyla yeni vektör indeksleri oluşturulur. Sistem sorgu atarken her zaman aktif yılın indeksini (Alias) kullanır.
+
+---
+
+## 4. Geliştirici Ekibine Not: İlk Yükleme Yol Haritası
+
+Sistemi kurarken ilk aşamada izlenecek adımlar:
+
+1. **Aşama 1 (TGTC Çıkarımı):** Ticaret Bakanlığı'nın en güncel Tarife Cetveli Excel dosyasını indir. Bir Python scripti (`pandas` kütüphanesi) ile bunu 12 haneli hiyerarşik JSON Tree formatına getir.
+2. **Aşama 2 (BTB Çıkarımı):** Son 3-5 yıla ait kamuya açık BTB kararlarını çek. Her BTB kaydını `{"ürün_tanımı": "...", "verilen_gtip": "...", "gerekçe": "..."}` şeklinde yapılandır.
+3. **Aşama 3 (Embeddings):** Bu verileri Vertex AI `text-embedding-005` modelinden geçirip **Vertex AI Vector Search** indeksine yükle.
+4. **Aşama 4 (Crawler Entegrasyonu):** GCP Cloud Function ile Resmi Gazete takipçisini devreye al.
+
+Bu yapıyı kurduğunda sistem hem mevzuat değişikliklerine karşı dirençli olur hem de uydurma (hallucination) riski sıfırlanmış resmi kaynaklara dayanır.
+
+Evet, ilk bakışta bu kadar çok GCP bileşeninin (Vertex AI, Cloud Run, Firestore, BigQuery, Vector Search vb.) bir arada kullanıldığı mimarilerin **yüksek fatura çıkaracağı endişesi çok yaygındır.**
+
+Ancak bu mimari doğru **Serverless (Sunucusuz)** yaklaşımlar, **Gemini Flash-Lite** seçimi ve **Context Caching** stratejileri ile kurgulandığı için **maliyet-performans oranı en yüksek (en ucuz) mimarilerden biridir.**
+
+Maliyetlerin neden kontrol altında kalacağını, nereden bütçe tasarrufu sağlanacağını ve tahmini maliyet kalemlerini inceleyelim.
+
+---
+
+## 💸 1. Maliyeti Düşüren 4 Ana Mimari Unsur
+
+### A. Gemini Flash-Lite Seçimi (Ultra Düşük Token Maliyeti)
+
+Gemini 1.5 Pro veya GPT-4o gibi amiral gemisi modeller yerine **Gemini Flash-Lite** kullanmamızın ana sebebi hızı ve fiyatıdır.
+
+* Gemini Flash-Lite, girdilerde (input) ve çıktılarda (output) **1 milyon token başına cent'ler seviyesinde** ücretlendirilir.
+* Sistemde LLM'e sadece JSON parsing ve denetim (Auditor) yaptırdığımız için analiz başına harcanan token miktarı son derece düşüktür.
+
+### B. Vertex AI Context Caching (%75-80 Token Tasarrufu)
+
+Gümrük Tarife Cetveli, Genel Yorum Kuralları (GİR) ve sistem yönergeleri (System Prompts) **değişmeyen statik metinlerdir.**
+
+* Vertex AI'ın **Context Caching** özelliğini kullandığımızda, Gemini modeline her istek atıldığında bu uzun mevzuat metinleri tekrar tekrar okunmaz; önbellekten sıfıra yakın maliyetle çekilir.
+* Bu özellik **input token maliyetini %75 ila %80 oranında düşürür.**
+
+### C. %100 Serverless (Kullandığın Kadar Öde) Mimarisi
+
+Sistemde **7/24 açık duran, boşta çalışsa bile para yazan sanal sunucular (GCE / EC2) yoktur.**
+
+* **Cloud Run:** Sistem hiç istek almadığı saatlerde (örneğin gece) 0 konteynere iner (`min-instances: 0`). **Sıfır maliyet yazar.** Sadece istek geldiği milisaniyeler boyunca işlemci/bellek tüketimi faturalandırılır.
+* **Cloud Functions / Cloud Scheduler:** Sadece günde bir kez Resmi Gazete kontrolü yaparken birkaç saniye çalışır ve kapanır.
+
+### D. Karar Ağacı ile Erken Çıkış (Early Exit)
+
+Deterministik kural motoru (Python), bir ürünün %60 Pamuk olduğunu tespit ettiğinde arama uzayını doğrudan **Fasıl 52**'ye daraltır. Vector Search'e tüm veritabanı sorgulatılmadığı için Vektör Veritabanı okuma ve arama maliyetleri dramatik şekilde düşer.
+
+---
+
+## 📊 2. Örnek Tahmini Maliyet Hesabı (Aylık 10.000 Sorgu İçin)
+
+Orta ölçekli bir gümrük müşavirliği firmasının **ayda 10.000 adet ürün analizi** yaptığı bir senaryoyu GCP liste fiyatlarıyla hesaplayalım:
+
+| GCP Bileşeni | Tüketim / Kullanım Oranı | Tahmini Aylık Maliyet |
+| --- | --- | --- |
+| **Vertex AI (Gemini Flash-Lite)** | 10.000 sorgu x (~3.000 cached token + 500 new token) | ~$1.50 - $3.00 |
+| **Cloud Run (Backend API)** | 10.000 istek, ~1-2 saniye ortalama yanıt süresi (Serverless) | ~$0.50 - $2.00 (Free Tier sınırında) |
+| **Vertex AI Vector Search** | Standart indeks arama sorguları ve küçük veri ölçeği | ~$10 - $25 |
+| **Cloud Firestore** | 10.000 Okuma/Yazma ve Oturum Yönetimi | ~$0.20 - $1.00 (Free Tier sınırında) |
+| **BigQuery & GCS** | Loglama, görseller (kaç GB olduğuna bağlı) | ~$1.00 - $3.00 |
+| **TOPLAM TAHMİNİ MAİLİYET** | **Aylık 10.000 Canlı Analiz İçin** | **~$15 - $35 / Ay** |
+
+> **Not:** 10.000 manuel GTİP tespiti için harcanan insan-saat iş gücüyle kıyaslandığında **30-35 Dolar** civarında bir aylık altyapı maliyeti son derece ekonomiktir.
+
+---
+
+## 🛡️ 3. Faturanın Şişmesini Önlemek İçin Alınacak 3 Tedbir
+
+GCP üzerinde faturanın kontrolden çıkmasını engellemek için projenin ilk gününden itibaren şu kısıtlamalar konulmalıdır:
+
+1. **GCP Budget Alerts (Bütçe Uyarıları):**
+* GCP Billing console üzerinden örneğin **50$** aylık bütçe sınırı koyulur. Bütçenin %50, %80 ve %100'üne ulaşıldığında e-posta ve Slack uyarısı atılır.
+
+
+2. **Rate Limiting & Cloud Armor (API Kötüye Kullanım Engelleme):**
+* Bir kullanıcının veya botun sisteme saniyede binlerce istek atıp token/Cloud Run maliyetini patlatmasını önlemek için API gateway seviyesinde kişi başı limitler (Rate limit) tanımlanır.
+
+
+3. **Firestore & Cloud Run Scaling Upper-Limits:**
+* Cloud Run için `max-instances: 10` ayarlanır. Böylece anlık bir yüklenmede sistem yüzlerce sunucu açıp faturayı şişirmez.
+
+Bütün bileşenleri, veri akışını, kural motoru algoritmalarını ve GCP servis entegrasyonlarını içeren **uçtan uca eksiksiz sistem mimarisi dokümanı** aşağıdadır.
+
+---
+
+# 🏛️ UÇTAN UCA GTİP TESPİT VE KARAR DESTEK SİSTEMİ MİMARİSİ
+
+Bu sistem, esatastik LLM modellerinin hallüsinasyon (uydurma) riskini ortadan kaldırmak amacıyla; **Deterministik Kural Motoru (Python)**, **BTB Ağırlıklı Vektör Arama (Vertex AI)** ve **Çift Ajanlı Denetim Mimarisi (LangGraph)** üzerine kurgulanmış hibrit bir karar mekanizmasıdır.
+
+---
+
+## 1. YÜKSEK SEVİYE MİMARİ ŞEMASI (HIGH-LEVEL ARCHITECTURE)
+
+```text
+                               ┌────────────────────────────────────────┐
+                               │       Kullanıcı Web Arayüzü            │
+                               │   (React / Firebase Hosting / GCS)     │
+                               └──────────────────┬─────────────────────┘
+                                                  │ (Metin + Görsel Upload)
+                                                  ▼
+                               ┌────────────────────────────────────────┐
+                               │         GCP Cloud Load Balancer        │
+                               └──────────────────┬─────────────────────┘
+                                                  │
+                                                  ▼
+                               ┌────────────────────────────────────────┐
+                               │         Cloud Run API Container        │
+                               │   (Python 3.11 + FastAPI + LangGraph)  │
+                               └──────────────────┬─────────────────────┘
+                                                  │
+ ┌────────────────────────────────────────────────┼────────────────────────────────────────────────┐
+ │ Backend Ajan & Kural Boru Hattı (LangGraph Pipeline)                                           │
+ │                                                                                                 │
+ │  [Girdi: Metin / Görsel GCS URI]                                                                │
+ │        │                                                                                        │
+ │        ▼                                                                                        │
+ │  ┌─────────────────────────────────────────────────────────┐                                    │
+ │  │ Modül 1: Feature Extractor Agent (Gemini Flash-Lite)    │                                    │
+ │  │ ➔ Metin ve Görselden Teknik Veri & JSON Parametre Çıkar │                                    │
+ │  └────────────────────────────┬────────────────────────────┘                                    │
+ │                               │ (ProductFeatures JSON)                                          │
+ │                               ▼                                                                 │
+ │  ┌─────────────────────────────────────────────────────────┐                                    │
+ │  │ Modül 2: Deterministik Kural Motoru (Python Engine)     │                                    │
+ │  │ ➔ GİR 3b Karışım, Hard-Exclusion & Demonte Kontrolleri  │                                    │
+ │  └────────────────────────────┬────────────────────────────┘                                    │
+ │                               │ (Allowed Chapters & Active Rules)                               │
+ │                               ▼                                                                 │
+ │  ┌─────────────────────────────────────────────────────────┐     ┌───────────────────────────┐  │
+ │  │ Modül 3: BTB Ağırlıklı Hybrid RAG                       │ ──► │ Vertex AI Vector Search   │  │
+ │  │ ➔ Filtrelenmiş Vektör Uzayında Emsal BTB & TGTC Arama   │     │ (%70 BTB / %30 TGTC)      │  │
+ │  └────────────────────────────┬────────────────────────────┘     └───────────────────────────┘  │
+ │                               │ (Aday GTİP'ler & Emsal Kararlar)                                │
+ │                               ▼                                                                 │
+ │  ┌─────────────────────────────────────────────────────────┐                                    │
+ │  │ Modül 4: Cross-Validation / Auditor Agent               │                                    │
+ │  │ ➔ Proposer vs Auditor (Tersine Doğrulama & Güven Skoru) │                                    │
+ │  └────────────────────────────┬────────────────────────────┘                                    │
+ │                               │ (AuditResult & Confidence Score)                                │
+ │                               ▼                                                                 │
+ │  ┌─────────────────────────────────────────────────────────┐                                    │
+ │  │ Modül 5: Confidence Gate & HITL Manager                 │                                    │
+ │  │ ➔ Güven >= %90: Doğrudan Onay                          │                                    │
+ │  │ ➔ Güven < %90: Arayüzde Dinamik Soru-Cevap (Wait State) │                                    │
+ │  └────────────────────────────┬────────────────────────────┘                                    │
+ └───────────────────────────────┼─────────────────────────────────────────────────────────────────┘
+                                 │
+                                 ├───────────────────────────────┐
+                                 ▼                               ▼
+                   ┌───────────────────────────┐   ┌───────────────────────────┐
+                   │     Cloud Firestore       │   │         BigQuery          │
+                   │ (Oturum / State Management│   │  (Audit Logları & HITL    │
+                   │  & Kullanıcı Tercihleri)  │   │  Continuous Learning)     │
+                   └───────────────────────────┘   └───────────────────────────┘
+
+```
+
+---
+
+## 2. TEKNOLOJİ YIĞINI VE KATMAN MİMARİSİ (TECH STACK)
+
+| Katman | GCP Servisi / Kütüphane | Kullanım Amacı |
+| --- | --- | --- |
+| **Frontend Katmanı** | React.js / Firebase Hosting | Kullanıcı arayüzü, görsel yükleme, canlı karar ağacı takibi ve HITL soru ekranı. |
+| **API & Orkestrasyon** | Cloud Run / FastAPI / LangGraph | Python tabanlı sunucusuz mikroservis. Karar ağacı durum yönetimi (State Machine) LangGraph ile yürütülür. |
+| **Yapay Zeka (LLM)** | Vertex AI / `gemini-flash-lite` | Düşük gecikme ve ucuz maliyetle **Özellik Çıkarımı** (Multimodal) ve **Auditor Agent** (Metin Karşılaştırma) işlemleri. |
+| **Vektör Veritabanı** | Vertex AI Vector Search | Geçmiş BTB kararları ve Gümrük Tarife Cetveli izahnamelerinin milisaniyelik hiyerarşik vektör araması. |
+| **Embedding Modeli** | Vertex AI `text-embedding-005` | Mevzuat metinlerinin ve BTB kararlarının vektörleştirilmesi. |
+| **Veritabanı & State** | Cloud Firestore | Kullanıcının aktif analiz durumları, adım geçmişi ve HITL soru-cevap verilerinin saklanması. |
+| **Log & Analitik** | BigQuery | Sistem kararlarının, insan onaylarının ve reddedilen ajan önerilerinin zaman serisi olarak saklanması. |
+| **Dosya Depolama** | Cloud Storage (GCS) | Yüklenen ürün fotoğrafları ve teknik veri sayfalarının (PDF) depolanması. |
+
+---
+
+## 3. MİMARİ MODÜLLER VE İŞLEYİŞ MANTIĞI
+
+### 🧩 Modül 1: Multimodal Feature Extractor (Özellik Çıkarıcı)
+
+* **Görsel/Metin Ayrıştırma:** Görsel GCS URI'ı ve serbest metin `gemini-flash-lite` modeline gönderilir.
+* **Görevi:** Metinden ve fotoğraftan teknik verileri çıkarıp Pydantic şemasına dönüştürmek. **GTİP tahmini yapmaz.**
+* **Structured Output Şeması:**
+```json
+{
+  "product_name": "Şarj Edilebilir Diş Fırçası",
+  "primary_material": "Plastik",
+  "composition_percentages": {"plastic": 0.85, "metal": 0.15},
+  "intended_use": "Kişisel Bakım / Ağız Sağlığı",
+  "is_set_or_kit": false,
+  "is_disassembled": false,
+  "technical_specifications": {
+    "voltage": "3.7V",
+    "has_electric_motor": "true"
+  }
+}
+
+```
+
+
+
+---
+
+### 🧩 Modül 2: Deterministik Kural Motoru (Rule Engine)
+
+LLM'in çıktılarına katı gümrük kurallarının uygulandığı Python katmanıdır.
+
+* **1. GİR 3b (Baskın Malzeme Algoritması):**
+
+$$\text{Eğer } \text{Karışım Oranı}(\text{Madde}_x) \ge \%50 \implies \text{Arama Uzayı} = \text{Fasıl}(\text{Madde}_x)$$
+
+
+
+*Örnek:* `%60 Pamuk / %40 Polyester` kumaşında Sentetik Kumaş Fasılları (Fasıl 55) tamamen engellenir, sadece Pamuk (Fasıl 52) aktif bırakılır.
+* **2. Hard Exclusion Matrix (Yasaklı Fasıl Matrisi):**
+Gümrük mevzuatındaki *"Bu fasıl X ürünlerini kapsamaz"* kurallarının hard-code edildiği graf yapısıdır.
+```text
+EĞER intended_use == "Oyuncak" 
+VE primary_material == "Plastik":
+    DISABLE Chapter 39 (Plastik Maddeler)
+    ENABLE Chapter 95 (Oyuncaklar ve Oyun Eşyaları)
+
+```
+
+
+* **3. Demonte / Aksam Kuralı (GİR 2a):**
+`is_disassembled == True` durumunda parçaların bağımsız GTİP alması engellenir, parçaların birleştiği ana ürün Fasılları zorunlu tutulur.
+
+---
+
+### 🧩 Modül 3: BTB Ağırlıklı Hybrid RAG
+
+Kural motorunun onayladığı Fasıllar (`allowed_chapters`) metadata filtresi olarak **Vertex AI Vector Search** sistemine uygulanır.
+
+* **Vektör Veritabanı Ağırlıklandırması:**
+
+$$\text{Final Similarity Score} = 0.70 \times \text{Score}_{\text{BTB}} + 0.30 \times \text{Score}_{\text{TGTC}}$$
+
+
+* **Arama Mekanizması:**
+1. Ticaret Bakanlığı'nın geçmiş **BTB (Bağlayıcı Tarife Bilgisi)** emsal kararları aranır (%70 baskınlık).
+2. Türk Gümrük Tarife Cetveli (TGTC) maddeleri ve izahnameleri okunur (%30 destek).
+
+
+* **Çıktı:** En yüksek skora sahip 3 Aday GTİP ve bu kodların dayandığı emsal BTB metinleri.
+
+---
+
+### 🧩 Modül 4: Cross-Validation & Auditor Agent (Çift Ajanlı Denetim)
+
+```text
+┌────────────────────────────────┐       ┌────────────────────────────────┐
+│     Agent 1: Proposer Agent    │       │     Agent 2: Auditor Agent     │
+│   (RAG Çıktısından En İyi      │ ────► │ (Seçilen GTİP Mevzuatını Okur, │
+│    12 Haneli Kodu Teklif Eder) │       │  Ürün Özellikleriyle Eşleştirir)│
+└────────────────────────────────┘       └───────────────┬────────────────┘
+                                                         │
+                                                         ▼
+                                         ┌────────────────────────────────┐
+                                         │   Çelişki Var Mı? / Eksik Parametresi Var Mı?
+                                         │   ➔ Confidence Score (0.0 - 1.0)
+                                         └────────────────────────────────┘
+
+```
+
+1. **Proposer Agent:** RAG sonuçlarını değerlendirip `8509.80.00.00.00` kodunu önerir.
+2. **Auditor Agent:** `8509.80.00.00.00` kodunun gümrük cetvelindeki resmi metnini okur: *"Kendinden elektrik motorlu ev aletleri"*.
+3. **Çapraz Kontrol:** Ürünün `has_electric_motor == true` parametresi ile eşleştirir. Eğer ürün için motor bilgisi belirtilmemişse, `missing_parameters: ["has_electric_motor"]` olarak işaretler ve Güven Skorunu düşürür (`0.75`).
+
+---
+
+### 🧩 Modül 5: Confidence Gate & Human-in-the-Loop (HITL)
+
+```text
+                  ┌────────────────────────────────────────┐
+                  │    Auditor Agent Sonucu & Güven Skoru  │
+                  └──────────────────┬─────────────────────┘
+                                     │
+                    ┌────────────────┴────────────────┐
+                    │                                 │
+                    ▼                                 ▼
+         [Güven Skoru >= %90]              [Güven Skoru < %90]
+                    │                                 │
+                    ▼                                 ▼
+      ┌───────────────────────────┐     ┌───────────────────────────┐
+      │   Kullanıcıya Onay Sun    │     │   Arayüzde Dinamik Soru   │
+      │   (GTİP + Emsal BTB)      │     │   (Düğüm 'WAITING' Olur)  │
+      └─────────────┬─────────────┘     └─────────────┬─────────────┘
+                    │                                 │
+                    │                                 ▼
+                    │                   ┌───────────────────────────┐
+                    │                   │  Kullanıcı Yanıtı Verir   │
+                    │                   │  (State Güncellenir)      │
+                    │                   └─────────────┬─────────────┘
+                    │                                 │
+                    └─────────────────┬───────────────┘
+                                      │
+                                      ▼
+                        ┌───────────────────────────┐
+                        │   Nihai GTİP Onaylandı    │
+                        └─────────────┬─────────────┘
+                                      │
+                                      ▼
+                        ┌───────────────────────────┐
+                        │  Firestore & BigQuery'ye  │
+                        │  Geri Besleme Kaydı Yapı  │
+                        └───────────────────────────┘
+
+```
+
+* **Dinamik Soru Üretimi:** Güven skoru %90'ın altındaysa veya `missing_parameters` tanımlanmışsa, sistem durur (`WAITING_FOR_USER`) ve arayüze yönlendirici soru fırlatır:
+* *Soru:* *"Cihazın dahili bir elektrik motoru bulunuyor mu?"*
+* *Seçenekler:* `[A] Evet, elektrik motorludur`, `[B] Hayır, motor içermez`.
+
+
+* **State Resumption:** Kullanıcı seçimi yaptıktan sonra LangGraph düğümü kaldığı yerden (Modül 2: Kural Motoru) çalışarak kararı kesinleştirir.
+
+---
+
+### 🧩 Modül 6: Audit Logging & Continuous Feedback Pipeline
+
+Sistemin kendini insan müdahaleleriyle besleyerek geliştirdiği katmandır.
+
+1. **Loglama:** Verilen tüm kararlar, izlenen kural adımları, Auditor Agent'ın eleştirileri ve kullanıcının seçtiği nihai GTİP kodu **BigQuery** üzerindeki `gtip_audit_logs` tablosuna aktarılır.
+2. **Sürekli İyileştirme (Feedback Loop):** İnsan uzmanlar tarafından onaylanan yeni GTİP kararları, haftalık periyotlarla taranarak **Vertex AI Vector Search** içerisindeki BTB veritabanına "Kurumsal Emsal Karar" olarak yeniden indekslenir.
+
+---
+
+## 4. GÜVENLİK VE GÜVENİLİRLİK SÖZLEŞMESİ (FAIL-SAFE)
+
+1. **Strict Pydantic Validation:** LLM'in serbest metin üretmesi tamamen engellenmiştir. Tüm LLM çağrıları Pydantic nesneleri üzerinden okuma yapar.
+2. **Ön Bellekleme (Context Caching):** Değişmeyen Türk Gümrük Tarife Cetveli ve Genel Yorum Kuralları Vertex AI Context Cache üzerinde tutularak gecikme süresi **< 800ms** seviyesinde tutulur.
+3. **Hard Fallback:** Karar mekanizması herhangi bir çelişkide kalırsa veya kural motoru çözümsüzlüğe ulaşırsa sistem otomatik olarak `STATUS: MANUAL_EXPERT_REVIEW_REQUIRED` bayrağını kaldırır ve işlemi gümrük müşavirine yönlendirir. Böylece yanlış vergilendirme riski **%0** seviyesine indirilir.
+
+Haklısın, markdown kod bloğunu yanıt metninin içine doğrudan gömdüğüm için biçimlendirme bozulmuş.
+
+Aşağıdaki metni ham (raw) markdown formatında hazırladım. Doğrudan kopyalayıp projenin ana dizininde **`SYSTEM_DEVELOPMENT_PROMPT.md`** adıyla oluşturacağın dosyaya yapıştırabilirsin:
+
+---
+
+# SYSTEM_DEVELOPMENT_PROMPT.md
+
+## 1. MİSYON VE SİSTEM ÖZETİ
+
+Bu projenin amacı; kullanıcıdan alınan ürün adı, teknik açıklaması ve görseli üzerinden **Gümrük Tarife İstatistik Pozisyonu (GTİP - 12 Hane)** kodunu en yüksek doğruluk (%95+) ve hukuki güvenilirlikle tespit eden web tabanlı bir karar destek portalı oluşturmaktır.
+
+Sistemde LLM (Gemini Flash-Lite), **asla bağımsız karar verici değildir**. Sadece veri parse etme, görsel analizi ve tersine doğrulama işi yapar. Karar ve yönlendirme mantığı **Deterministik Kural Motoru (Python Engine)**, **BTB Ağırlıklı Vertex AI Vector Search (RAG)** ve **Denetleyici Ajan (Auditor Agent)** tarafından yürütülür.
+
+---
+
+## 2. GCP VE TEKNOLOJİ YIĞINI (TECH STACK)
+
+* **LLM Engine:** Vertex AI - `gemini-flash-lite` (Multimodal & Text)
+* **Backend Framework:** Python 3.11+, FastAPI, LangGraph / LangChain
+* **Vector DB / RAG:** Vertex AI Vector Search
+* **Primary Database:** Cloud Firestore (Oturumlar, HITL soruları, Karar Ağacı Durumları)
+* **Analytics & Logging:** BigQuery (Audit logları, insan onay geri bildirimleri)
+* **Storage:** Cloud Storage (GCS) (Yüklenen ürün görselleri ve resmi dokümanlar)
+* **Hosting:** Cloud Run (Backend API), Firebase Hosting (React/Next.js Frontend)
+
+---
+
+## 3. MİMARİ AKIŞ VE MÜHENDİSLİK ADIMLARI
+
+Sistemi aşağıdaki 6 sıralı modül halinde modüler bir yapıda kodlayacaksın:
+
+1. **MODÜL 1:** Feature Extractor (Gemini Flash-Lite Multimodal JSON Parser)
+2. **MODÜL 2:** Deterministik Kural Motoru (Python Rule Engine)
+3. **MODÜL 3:** BTB Ağırlıklı Hybrid RAG (Vertex AI Vector Search)
+4. **MODÜL 4:** Cross-Validation & Auditor Agent (Kontrolör Ajan)
+5. **MODÜL 5:** Confidence Gate & HITL Manager (İnsan Onay & Dinamik Soru Arayüzü)
+6. **MODÜL 6:** Audit Logging & Continuous Feedback Pipeline (BigQuery / Feedback Loop)
+
+---
+
+## 4. DETAYLI MODÜL ŞARTNAMELERİ VE KODLAMA GEREKSİNİMLERİ
+
+### MODÜL 1: Feature Extractor (Yapısal Veri Çıkarıcı)
+
+* **Açıklama:** Kullanıcının girdiği serbest metin ve yüklenen görseli analiz eder. GTİP TAHMİNİ YAPMAZ.
+* **Girdi:** Metin (`string`), Görsel GCS URI (`gs://...`)
+* **Model:** `gemini-flash-lite`
+* **Gereksinim:** Pydantic `BaseModel` kullanarak katı şema zorunluluğu (Structured Output) uygula.
+* **Beklenen Çıktı Şeması (JSON):**
+```python
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict
+
+class ProductFeatures(BaseModel):
+    product_name: str
+    primary_material: str = Field(description="Baskın malzeme: örn. Pamuk, Plastik, Çelik")
+    composition_percentages: Optional[Dict[str, float]] = Field(description="Karışım oranları: örn. {'cotton': 0.60, 'polyester': 0.40}")
+    intended_use: str = Field(description="Kullanım amacı: örn. Oyuncak, Tıbbi Cihaz, Mutfak Aleti")
+    is_set_or_kit: bool = Field(description="Ürün bir set/takım halinde mi satılıyor?")
+    is_disassembled: bool = Field(description="Ürün demonte/sökülmüş halde mi?")
+    technical_specifications: Dict[str, str] = Field(description="Voltaj, ağırlık, boyut gibi teknik detaylar")
+
+```
+
+
+
+---
+
+### MODÜL 2: Deterministik Kural Motoru (Rule Engine)
+
+* **Açıklama:** Gümrük Tarife Yorum Kurallarını (GİR) çalıştıran katı Python mantık motoru.
+* **Girdi:** `ProductFeatures` JSON objesi.
+* **Kurallar & Algoritmik Mantık:**
+1. **GİR 3b (Baskın Malzeme Kuralı):** Karışım oranlarında `%50` ve üzeri olan baskın malzemeyi tespit et. Arama uzayından diğer hammadde Fasıllarını kesin olarak ele (Hard exclusion).
+2. **Yasaklı Fasıl Matrisi (Hard Exclusion Matrix):** `intended_use == "Oyuncak"` ise Fasıl 39 (Plastik) arama uzayını kapat, zorunlu olarak Fasıl 95'e yönlendir.
+3. **GİR 2a (Demonte Aksam Kuralı):** `is_disassembled == True` ise parçaların GTİP'ini değil, montajlı ana ürünün Fasıllarını arama uzayına al.
+
+
+* **Çıktı:** Allowed Chapters (`allowed_chapters: List[str]`), Required Rules (`active_rules: List[str]`)
+
+---
+
+### MODÜL 3: BTB Ağırlıklı Hybrid RAG (Vertex AI Vector Search)
+
+* **Açıklama:** Kural motorunun sınırlarını çizdiği Fasıllar altında vektör araması yapar.
+* **Veri Kaynağı Yapısı:**
+* %70 Ağırlık: Ticaret Bakanlığı Geçmiş **BTB (Bağlayıcı Tarife Bilgisi)** Kararları Veritabanı.
+* %30 Ağırlık: Türk Gümrük Tarife Cetveli (TGTC) İzahnameleri ve Bölüm Notları.
+
+
+* **Filtreleme:** Vector Search sorgusu atılırken `allowed_chapters` parametresi metadata filter olarak eklenmelidir (Arama uzayı daraltılır).
+* **Çıktı:** En yakın 3 Aday GTİP Kodu, Emsal BTB Metinleri, İlgili İzahname Maddeleri.
+
+---
+
+### MODÜL 4: Cross-Validation & Auditor Agent (Tersine Doğrulama)
+
+* **Açıklama:** Çift Ajanlı denetim mekanizması.
+* **Ajan 1 (Proposer Agent):** RAG sonuçlarına bakarak en olası 12 haneli GTİP'i teklif eder.
+* **Ajan 2 (Auditor Agent):** Teklif edilen 12 haneli GTİP'in resmi mevzuat tanımını okur ve ilk baştaki `ProductFeatures` verisi ile karşılaştırarak tersine doğrulama yapar.
+* **Kontrol Listesi:**
+* Seçilen kodun gramaj/voltaj/boyut gibi sınırlayıcı şartları mevcut mu?
+* Eldeki ürün verisinde bu bilgi var mı, çelişiyor mu?
+
+
+* **Pydantic Çıktı Şeması:**
+```python
+class AuditResult(BaseModel):
+    proposed_gtip: str
+    confidence_score: float = Field(description="0.0 - 1.0 arasında güven skoru")
+    is_compliant: bool
+    conflict_reason: Optional[str] = Field(description="Var ise mevzuat ile çelişen nokta")
+    missing_parameters: List[str] = Field(description="Tereddüdü gidermek için kullanıcıya sorulması gereken eksik teknik veriler")
+
+```
+
+
+
+---
+
+### MODÜL 5: Confidence Gate & Human-in-the-Loop (HITL) Manager
+
+* **Açıklama:** Kararın güven seviyesine göre akışı yönlendirir.
+* **Mantık:**
+* **EĞER `confidence_score >= 0.90` VE `is_compliant == True`:**
+* Akış başarılı kabul edilir. Kullanıcıya GTİP, dayandığı BTB emsali ve gerekçesi gösterilir.
+
+
+* **EĞER `confidence_score < 0.90` VEYA `missing_parameters` VARSA:**
+* Akış durdurulur (`Status: WAITING_FOR_USER`).
+* `missing_parameters` bilgisine dayanarak kullanıcıya netleştirici çoktan seçmeli dinamik soru üretilir (Örn: *"Kumaşın metrekare ağırlığı 130 gramın altında mı üstünde mi?"*).
+* Kullanıcı yanıtı `Firestore` oturum durumuna (State) yazılır ve Modül 2'den itibaren akış yeniden tetiklenir.
+
+
+
+
+
+---
+
+### MODÜL 6: Audit Logging & Continuous Feedback Pipeline
+
+* **Açıklama:** Bütün süreçlerin loglanması ve sistemin insan tercihleriyle eğitilmesi.
+* **Gereksinimler:**
+* Her analiz oturumu için Firestore üzerinde bir doküman oluştur.
+* Kullanıcı nihai GTİP kararını onayladığında veya değiştirdiğinde bu seçimi **BigQuery `gtip_audit_logs**` tablosuna yaz.
+* Reddedilen Ajan önerilerini ve neden reddedildiklerini analitik için sakla.
+
+
+
+---
+
+## 5. GELİŞTİRİCİ DİREKTİFLERİ VE KODLAMA KURALLARI
+
+1. **Asla Serbest Metin Döndürme:** LLM servis çağrılarının tamamında `response_mime_type="application/json"` ve Pydantic şemalarını zorunlu tut.
+2. **Hata Yönetimi (Fail-Safe):** RAG araması boş dönerse veya Kural Motoru çakışma tespit ederse sistemi varsayılan güvenli moda alıp doğrudan gümrük uzmanı inceleme bayrağı (`NEEDS_HUMAN_REVIEW`) kaldır.
+3. **Maliyet ve Hız:** Sistemde `gemini-flash-lite` modelini kullan. System Prompt'ları ve değişmeyen mevzuat şablonlarını Vertex AI **Context Caching** mekanizması ile sarmala.
+4. **Modülerlik:** Her modül (Module 1..6) bağımsız test edilebilir Python fonksiyonları/sınıfları olarak yazılmalı, LangGraph state graph üzerinde birbirine bağlanmalıdır.
