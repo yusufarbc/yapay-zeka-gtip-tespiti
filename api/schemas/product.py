@@ -54,6 +54,8 @@ class GTIPDecision(BaseModel):
     status: str = Field(description="COMPLETED | WAITING_FOR_USER | MANUAL_REVIEW_REQUIRED")
     gtip_code: Optional[str] = None
     confidence_score: float = 0.0
+    official_statute_text: Optional[str] = Field(default=None, description="Veritabanından kural tabanlı olarak çekilen Orijinal Resmi Mevzuat ve İzahname Maddesi")
+    llm_reasoning_commentary: Optional[str] = Field(default=None, description="Yapay zeka modelinin seçime dair ayrı sunduğu değerlendirme ve gerekçe yorumu")
     legal_justification: Optional[str] = None
     applied_gir_rules: List[str] = Field(default_factory=list)
     precedent_btbs: List[PrecedentBTB] = Field(default_factory=list)

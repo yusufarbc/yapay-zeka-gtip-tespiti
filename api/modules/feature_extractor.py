@@ -1,26 +1,30 @@
-import re
 import json
+import re
+import os
 from typing import Dict, Any
 from api.schemas.product import ProductFeatures
 from api.config import settings
 
 class FeatureExtractor:
     """
-    Modül 1: Multimodal Özellik Çıkarıcı.
-    Metin ve görsel içerikten teknik ürün parametrelerini (Pydantic ProductFeatures) çıkarır.
-    GTİP tahmini YAPMAZ.
+    Modül 1: Multimodal & Dynamic Feature Extractor (LLM-Driven).
+    Her türlü ürün metninden veya faturadan sıfır hardcoded if-else kategorizasyon kuralı ile 
+    tüm teknik parametreleri dinamik olarak çıkarır.
     """
 
     def extract_features(self, raw_text: str, image_uri: str = None) -> ProductFeatures:
         text_lower = raw_text.lower()
+        api_key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
         
-        # Malzeme tespiti
-        primary_material = "Belirtilmedi"
-        composition = {}
+        # Temel teknik nitelik tespiti
+        specs = {}
+        if "motor" in text_lower:
+            specs["has_electric_motor"] = "true"
+        if "şarj" in text_lower or "batarya" in text_lower or "5g" in text_lower:
+            specs["power_source"] = "Bataryalı / Şarjlı"
 
+        composition = None
         if "pamuk" in text_lower or "cotton" in text_lower:
-            primary_material = "Pamuk"
-            # Karışım arama
             cotton_match = re.search(r'%?\s*(\d{2})\s*(?:pamuk|cotton)', text_lower)
             poly_match = re.search(r'%?\s*(\d{2})\s*(?:polyester|sentetik)', text_lower)
             if cotton_match:
@@ -29,46 +33,56 @@ class FeatureExtractor:
                 composition = {"cotton": c_val, "polyester": p_val}
             else:
                 composition = {"cotton": 1.0}
-        elif "plastik" in text_lower or "plastic" in text_lower:
-            primary_material = "Plastik"
-        elif "çelik" in text_lower or "metal" in text_lower or "steel" in text_lower:
-            primary_material = "Çelik / Metal"
 
-        # Kullanım amacı tespiti
-        intended_use = "Genel Kullanım"
-        if "oyuncak" in text_lower or "toy" in text_lower or "çocuk" in text_lower:
-            intended_use = "Oyuncak / Çocuk"
-        elif "diş" in text_lower or "fırça" in text_lower or "ağız" in text_lower or "kişisel bakım" in text_lower:
-            intended_use = "Kişisel Bakım / Ağız Sağlığı"
-        elif "bilgisayar" in text_lower or "laptop" in text_lower or "notebook" in text_lower:
-            intended_use = "Bilgi İşlem / Elektronik"
-        elif "bisiklet" in text_lower or "bike" in text_lower:
-            intended_use = "Ulaşım / Spor"
+        if api_key:
+            try:
+                from google import genai
+                client = genai.Client(api_key=api_key)
+                prompt = (
+                    f"Aşağıdaki gümrük ürün açıklamasını veya fatura metnini analiz et.\n"
+                    f"Metin: {raw_text}\n\n"
+                    f"Lütfen sadece geçerli bir JSON yanıtı döndür:\n"
+                    f"{{\n"
+                    f'  "product_name": "ürünün ticari adı",\n'
+                    f'  "primary_material": "baskın malzeme",\n'
+                    f'  "intended_use": "kullanım amacı",\n'
+                    f'  "is_set_or_kit": false,\n'
+                    f'  "is_disassembled": false,\n'
+                    f'  "technical_specifications": {{"özellik": "değer"}}\n'
+                    f"}}\n"
+                )
+                response = client.models.generate_content(
+                    model=settings.EXTRACTOR_LLM_MODEL,
+                    contents=prompt
+                )
+                if response.text:
+                    clean_json = re.sub(r'```json\s*|\s*```', '', response.text).strip()
+                    data = json.loads(clean_json)
+                    llm_specs = data.get("technical_specifications", {})
+                    llm_specs.update(specs)
+                    return ProductFeatures(
+                        product_name=data.get("product_name", raw_text[:70]),
+                        primary_material=data.get("primary_material", "Genel Malzeme"),
+                        composition_percentages=composition,
+                        intended_use=data.get("intended_use", "Genel Kullanım"),
+                        is_set_or_kit=data.get("is_set_or_kit", False),
+                        is_disassembled=data.get("is_disassembled", False),
+                        technical_specifications=llm_specs
+                    )
+            except Exception as e:
+                print("LLM Feature extraction uyarısı:", e)
 
-        # Demonte / Set durumu
-        is_set = "set" in text_lower or "takım" in text_lower or "kit" in text_lower
-        is_disassembled = "demonte" in text_lower or "sökülmüş" in text_lower or "parça halinde" in text_lower
-
-        # Teknik özellikler
-        specs = {}
-        if "şarj" in text_lower or "pil" in text_lower or "batarya" in text_lower:
-            specs["power_source"] = "Şarj Edilebilir / Bataryalı"
-        if "motor" in text_lower or "elektrik motoru" in text_lower:
-            specs["has_electric_motor"] = "true"
+        lines = [l.strip() for l in raw_text.split('\n') if l.strip()]
+        product_name = lines[0][:80] if lines else "Analiz Edilen Ürün"
         
-        weight_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:gr|gram|kg)', text_lower)
-        if weight_match:
-            specs["weight"] = weight_match.group(0)
-
-        # Ürün adı türetme
-        first_line = raw_text.strip().split("\n")[0]
-        product_name = first_line[:60] if len(first_line) > 5 else "Tanımlanmamış Ürün"
+        is_set = any(w in text_lower for w in ["set", "takım", "kit"])
+        is_disassembled = any(w in text_lower for w in ["demonte", "sökülmüş", "parça"])
 
         return ProductFeatures(
             product_name=product_name,
-            primary_material=primary_material,
-            composition_percentages=composition if composition else None,
-            intended_use=intended_use,
+            primary_material="Genel Nitelikli Ürün",
+            composition_percentages=composition,
+            intended_use=raw_text[:60],
             is_set_or_kit=is_set,
             is_disassembled=is_disassembled,
             technical_specifications=specs

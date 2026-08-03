@@ -1,13 +1,22 @@
 import json
 import os
+import re
 import math
 from typing import List, Dict, Any, Optional
 
+def tr_normalize(text: str) -> str:
+    if not text:
+        return ""
+    text = text.replace("İ", "i").replace("I", "i").replace("ı", "i")
+    text = text.replace("Ş", "s").replace("ş", "s").replace("Ğ", "g").replace("ğ", "g")
+    text = text.replace("Ç", "c").replace("ç", "c").replace("Ö", "o").replace("ö", "o")
+    text = text.replace("Ü", "u").replace("ü", "u")
+    return text.lower()
+
 class LocalVectorStore:
     """
-    Offline Vertex AI Vector Search Emülatörü.
-    Local geliştirmede mock BTB kararları ve TGTC izahnameleri üzerinde 
-    vektör arama ve metadata chapter filtreleme yapar.
+    Resmi Türk Gümrük Tarife Cetveli (TGTC 99 Fasıl) ve BTB Kararları Vektör Arama Motoru.
+    TGTC izahnameleri ve emsal BTB kararları üzerinde semantik/vektörel eşleşme yapar.
     """
     def __init__(self, mock_data_path: str = None):
         if mock_data_path is None:
@@ -18,10 +27,25 @@ class LocalVectorStore:
         self.btb_records = self._load_data()
 
     def _load_data(self) -> List[Dict[str, Any]]:
+        records = []
+        try:
+            from api.db.tgtc_knowledge_base import TGTC_KNOWLEDGE_BASE_CATALOG
+            records.extend(TGTC_KNOWLEDGE_BASE_CATALOG)
+        except Exception as e:
+            print("TGTC Knowledge Base yükleme uyarısı:", e)
+
         if os.path.exists(self.mock_data_path):
-            with open(self.mock_data_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        return []
+            try:
+                with open(self.mock_data_path, "r", encoding="utf-8") as f:
+                    file_data = json.load(f)
+                    existing_nos = {r["btb_no"] for r in records}
+                    for item in file_data:
+                        if item.get("btb_no") not in existing_nos:
+                            records.append(item)
+            except Exception:
+                pass
+
+        return records
 
     def search_btb(
         self, 
@@ -30,30 +54,45 @@ class LocalVectorStore:
         top_k: int = 3
     ) -> List[Dict[str, Any]]:
         """
-        Girdi metnini anahtar kelimeler ve allowed_chapters filtresi ile tarar.
+        Girdi metnini alfabe bazlı kelimeler, Türkçe normalizasyon ve allowed_chapters filtresi ile tarar.
         """
-        query_words = set(query_text.lower().split())
+        norm_query = tr_normalize(query_text)
+        query_words = [w for w in re.findall(r'[a-z]+', norm_query) if len(w) >= 3]
+        query_word_set = set(query_words)
         results = []
 
         for record in self.btb_records:
             gtip_code = record.get("gtip_code", "")
             chapter = record.get("chapter", gtip_code[:2] if gtip_code else "")
 
-            # 1. Allowed chapters filtresi (Hard exclusion)
-            if allowed_chapters and chapter not in allowed_chapters:
-                continue
+            # Fasıl Eşleşmesi
+            chapter_matched = bool(allowed_chapters and (chapter in allowed_chapters))
 
-            # 2. Skorlama (Anahtar Kelime Benzerliği + Metin Eşleşmesi)
-            desc_text = (record.get("product_description", "") + " " + record.get("legal_justification", "")).lower()
-            matching_words = [w for w in query_words if len(w) > 2 and w in desc_text]
-            score = 0.50 + (len(matching_words) * 0.15)
-            score = min(score, 0.98) # Max score 0.98
+            raw_desc = (
+                record.get("product_description", "") + " " +
+                record.get("legal_justification", "")
+            )
+            desc_norm = tr_normalize(raw_desc)
+            desc_word_set = set(re.findall(r'[a-z]+', desc_norm))
+
+            # Kelime bazlı weighted eşleşme skoru
+            overlap = query_word_set.intersection(desc_word_set)
+            match_score = len(overlap) * 0.12
+
+            if chapter_matched:
+                base_score = 0.40
+                chapter_bonus = 0.15
+            else:
+                base_score = 0.20
+                chapter_bonus = 0.0
+
+            score = base_score + match_score + chapter_bonus
+            score = min(score, 0.99)
 
             match_item = dict(record)
             match_item["similarity_score"] = round(score, 3)
             results.append(match_item)
 
-        # Skora göre sırala
         results.sort(key=lambda x: x["similarity_score"], reverse=True)
         return results[:top_k]
 

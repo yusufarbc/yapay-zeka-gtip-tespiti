@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { HelpCircle, AlertTriangle, ArrowRight } from 'lucide-react';
+import { HelpCircle, ArrowRight } from 'lucide-react';
 
 export const HITLQuestionModal = ({ question, onRespond, isSubmitting }) => {
   const [selectedOpt, setSelectedOpt] = useState('');
@@ -15,23 +15,23 @@ export const HITLQuestionModal = ({ question, onRespond, isSubmitting }) => {
     <div className="glass-panel" style={{
       padding: '24px',
       marginBottom: '24px',
-      border: '1px solid var(--accent-amber)',
-      background: 'rgba(245, 158, 11, 0.08)'
+      border: '1px solid var(--status-amber-border)',
+      background: 'var(--status-amber-bg)'
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
-        <div style={{ background: 'var(--accent-amber)', padding: '8px', borderRadius: '8px', display: 'flex' }}>
-          <HelpCircle size={22} color="#000" />
+        <div style={{ background: 'var(--status-amber)', padding: '8px', borderRadius: '6px', display: 'flex' }}>
+          <HelpCircle size={20} color="#ffffff" />
         </div>
         <div>
-          <span className="badge badge-warning">İnsan Onayı Bekleniyor (HITL Wait State)</span>
-          <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginTop: '4px' }}>
+          <span className="badge badge-warning">İnsan Onayı Bekleniyor (Müşavir Netleştirmesi)</span>
+          <h3 style={{ fontSize: '1rem', fontWeight: 700, marginTop: '4px', color: 'var(--text-primary)' }}>
             {question.question_text}
           </h3>
         </div>
       </div>
 
       <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-        Yapay zeka denetçi ajanı (Auditor Agent) seçilen GTİP kodunun şartlarını doğrulamak için aşağıdaki teknik detayı netleştirmenizi istiyor:
+        Denetçi Ajan (Auditor Agent) seçilen GTİP tarife pozisyonunu kesinleştirmek için aşağıdaki teknik seçeneği onaylamanızı bekliyor:
       </p>
 
       {/* Seçenek Listesi */}
@@ -43,15 +43,15 @@ export const HITLQuestionModal = ({ question, onRespond, isSubmitting }) => {
               key={opt.option_id}
               onClick={() => setSelectedOpt(opt.option_id)}
               style={{
-                background: isSelected ? 'rgba(6, 182, 212, 0.25)' : 'rgba(0, 0, 0, 0.3)',
-                border: isSelected ? '1.5px solid var(--accent-cyan)' : '1px solid rgba(255, 255, 255, 0.12)',
-                borderRadius: '10px',
+                background: 'var(--bg-surface)',
+                border: isSelected ? '2px solid var(--text-primary)' : '1px solid var(--border-subtle)',
+                borderRadius: '8px',
                 padding: '14px',
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                transition: 'all 0.2s ease'
+                transition: 'all 0.15s ease'
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -59,17 +59,17 @@ export const HITLQuestionModal = ({ question, onRespond, isSubmitting }) => {
                   width: '24px',
                   height: '24px',
                   borderRadius: '50%',
-                  background: isSelected ? 'var(--accent-cyan)' : 'rgba(255,255,255,0.1)',
-                  color: isSelected ? '#000' : '#fff',
+                  background: isSelected ? 'var(--primary-brand)' : 'var(--bg-surface-subtle)',
+                  color: isSelected ? '#ffffff' : 'var(--text-primary)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   fontWeight: 700,
-                  fontSize: '0.8rem'
+                  fontSize: '0.78rem'
                 }}>
                   {opt.option_id}
                 </div>
-                <span style={{ fontSize: '0.9rem', fontWeight: 500 }}>{opt.text}</span>
+                <span style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-primary)' }}>{opt.text}</span>
               </div>
             </div>
           );
@@ -82,8 +82,8 @@ export const HITLQuestionModal = ({ question, onRespond, isSubmitting }) => {
         disabled={!selectedOpt || isSubmitting}
         style={{ width: '100%', justifyContent: 'center' }}
       >
-        <span>{isSubmitting ? 'Yanıt İletiliyor...' : 'Yanıtı Gönder ve GTİP\'i Kesinleştir'}</span>
-        <ArrowRight size={18} />
+        <span>{isSubmitting ? 'Yanıt İletiliyor...' : 'Yanıtı Gönder ve GTİP Kodu Al'}</span>
+        <ArrowRight size={16} />
       </button>
     </div>
   );

@@ -13,8 +13,11 @@ class AuditLogger:
 
     def __init__(self, db_path: str = None):
         if db_path is None:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            db_path = os.path.join(base_dir, "data", "audit_logs.db")
+            if os.getenv("K_SERVICE") or not os.access(".", os.W_OK):
+                db_path = "/tmp/audit_logs.db"
+            else:
+                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                db_path = os.path.join(base_dir, "data", "audit_logs.db")
         
         self.db_path = db_path
         self._init_db()

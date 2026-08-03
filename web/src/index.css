@@ -1,94 +1,162 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-:root {
-  --bg-primary: #0b0f17;
-  --bg-card: rgba(18, 24, 38, 0.75);
-  --bg-card-hover: rgba(28, 38, 58, 0.85);
-  --accent-cyan: #06b6d4;
-  --accent-blue: #3b82f6;
-  --accent-indigo: #6366f1;
-  --accent-emerald: #10b981;
-  --accent-amber: #f59e0b;
-  --accent-rose: #f43f5e;
-  --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --border-color: rgba(255, 255, 255, 0.1);
-  --glass-border: 1px solid rgba(255, 255, 255, 0.08);
+/* =========================================================
+   PÜR NÖTR GRİ & ŞIK KURUMSAL TEMA (SIFIR MAVİ / NO BLUE)
+   ========================================================= */
+
+/* 1. AÇIK TEMA (LIGHT MODE) - Nötr Platin Gri & Beyaz */
+:root, [data-theme="light"] {
+  --bg-primary: #f4f4f5;           /* Neutral Soft Gray Canvas */
+  --bg-surface: #ffffff;           /* Pure White Cards */
+  --bg-surface-subtle: #e4e4e7;    /* Light Zinc Subdued */
+  --bg-header: #ffffff;            /* Header White */
+  
+  --primary-brand: #18181b;         /* Deep Graphite / Charcoal Button */
+  --primary-brand-hover: #27272a;   /* Slightly Lighter Graphite */
+  
+  --status-emerald: #047857;       /* Emerald Green */
+  --status-emerald-bg: #ecfdf5;
+  --status-emerald-border: #a7f3d0;
+  
+  --status-amber: #b45309;         /* Amber Warning */
+  --status-amber-bg: #fffbeb;
+  --status-amber-border: #fde68a;
+  
+  --text-primary: #18181b;         /* Crisp Charcoal Text */
+  --text-secondary: #52525b;       /* Medium Zinc Text */
+  --text-muted: #71717a;           /* Muted Gray Text */
+  --border-subtle: #e4e4e7;        /* Crisp Light Border */
+  --shadow-panel: 0 1px 3px 0 rgba(0, 0, 0, 0.06);
+}
+
+/* 2. KOYU TEMA (DARK MODE) - Pür Koyu Gri / Charcoal / Zinc (SIFIR MAVİ) */
+[data-theme="dark"] {
+  --bg-primary: #121212;           /* Pure Dark Charcoal Background (No Navy Blue!) */
+  --bg-surface: #1e1e1e;           /* Solid Dark Gray Cards */
+  --bg-surface-subtle: #2d2d2d;    /* Medium Gray Surface */
+  --bg-header: #181818;            /* Pure Dark Header */
+  
+  --primary-brand: #333333;         /* Solid Dark Zinc Button */
+  --primary-brand-hover: #444444;   
+  
+  --status-emerald: #34d399;       
+  --status-emerald-bg: rgba(52, 211, 153, 0.12);
+  --status-emerald-border: rgba(52, 211, 153, 0.3);
+  
+  --status-amber: #fbbf24;         
+  --status-amber-bg: rgba(251, 191, 36, 0.12);
+  --status-amber-border: rgba(251, 191, 36, 0.3);
+  
+  --text-primary: #f4f4f5;         /* Pure Off-White Text */
+  --text-secondary: #a1a1aa;       /* Neutral Gray Secondary */
+  --text-muted: #71717a;           
+  --border-subtle: #333333;        /* Dark Neutral Border */
+  --shadow-panel: 0 4px 20px rgba(0, 0, 0, 0.5);
 }
 
 * {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
 body {
   background-color: var(--bg-primary);
-  background-image: 
-    radial-gradient(at 0% 0%, rgba(6, 182, 212, 0.15) 0px, transparent 50%),
-    radial-gradient(at 100% 100%, rgba(99, 102, 241, 0.12) 0px, transparent 50%);
-  background-attachment: fixed;
   color: var(--text-primary);
   min-height: 100vh;
   overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
+/* Executive Card Styling */
 .glass-panel {
-  background: var(--bg-card);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: var(--glass-border);
-  border-radius: 16px;
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  box-shadow: var(--shadow-panel);
 }
 
+/* Kurumsal Buton Tasarımı (Sadece Koyu Gri / Zinc) */
 .btn-primary {
-  background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
-  color: #fff;
-  border: none;
-  padding: 12px 24px;
-  border-radius: 10px;
+  background-color: var(--primary-brand);
+  color: #ffffff;
+  border: 1px solid var(--border-subtle);
+  padding: 10px 20px;
+  border-radius: 6px;
   font-weight: 600;
+  font-size: 0.88rem;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  box-shadow: 0 4px 14px 0 rgba(6, 182, 212, 0.39);
 }
 
 .btn-primary:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px 0 rgba(6, 182, 212, 0.55);
+  background-color: var(--primary-brand-hover);
 }
 
 .btn-primary:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: not-allowed;
-  transform: none;
+  box-shadow: none;
 }
 
+/* Theme Toggle Button */
+.theme-toggle-btn {
+  background: var(--bg-surface-subtle);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  transition: all 0.15s ease;
+}
+
+.theme-toggle-btn:hover {
+  background: var(--primary-brand);
+  color: #ffffff;
+}
+
+/* Badges */
 .badge {
   padding: 4px 10px;
-  border-radius: 20px;
+  border-radius: 4px;
   font-size: 0.75rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.2px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
-.badge-success { background: rgba(16, 185, 129, 0.2); color: var(--accent-emerald); border: 1px solid rgba(16, 185, 129, 0.3); }
-.badge-warning { background: rgba(245, 158, 11, 0.2); color: var(--accent-amber); border: 1px solid rgba(245, 158, 11, 0.3); }
-.badge-info { background: rgba(6, 182, 212, 0.2); color: var(--accent-cyan); border: 1px solid rgba(6, 182, 212, 0.3); }
-
-/* Pulse animations */
-@keyframes pulseGlow {
-  0% { box-shadow: 0 0 0 0 rgba(6, 182, 212, 0.4); }
-  70% { box-shadow: 0 0 0 12px rgba(6, 182, 212, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(6, 182, 212, 0); }
+.badge-success {
+  background: var(--status-emerald-bg);
+  color: var(--status-emerald);
+  border: 1px solid var(--status-emerald-border);
 }
 
+.badge-warning {
+  background: var(--status-amber-bg);
+  color: var(--status-amber);
+  border: 1px solid var(--status-amber-border);
+}
+
+.badge-info {
+  background: var(--bg-surface-subtle);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+}
+
+/* Active Pipeline Animation */
 .pulse-active {
-  animation: pulseGlow 2s infinite;
+  border-color: var(--text-secondary) !important;
+  background: var(--bg-surface-subtle) !important;
 }

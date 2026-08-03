@@ -7,7 +7,7 @@
 
 Bu doküman, Türk Gümrük Mevzuatı (TGTC), Genel Yorum Kuralları (GİR) ve Ticaret Bakanlığı emsal Bağlayıcı Tarife Bilgisi (BTB) kararlarını esas alarak 12 haneli **GTİP tespiti yapan yapay zeka destekli karar mekanizması** için uçtan uca mimari tasarımı sunmaktadır.
 
-Sistem, yapay zekanın "uydurma" (hallucination) veya yanlış GTİP sallama riskini tamamen ortadan kaldıracak şekilde **Kıdemli Gümrük Müşavir Yardımcısı** mantığıyla kurgulanmıştır.
+Sistem, yapay zekanın "uydurma" (hallucination) veya yanlış GTİP sallama riskini tamamen ortadan kaldıracak şekilde **Gümrük Müşaviri Dijital Karar Asistanı** mantığıyla kurgulanmıştır.
 
 ### 🌟 Ana Mimari İlkeler
 1. **%100 Google Cloud Platform (GCP) Ekosistemi:** Sunucusuz (Serverless), yüksek ölçeklenebilir ve yönetilen servis altyapısı.
@@ -210,26 +210,70 @@ Türk Gümrük Tarife Cetveli her yıl 31 Aralık'ı 1 Ocak'a bağlayan gece ve 
 
 ---
 
-## 6. MALİYET VE BÜTÇE KONTROL STRATEJİSİ
+## 6. MALİYET VE BÜTÇE KONTROL STRATEJİSİ (COST & CREDIT OPTIMIZATION)
 
-Sistem %100 Sunucusuz (Serverless) yapıda olduğu için **7/24 açık kalan pahalı sanal sunucu (VM) maliyeti yoktur.**
+Sistem %100 Sunucusuz (Serverless) yapıda tasarlandığından **7/24 açık kalan pahalı sanal sunucu (VM) maliyeti yoktur.** 300-400$ civarındaki GCP başlangıç kredisinin aylar süren geliştirme ve test sürecinde maksimum verimle kullanılabilmesi için aşağıdaki 3 kademeli bütçe koruma sistemi ve optimizasyon taktikleri uygulanır.
 
-### 💸 Maliyet Düşüren 4 Ana Unsur
-1. **Gemini Flash-Lite Seçimi:** Düşük token maliyeti.
-2. **Vertex AI Context Caching:** Statik TGTC mevzuatı ve GİR kuralları önbellekte tutulur. **Input token maliyeti %75-80 oranında düşer.**
-3. **Cloud Run Min-Instances = 0:** Gece veya istek gelmeyen saatlerde sunucu maliyeti $0'dır.
-4. **GCP Budget Alerts:** 50$ ve 100$ aylık bütçe uyarıları. `max-instances: 10` sınırı ile beklenmedik trafik maliyetleri engellenir.
+---
 
-### 📊 Aylık 10.000 Sorgu İçin Tahmini Maliyet Tablosu
+### 🛡️ 6.1. 3 Kademeli GCP Bütçe ve Harcama Güvenlik Mimarisi
 
-| GCP Bileşeni | Kullanım Miktarı | Tahmini Aylık Maliyet |
-| :--- | :--- | :--- |
-| **Vertex AI (Gemini Flash-Lite)** | 10.000 sorgu x (Context Cached Token + New Token) | ~$1.50 - $3.00 |
-| **Cloud Run (Backend API)** | 10.000 istek (~1-2 sn ortalama) | ~$0.50 - $2.00 (Free Tier sınırında) |
-| **Vertex AI Vector Search** | Standart arama indeks kullanımı | ~$10.00 - $25.00 |
-| **Cloud Firestore** | Oturum ve HITL State Yönetimi | ~$0.20 - $1.00 (Free Tier sınırında) |
-| **BigQuery & GCS** | Audit logları ve doküman depolama | ~$1.00 - $3.00 |
-| **TOPLAM TAHMİNİ ALTYAPI MALİYETİ** | **Aylık 10.000 Canlı Analiz İçin** | **~$15 - $35 / Ay** |
+```text
+[GCP Billing Account]
+        │
+        ├─► Kademe 1: Bütçe Eşikleri (%50, %80, %100, %120) ──► Anlık E-posta & Slack Bildirimi
+        │
+        ├─► Kademe 2: Servis Bazlı Sert Kotalar (Hard Quotas) ──► Max Instances=3, Daily BigQuery Limit
+        │
+        └─► Kademe 3: Otomatik Durdurma Şalteri (Kill-Switch) ──► Pub/Sub + Cloud Function (Billing Disable)
+```
+
+1. **Kademe 1: Bütçe Uyarıları (GCP Billing Budgets & Alerts):**
+   * **Bütçe Hedefi:** $100 / $200 kademeli bütçe sınırı.
+   * **Uyarı Eşikleri:** %50 ($50), %80 ($80), %100 ($100), %120 ($120). Eşik aşıldığı an e-posta ile otomatik bildirim tetiklenir.
+
+2. **Kademe 2: Servis Bazlı Sert Kotalar (Hard Limits & Quotas):**
+   * **Cloud Run Sunucu Limiti:** `--max-instances 3` (Sonsuz ölçeklenerek bütçe bitirmesi engellenir).
+   * **Cloud Run CPU Throttling:** `cpu-throttling = true` (Yalnızca API isteği işlenirken CPU ücretlendirilir).
+   * **BigQuery Veri Tarama Limiti:** Kullanıcı / Sorgu başı günlük maksimum 10 GB tarama limiti belirlenir.
+   * **Vertex AI Rate Limiting:** Dakikalık maksimum LLM istek sayısı 30 ile sınırlandırılır.
+
+3. **Kademe 3: Otomatik Durdurma Şalteri (Pub/Sub + Kill-Switch Cloud Function):**
+   * Bütçe %100'e ulaştığında GCP Pub/Sub konusu tetiklenir. Bağlı Cloud Function, projenin Billing hesabı bağlantısını geçici olarak devredışı bırakarak sıfır toleranslı bütçe aşım koruması sağlar.
+
+---
+
+### 💸 6.2. Kredi Optimizasyonu ve Geliştirme/Test Taktikleri
+
+1. **LLM Model Optimizasyonu (`gemini-3.6-flash-lite` ve `gemini-3.6-flash`):**
+   * Evraktan veri çıkarma ve kural kontrolünde `gemini-3.6-flash-lite` kullanılır. Gemini Pro modeline kıyasla **~15-20 kat daha ucuzdur.**
+   * Statik TGTC mevzuatı ve GİR kuralları için **Vertex AI Context Caching** aktifleştirilir (Girdi token maliyeti %75-80 düşer).
+
+2. **Geliştirme / Test Aşaması Vektör Arama Stratejisi:**
+   * 7/24 canlı kalan Vertex AI Vector Search Endpoint node'ları saatlik ücretlendirilir.
+   * **Dev/Test Modu:** Geliştirme ve ilk test aşamalarında **Cloud Firestore Native Vector Index** veya yerel **ChromaDB / FAISS** kullanılır. Canlıya geçiş öncesinde aylık vektör arama maliyeti $0-$2 bandında tutulur.
+
+3. **Sunucusuz Sıfırlama (Scale-to-Zero):**
+   * Cloud Run konteynerleri `min-instances = 0` olarak ayarlanır. Gece veya istek gelmeyen zaman dilimlerinde sıfır konteyner çalışır ve $0 yazar.
+
+4. **GCP Ücretsiz Katman (Free Tier) Maksimum Kullanımı:**
+   * **Cloud Run:** Her ay ilk 2 milyon istek **ÜCRETSİZ**.
+   * **Cloud Storage:** İlk 5 GB standart depolama **ÜCRETSİZ** (Evraklar için 7 günlük Lifecycle silme kuralı konur).
+   * **Cloud Firestore:** Günlük 50.000 okuma, 20.000 yazma, 1 GB depolama **ÜCRETSİZ**.
+   * **BigQuery:** Her ay ilk 1 TB sorgu alanı **ÜCRETSİZ**.
+
+---
+
+### 📊 6.3. Aylık 10.000 Sorgu İçin Optimize Edilmiş Tahmini Maliyet Tablosu
+
+| GCP Bileşeni | Geliştirme & Test (Dev) | Canlı Üretim (Prod) | Açıklama / Optimizasyon |
+| :--- | :--- | :--- | :--- |
+| **Vertex AI (Gemini 3.6 Flash)** | ~$0.50 - $1.00 | ~$1.50 - $3.00 | Context Caching ve Flash-Lite kullanımı |
+| **Cloud Run (Backend API)** | **$0.00** | ~$0.50 - $2.00 | Free Tier (2M istek/ay) içinde kalır |
+| **Vector Search (RAG)** | **$0.00** (Firestore Vector) | ~$10.00 - $20.00 | Dev modunda Firestore Native Vector kullanılır |
+| **Cloud Firestore** | **$0.00** | ~$0.20 - $1.00 | Free Tier (50k okuma/gün) içinde kalır |
+| **BigQuery & GCS** | **$0.00** | ~$0.50 - $1.50 | Free Tier (1TB query, 5GB storage) |
+| **TOPLAM MALİYET** | **~$0.50 - $1.00 / Ay** | **~$12.70 - $27.50 / Ay** | Kredi tüketimi minimuma indirilir |
 
 ---
 

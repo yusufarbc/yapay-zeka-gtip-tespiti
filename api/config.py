@@ -14,10 +14,12 @@ class Settings(BaseSettings):
     # GCP Configurations
     GCP_PROJECT_ID: str = os.getenv("GCP_PROJECT_ID", "gtip-tespit-projesi")
     GCP_REGION: str = os.getenv("GCP_REGION", "europe-west3") # Frankfurt primary low-latency region
-    GCS_BUCKET_NAME: str = os.getenv("GCS_BUCKET_NAME", "gtip-evrak-bucket")
+    GCS_BUCKET_NAME: str = os.getenv("GCS_BUCKET_NAME", "gtip-evrak-bucket-gtip-tespit-projesi")
     
     # AI Models
-    DEFAULT_LLM_MODEL: str = os.getenv("DEFAULT_LLM_MODEL", "gemini-2.5-flash")
+    DEFAULT_LLM_MODEL: str = os.getenv("DEFAULT_LLM_MODEL", "gemini-3.6-flash")
+    EXTRACTOR_LLM_MODEL: str = os.getenv("EXTRACTOR_LLM_MODEL", "gemini-3.6-flash-lite")
+    REASONING_LLM_MODEL: str = os.getenv("REASONING_LLM_MODEL", "gemini-3.6-flash")
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-005")
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     

@@ -8,11 +8,24 @@ import { AuditHistoryTable } from './components/AuditHistoryTable';
 import { analyzeProduct, respondHITL, getAuditLogs } from './api/client';
 
 export function App() {
+  const [theme, setTheme] = useState(() => {
+    return localStorage.getItem('gtip_theme') || 'light';
+  });
+
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isSubmittingHITL, setIsSubmittingHITL] = useState(false);
   const [decision, setDecision] = useState(null);
   const [auditLogs, setAuditLogs] = useState([]);
   const [errorMsg, setErrorMsg] = useState(null);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('gtip_theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(prev => prev === 'light' ? 'dark' : 'light');
+  };
 
   const fetchLogs = async () => {
     try {
@@ -63,12 +76,12 @@ export function App() {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <Header />
+      <Header theme={theme} onToggleTheme={toggleTheme} />
 
       <main style={{ maxWidth: '1100px', margin: '0 auto', padding: '0 20px 40px', width: '100%', flex: 1 }}>
         
         {errorMsg && (
-          <div style={{ background: 'rgba(244, 63, 94, 0.15)', border: '1px solid rgba(244, 63, 94, 0.4)', padding: '14px', borderRadius: '10px', color: '#f43f5e', marginBottom: '20px', fontSize: '0.9rem' }}>
+          <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', padding: '14px', borderRadius: '8px', color: '#dc2626', marginBottom: '20px', fontSize: '0.9rem', fontWeight: 500 }}>
             ⚠️ {errorMsg}
           </div>
         )}
@@ -91,8 +104,8 @@ export function App() {
 
       </main>
 
-      <footer style={{ textAlign: 'center', padding: '20px', fontSize: '0.8rem', color: 'var(--text-secondary)', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-        GTİP Tespit ve Karar Destek Sistemi • Powered by GCP Cloud Run, Vertex AI & LangGraph
+      <footer style={{ textAlign: 'center', padding: '20px', fontSize: '0.8rem', color: 'var(--text-muted)', borderTop: '1px solid var(--border-subtle)' }}>
+        GTİP Tespit ve Karar Destek Portalı
       </footer>
     </div>
   );
