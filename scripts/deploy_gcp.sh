@@ -76,7 +76,7 @@ gcloud run deploy "$SERVICE_NAME" \
     --set-env-vars "GCP_PROJECT_ID=${PROJECT_ID},GCP_REGION=${REGION},ENVIRONMENT=production" \
     --set-secrets "GEMINI_API_KEY=gtip-gemini-api-key:latest,JWT_SECRET_KEY=gtip-jwt-secret:latest"
 
-BACKEND_URL=$(gcloud run services describe "$SERVICE_NAME" --region "$REGION" --format='value(status.url)' 2>/dev/null || echo "")
+BACKEND_URL="https://gtip-backend-230333256951.europe-west3.run.app"
 
 # 5. Cloud Run Üzerinde Frontend (Web App) Canlıya Alma
 echo "💻 GCP Cloud Run Frontend (Web App) Deploy Ediliyor..."
