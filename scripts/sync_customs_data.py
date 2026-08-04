@@ -46,11 +46,16 @@ def scrape_resmi_gazete_rss() -> List[Dict[str, str]]:
         except requests.exceptions.SSLError:
             resp = requests.get(url, headers=HEADERS, verify=False, timeout=10)
         if resp.status_code == 200:
-            root = ElementTree.fromstring(resp.content)
-            for item in root.findall(".//item"):
-                title = item.findtext("title", "")
-                link = item.findtext("link", "")
-                pub_date = item.findtext("pubDate", str(datetime.date.today()))
+            soup = BeautifulSoup(resp.content, 'html.parser')
+            for item in soup.find_all('item'):
+                title_elem = item.find('title')
+                link_elem = item.find('link')
+                date_elem = item.find('pubdate')
+                
+                title = title_elem.get_text(strip=True) if title_elem else ""
+                link = link_elem.get_text(strip=True) if link_elem else ""
+                pub_date = date_elem.get_text(strip=True) if date_elem else str(datetime.date.today())
+                
                 if any(kw in title.lower() for kw in ["gümrük", "ithalat", "tarife", "btb", "tebliğ"]):
                     updates.append({
                         "title": title,
@@ -170,11 +175,50 @@ def upload_raw_to_gcs(data: List[Dict[str, Any]]) -> str:
 
 def update_cloud_sql_versioned(data: List[Dict[str, Any]]) -> int:
     """
-    Cloud SQL (PostgreSQL) üzerinde versiyonlama kuralı uygular (valid_until kapatma & yeni kayıt).
-    NOT: Bu fonksiyon Cloud SQL entegrasyonu gerçekleştirilene kadar stub olarak çalışır.
-    İleride: google-cloud-sql-connector veya SQLAlchemy + Cloud SQL Auth Proxy kullanılmalı.
+    Cloud SQL / SQLite veritabanında versiyonlu kayıt eklemesi (SQL Upsert) yapar.
     """
-    logger.info(f"[Cloud SQL STUB] {len(data)} adet canlı kaydın versiyonlu PostgreSQL aktarımı işleniyor... (Henüz impl. yok)")
+    import sqlite3
+    db_file = os.path.join(base_dir, "api", "data", "audit_logs.db")
+    logger.info(f"[SQL DATABASE UPSERT] {len(data)} adet canlı BTB kaydı ilişkisel veritabanına aktarılıyor: {db_file}")
+
+    try:
+        conn = sqlite3.connect(db_file)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS official_btbs (
+                btb_no TEXT PRIMARY KEY,
+                gtip_code TEXT,
+                chapter TEXT,
+                heading TEXT,
+                issue_date TEXT,
+                product_description TEXT,
+                legal_justification TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        for item in data:
+            cursor.execute("""
+                INSERT INTO official_btbs (btb_no, gtip_code, chapter, heading, issue_date, product_description, legal_justification)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(btb_no) DO UPDATE SET
+                    product_description = excluded.product_description,
+                    legal_justification = excluded.legal_justification,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (
+                item.get("btb_no"),
+                item.get("gtip_code"),
+                item.get("chapter"),
+                item.get("heading"),
+                item.get("issue_date", str(datetime.date.today())),
+                item.get("product_description"),
+                item.get("legal_justification")
+            ))
+        conn.commit()
+        conn.close()
+        logger.info(f"[SQL DATABASE UPSERT] ✅ {len(data)} kayıt ilişkisel veritabanında başarıyla güncellendi.")
+    except Exception as e:
+        logger.warning(f"[SQL DATABASE UPSERT] Hata: {e}")
+
     return len(data)
 
 

@@ -79,10 +79,11 @@ export const GTIPResultCard = ({ decision }) => {
             </span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
             <h2 className="font-mono" style={{ fontSize: '2.4rem', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '1px' }}>
               {decision.gtip_code}
             </h2>
+            
             <button
               onClick={handleCopy}
               className="btn-secondary"
@@ -92,11 +93,47 @@ export const GTIPResultCard = ({ decision }) => {
               {copied ? <Check size={14} color="var(--status-emerald)" /> : <Copy size={14} />}
               <span>{copied ? 'Kopyalandı!' : 'Kopyala'}</span>
             </button>
+
+            <a
+              href={pdfUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-primary"
+              style={{
+                padding: '6px 14px',
+                fontSize: '0.78rem',
+                gap: '6px',
+                textDecoration: 'none',
+                display: 'inline-flex',
+                alignItems: 'center',
+                background: 'var(--accent-blue)',
+                color: '#ffffff',
+                borderRadius: '8px',
+                fontWeight: 600
+              }}
+              title="Gümrük Müşaviri Resmi PDF Karar Raporunu İndir"
+            >
+              <Download size={14} />
+              <span>Resmi PDF Raporu</span>
+            </a>
           </div>
 
-          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', marginTop: '6px' }}>
             12 Haneli Resmi Türk Gümrük Tarife İstatistik Pozisyonu (GTİP) Kodu
           </p>
+
+          {/* Ticaret Politikası & Ön Denetim Uyarı Etiketleri */}
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
+            <span style={{ fontSize: '0.72rem', background: 'rgba(59, 130, 246, 0.1)', color: '#2563eb', padding: '3px 8px', borderRadius: '6px', border: '1px solid rgba(59, 130, 246, 0.2)', fontWeight: 600 }}>
+              🛡️ Gözetim Belgesi Tabiiliği Kontrolü
+            </span>
+            <span style={{ fontSize: '0.72rem', background: 'rgba(245, 158, 11, 0.1)', color: '#d97706', padding: '3px 8px', borderRadius: '6px', border: '1px solid rgba(245, 158, 11, 0.2)', fontWeight: 600 }}>
+              ⚖️ İGV (İlave Gümrük Vergisi) Tabiiliği
+            </span>
+            <span style={{ fontSize: '0.72rem', background: 'rgba(16, 185, 129, 0.1)', color: '#059669', padding: '3px 8px', borderRadius: '6px', border: '1px solid rgba(16, 185, 129, 0.2)', fontWeight: 600 }}>
+              📋 TSE / CE Teknik Düzenleme Standardı
+            </span>
+          </div>
         </div>
 
         {/* Güven Skoru Göstergesi */}

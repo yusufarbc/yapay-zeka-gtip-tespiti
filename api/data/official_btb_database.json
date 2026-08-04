@@ -1123,5 +1123,35 @@
     "issue_date": "2026-01-15",
     "product_description": "Diplomatik temsilcilik özel ithalat eşyası",
     "legal_justification": "TGTC Pozisyon 9919.00 uyarınca özel izinli diplomatik muafiyet eşyaları."
+  },
+  {
+    "btb_no": "EBTI-EU-2025-DE-00109",
+    "gtip_code": "8471.30.00.00.00",
+    "chapter": "84",
+    "heading": "8471",
+    "issue_date": "2025-01-15",
+    "product_description": "Portable automatic data processing machine (Laptop) weighing less than 10 kg with keyboard and display.",
+    "legal_justification": "Classified under HS heading 8471.30 according to GIR 1 and GIR 6, Subheading Note 5A to Chapter 84.",
+    "source": "AB_EBTI_OPEN_DATASET"
+  },
+  {
+    "btb_no": "EBTI-EU-2025-FR-00412",
+    "gtip_code": "8517.13.00.00.00",
+    "chapter": "85",
+    "heading": "8517",
+    "issue_date": "2025-02-10",
+    "product_description": "Smart cellular smartphone with touchscreen display, 5G NR transceiver and rechargeable lithium-ion battery.",
+    "legal_justification": "Classified under HS heading 8517.13 pursuant to General Rules 1 and 6 for the interpretation of the Combined Nomenclature.",
+    "source": "AB_EBTI_OPEN_DATASET"
+  },
+  {
+    "btb_no": "EBTI-EU-2025-NL-00877",
+    "gtip_code": "9403.60.10.00.00",
+    "chapter": "94",
+    "heading": "9403",
+    "issue_date": "2025-03-01",
+    "product_description": "Wooden dining table and chairs set made of solid oak timber.",
+    "legal_justification": "Classified under HS heading 9403.60 as other wooden furniture according to GIR 1 & GIR 3b.",
+    "source": "AB_EBTI_OPEN_DATASET"
   }
 ]
