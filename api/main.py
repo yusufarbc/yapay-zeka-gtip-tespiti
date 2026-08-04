@@ -126,6 +126,7 @@ def append_continuous_learning_record(session_id: str, product_name: str, gtip_c
     except Exception as e:
         logger.warning(f"Continuous Learning yerel kayıt uyarısı: {e}")
 
+@app.get("/health")
 @app.get("/api/v1/health")
 def health_check():
     return {

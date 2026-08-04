@@ -26,6 +26,23 @@ if ! gcloud iam service-accounts describe "$SERVICE_ACCOUNT" >/dev/null 2>&1; th
         --display-name="GTIP Backend Service Account" 2>/dev/null || true
 fi
 
+# Service Account'a Secret Manager Secret Accessor yetkisi ver
+echo "🔒 Service Account IAM yetkisi (roles/secretmanager.secretAccessor) veriliyor..."
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+    --member="serviceAccount:$SERVICE_ACCOUNT" \
+    --role="roles/secretmanager.secretAccessor" >/dev/null 2>&1 || true
+
+# Secret Manager secret'larını otomatik oluştur (yoksa)
+if ! gcloud secrets describe gtip-gemini-api-key >/dev/null 2>&1; then
+    echo "🔑 Secret Manager'da gtip-gemini-api-key oluşturuluyor..."
+    printf "%s" "${GEMINI_API_KEY:-gtip-gemini-api-key-placeholder}" | gcloud secrets create gtip-gemini-api-key --data-file=- 2>/dev/null || true
+fi
+
+if ! gcloud secrets describe gtip-jwt-secret >/dev/null 2>&1; then
+    echo "🔑 Secret Manager'da gtip-jwt-secret oluşturuluyor..."
+    printf "%s" "${JWT_SECRET_KEY:-gtip-jwt-secret-placeholder-2026}" | gcloud secrets create gtip-jwt-secret --data-file=- 2>/dev/null || true
+fi
+
 # 2. Artifact Registry Deposu Oluşturma (Yoksa)
 echo "📦 Artifact Registry Deposu Kontrol Ediliyor..."
 gcloud artifacts repositories describe "$REPO_NAME" --location="$REGION" >/dev/null 2>&1 || \
@@ -53,7 +70,7 @@ gcloud run deploy "$SERVICE_NAME" \
     --cpu 2 \
     --concurrency 80 \
     --min-instances 0 \
-    --max-instances 100 \
+    --max-instances 10 \
     --timeout 300s \
     --service-account "$SERVICE_ACCOUNT" \
     --set-env-vars "GCP_PROJECT_ID=${PROJECT_ID},GCP_REGION=${REGION},ENVIRONMENT=production" \
