@@ -90,7 +90,8 @@ class FeatureExtractor:
                         contents=prompt
                     )
                 if response.text:
-                    clean_json = re.sub(r'```json\s*|\s*```', '', response.text).strip()
+                    match = re.search(r'\{.*\}', response.text, re.DOTALL)
+                    clean_json = match.group(0) if match else re.sub(r'```json\s*|\s*```', '', response.text).strip()
                     data = json.loads(clean_json)
                     llm_specs = data.get("technical_specifications", {})
                     llm_specs.update(specs)

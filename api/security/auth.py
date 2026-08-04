@@ -118,18 +118,19 @@ def get_current_user_session(request: Any) -> UserSession:
                 domain=domain
             )
 
-        # 3. Özel HTTP Üstbilgileri (Client / UI Entegrasyonu)
-        custom_email = request.headers.get("X-User-Email")
-        if custom_email:
-            role = request.headers.get("X-User-Role", "customs_broker")
-            domain = custom_email.split("@")[1] if "@" in custom_email else None
-            return UserSession(
-                user_id=f"user_{custom_email.split('@')[0]}",
-                email=custom_email.strip(),
-                full_name=custom_email.split('@')[0].replace(".", " ").title(),
-                role=role,
-                domain=domain
-            )
+        # 3. Özel HTTP Üstbilgileri (Sadece Geliştirme / Emülatör Modunda Kabul Edilir)
+        if settings.ENVIRONMENT != "production" or settings.USE_GCP_EMULATOR:
+            custom_email = request.headers.get("X-User-Email")
+            if custom_email:
+                role = request.headers.get("X-User-Role", "customs_broker")
+                domain = custom_email.split("@")[1] if "@" in custom_email else None
+                return UserSession(
+                    user_id=f"user_{custom_email.split('@')[0]}",
+                    email=custom_email.strip(),
+                    full_name=custom_email.split('@')[0].replace(".", " ").title(),
+                    role=role,
+                    domain=domain
+                )
     except Exception:
         pass
 

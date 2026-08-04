@@ -72,7 +72,8 @@ class LLMFactVerifier:
                     )
 
                 if response.text:
-                    clean_json = re.sub(r'```json\s*|\s*```', '', response.text).strip()
+                    match = re.search(r'\[.*\]', response.text, re.DOTALL)
+                    clean_json = match.group(0) if match else re.sub(r'```json\s*|\s*```', '', response.text).strip()
                     results_data = json.loads(clean_json)
                     eval_map = {item["predicate_id"]: item for item in results_data if "predicate_id" in item}
 

@@ -8,16 +8,16 @@
 
 | # | GCP Servisi | Kategorisi | Projedeki Kullanım Amacı ve Metodolojisi | İlgili Dosya / Modül |
 | :-: | :--- | :--- | :--- | :--- |
-| **1** | **GCP Cloud Run** | Serverless Compute | Containerize FastAPI backend uygulamasının otomatik ölçeklenen (0-to-N autoscaling) HTTP mikroservisi olarak çalıştırılması. Memory: 2Gi, CPU: 2, concurrency: 80, max-instances: 100. | [deploy_gcp.sh](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/deploy_gcp.sh), [Dockerfile](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/Dockerfile) |
-| **2** | **GCP Artifact Registry** | Container Management | Docker konteyner imajlarının (`gtip-repo/backend:latest`) güvenli ve versiyonlu olarak saklandığı merkezi imaj deposu. | [deploy_gcp.sh](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/deploy_gcp.sh) |
-| **3** | **GCP Cloud Build** | Serverless CI/CD | Kod değişikliklerinin bulut ortamında otomatik olarak Docker imajına dönüştürülmesi (`gcloud builds submit`). | [deploy_gcp.sh](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/deploy_gcp.sh) |
-| **4** | **GCP Vertex AI / Google GenAI SDK** | Foundation Models / AI | Gemini 2.5 Flash modelleri ve `text-embedding-005` ile metin işleme, multimodal özellik çıkarımı ve vektörleştirme. | [config.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/config.py), [feature_extractor.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/modules/feature_extractor.py) |
+| **1** | **GCP Cloud Run (Backend & Frontend)** | Serverless Compute | Containerize FastAPI backend (`gtip-backend`) ve Nginx React frontend (`gtip-web`) mikroservislerinin otomatik ölçeklenen (0-to-N autoscaling) HTTP servisleri olarak çalıştırılması. Backend: Memory 2Gi, CPU 2, concurrency 80. Frontend: Memory 512Mi, CPU 1. | [deploy_gcp.sh](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/deploy_gcp.sh), [Dockerfile](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/Dockerfile), [web/Dockerfile](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/web/Dockerfile) |
+| **2** | **GCP Artifact Registry** | Container Management | Docker konteyner imajlarının (`gtip-repo/backend:latest` ve `gtip-repo/web:latest`) güvenli ve versiyonlu olarak saklandığı merkezi imaj deposu. | [deploy_gcp.sh](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/deploy_gcp.sh) |
+| **3** | **GCP Cloud Build** | Serverless CI/CD | Backend ve Web Frontend kod değişikliklerinin bulut ortamında otomatik olarak Docker imajlarına dönüştürülmesi (`gcloud builds submit`). | [deploy_gcp.sh](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/deploy_gcp.sh) |
+| **4** | **GCP Vertex AI / Google GenAI SDK** | Foundation Models / AI | Gemini 2.5 Flash modelleri (`gemini-2.5-flash`, `gemini-2.5-flash-lite-preview-06-17`) ve `text-embedding-005` (768d) ile metin işleme, multimodal özellik çıkarımı ve vektörleştirme. | [config.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/config.py), [feature_extractor.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/modules/feature_extractor.py) |
 | **5** | **Vertex AI Context Caching** | AI Performance / Memory | TGTC 99 Fasıl izahnameleri ve GİR kurallarının Vertex AI belleğinde saklanarak yanıt süresinin **%60-70 düşürülmesi** ve token maliyetinin **%80 azaltılması**. | [context_cache_manager.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/modules/context_cache_manager.py) |
 | **6** | **GCP Cloud Storage (GCS)** | Object Storage | Yüklenen ürün görselleri, faturalar ve resmi evrakların saklandığı yüksek erişilebilirlikli bucket. Production'da gerçek GCS upload (`google-cloud-storage` SDK). Continuous learning kararları `continuous_learning/` prefix'i ile GCS'e kaydedilir. | [main.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/main.py), [sync_customs_data.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/sync_customs_data.py) |
 | **7** | **GCP Cloud Firestore** | NoSQL Database | Analiz oturum durumlarının (`gtip_sessions`), denetim kayıtlarının (`gtip_audit_logs`) esnek NoSQL yapısında saklanması. Emülatör modunda SQLite fallback kullanılır. | [audit_logger.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/db/audit_logger.py), [gcp_emulator.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/db/gcp_emulator.py) |
 | **8** | **GCP Identity-Aware Proxy (IAP)** | Security / SSO | Gümrük müşavirlerinin kurumsal Google Workspace e-postaları ile Zero-Trust mimarisinde şifresiz ve güvenli giriş yapması. Cloud Run `--no-allow-unauthenticated` ile IAP üzerinden kilitlidir. | [auth.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/security/auth.py) |
-| **9** | **GCP Cloud Scheduler & Cloud Run Jobs** | Serverless Cron Tasks | Ticaret Bakanlığı'nın güncel BTB kararlarını her gece otomatik çeken ve vektör veritabanını taze tutan serverless zamanlanmış görev. | [sync_customs_data.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/sync_customs_data.py) |
-| **10** | **GCP Secret Manager** | Güvenli Yapılandırma | `GEMINI_API_KEY` ve `JWT_SECRET_KEY` gibi kritik sırların kaynak koddan ayrılarak güvenli şekilde yönetilmesi. `config.py`'de önce env var, yoksa Secret Manager'dan okunur. | [config.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/config.py), [deploy_gcp.sh](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/deploy_gcp.sh) |
+| **9** | **GCP Cloud Scheduler & Cloud Run Jobs** | Serverless Cron Tasks | Ticaret Bakanlığı'nın güncel BTB kararlarını her gece otomatik çeken ve vektör veritabanını taze tutan serverless zamanlanmış görev (`gtip-btb-sync-job`). | [sync_customs_data.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/sync_customs_data.py), [deploy_gcp.sh](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/deploy_gcp.sh) |
+| **10** | **GCP Secret Manager** | Güvenli Yapılandırma | `gtip-gemini-api-key` ve `gtip-jwt-secret` gibi kritik sırların kaynak koddan ayrılarak güvenli şekilde yönetilmesi. `config.py`'de önce env var, yoksa Secret Manager'dan okunur. | [config.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/config.py), [deploy_gcp.sh](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/deploy_gcp.sh) |
 
 ---
 
@@ -25,15 +25,17 @@
 
 ```mermaid
 graph TD
-    User([Gümrük Müşaviri / İstemci]) -->|HTTPS / SSE Akış| IAP[GCP Cloud Identity-Aware Proxy]
+    User([Gümrük Müşaviri / İstemci]) -->|HTTPS Web UI| WEB[GCP Cloud Run - React Frontend]
+    WEB -->|REST / SSE Akış| IAP[GCP Cloud Identity-Aware Proxy]
 
     subgraph "GCP Security & Identity"
-        IAP -->|Google Workspace SSO Auth| CR[GCP Cloud Run - Serverless FastAPI]
+        IAP -->|Google Workspace SSO Auth| CR[GCP Cloud Run - Serverless FastAPI Backend]
         SM[GCP Secret Manager] -->|GEMINI_API_KEY / JWT_SECRET| CR
     end
 
     subgraph "GCP Compute & Deployment"
-        AR[GCP Artifact Registry] -->|Docker İmajı| CR
+        AR[GCP Artifact Registry] -->|Docker İmajları| CR
+        AR -->|Web İmajı| WEB
         CB[GCP Cloud Build] -->|CI/CD Derleme| AR
     end
 
@@ -50,7 +52,7 @@ graph TD
     end
 
     subgraph "Serverless Automation"
-        CS[GCP Cloud Scheduler] -->|Gece 02:00 Cron| CRJ[Cloud Run Jobs - BTB Scraper]
+        CS[GCP Cloud Scheduler] -->|Gece 02:00 Cron| CRJ[Cloud Run Jobs - gtip-btb-sync-job]
         CRJ -->|Ham Veri JSONL| GCS
         CRJ -->|text-embedding-005 JSONL| GCS
         CRJ -->|Yeni BTB Kayıtları| FS

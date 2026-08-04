@@ -232,11 +232,13 @@ async def analyze_product_batch(payload: BatchAnalyzeRequest, request: Request):
     if not clean_descs:
         raise HTTPException(status_code=400, detail="Geçerli ürün tanımı bulunamadı.")
 
+    batch_start = time.time()
     user_session = get_current_user_session(request)
 
     # asyncio.gather ile tüm analizleri concurrent olarak başlat
     tasks = [workflow_engine.start_analysis_async(desc) for desc in clean_descs]
     results = await asyncio.gather(*tasks, return_exceptions=False)
+    elapsed_ms = round((time.time() - batch_start) * 1000 / max(len(results), 1), 2)
 
     for dec in results:
         if dec.status == "COMPLETED" and dec.gtip_code:
@@ -249,7 +251,7 @@ async def analyze_product_batch(payload: BatchAnalyzeRequest, request: Request):
                 final_gtip_approved=dec.gtip_code,
                 confidence_score=dec.confidence_score,
                 is_hitl_triggered=False,
-                execution_time_ms=5.0
+                execution_time_ms=elapsed_ms
             ))
 
     return results

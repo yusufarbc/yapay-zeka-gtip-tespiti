@@ -91,7 +91,7 @@ class GTIPWorkflowEngine:
             "session_id": session_id
         }
         await asyncio.sleep(0.05)
-        features = feature_extractor.extract_features(raw_text, image_uri)
+        features = await asyncio.to_thread(feature_extractor.extract_features, raw_text, image_uri)
 
         yield {
             "stage": "RULE_ENGINE",
@@ -100,7 +100,7 @@ class GTIPWorkflowEngine:
             "session_id": session_id
         }
         await asyncio.sleep(0.05)
-        allowed_chapters, gir_rules = rule_engine.apply_rules(features)
+        allowed_chapters, gir_rules = await asyncio.to_thread(rule_engine.apply_rules, features)
 
         yield {
             "stage": "RAG_SEARCH",
@@ -109,7 +109,7 @@ class GTIPWorkflowEngine:
             "session_id": session_id
         }
         await asyncio.sleep(0.05)
-        candidates = rag_engine.search_candidates(features, allowed_chapters)
+        candidates = await asyncio.to_thread(rag_engine.search_candidates, features, allowed_chapters)
 
         if not candidates:
             decision = GTIPDecision(
@@ -134,9 +134,9 @@ class GTIPWorkflowEngine:
             "session_id": session_id
         }
         await asyncio.sleep(0.05)
-        predicates = predicate_registry.get_predicates_for_gtip(top_candidate.gtip_code)
-        verification_results = llm_verifier.verify_predicates(raw_text, predicates)
-        decision = deterministic_engine.evaluate_decision(session_id, top_candidate, verification_results)
+        predicates = await asyncio.to_thread(predicate_registry.get_predicates_for_gtip, top_candidate.gtip_code)
+        verification_results = await asyncio.to_thread(llm_verifier.verify_predicates, raw_text, predicates)
+        decision = await asyncio.to_thread(deterministic_engine.evaluate_decision, session_id, top_candidate, verification_results)
 
         state_dict: Dict[str, Any] = {
             "session_id": session_id,
@@ -186,6 +186,12 @@ class GTIPWorkflowEngine:
         # Kural ve RAG motorunu güncellenmiş özelliklerle yeniden çalıştır
         allowed_chapters, gir_rules = rule_engine.apply_rules(features)
         candidates = rag_engine.search_candidates(features, allowed_chapters)
+        if not candidates:
+            return GTIPDecision(
+                session_id=session_id,
+                status="MANUAL_REVIEW_REQUIRED",
+                audit_notes=["RAG uzayında uygun emsal karar bulunamadı. Kıdemli Müşavire yönlendirildi."]
+            )
         top_candidate = candidates[0]
 
         confidence = 0.95

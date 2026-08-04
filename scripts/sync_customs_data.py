@@ -41,7 +41,10 @@ def scrape_resmi_gazete_rss() -> List[Dict[str, str]]:
     updates = []
     try:
         url = "https://www.resmigazete.gov.tr/rss"
-        resp = requests.get(url, headers=HEADERS, verify=False, timeout=10)
+        try:
+            resp = requests.get(url, headers=HEADERS, verify=True, timeout=10)
+        except requests.exceptions.SSLError:
+            resp = requests.get(url, headers=HEADERS, verify=False, timeout=10)
         if resp.status_code == 200:
             root = ElementTree.fromstring(resp.content)
             for item in root.findall(".//item"):
@@ -71,7 +74,10 @@ def scrape_ticaret_bakanligi_btb_portal() -> List[Dict[str, Any]]:
     url = "https://uygulamalar.gtb.gov.tr/BTBArama"
     try:
         session = requests.Session()
-        resp = session.get(url, headers=HEADERS, verify=False, timeout=12)
+        try:
+            resp = session.get(url, headers=HEADERS, verify=True, timeout=12)
+        except requests.exceptions.SSLError:
+            resp = session.get(url, headers=HEADERS, verify=False, timeout=12)
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, 'html.parser')
             # Portal HTML tablosundaki resmi BTB satırlarını ayrıştır

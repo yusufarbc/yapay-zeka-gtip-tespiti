@@ -25,3 +25,28 @@ def test_workflow_end_to_end():
     pdf_bytes = pdf_exporter.generate_pdf_report(decision)
     assert pdf_bytes is not None
     assert len(pdf_bytes) > 50
+
+def test_security_auth_production_header_rejection():
+    from unittest.mock import MagicMock
+    from api.security.auth import get_current_user_session
+    from api.config import settings
+
+    req = MagicMock()
+    req.headers = {"X-User-Email": "attacker@evil.com", "X-User-Role": "admin"}
+    
+    # Geliştirme modunda X-User-Email okunmalı
+    dev_session = get_current_user_session(req)
+    assert dev_session.email == "attacker@evil.com"
+
+    # Production modunda X-User-Email reddedilmeli ve varsayılan anonim oturuma düşülmeli
+    old_env = settings.ENVIRONMENT
+    old_emu = settings.USE_GCP_EMULATOR
+    try:
+        settings.ENVIRONMENT = "production"
+        settings.USE_GCP_EMULATOR = False
+        prod_session = get_current_user_session(req)
+        assert prod_session.email != "attacker@evil.com"
+        assert prod_session.role != "admin"
+    finally:
+        settings.ENVIRONMENT = old_env
+        settings.USE_GCP_EMULATOR = old_emu
