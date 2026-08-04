@@ -1,10 +1,50 @@
-.venv
+# ==============================================================================
+# GTİP Projesi - Docker Build Dışında Kalacak Dosyalar
+# ==============================================================================
+
+# Git
 .git
 .gitignore
-web/node_modules
-web/dist
+.gitattributes
+
+# Python cache
+.venv
 __pycache__
 *.pyc
 *.pyo
 *.pyd
 .pytest_cache
+*.egg-info
+dist/
+build/
+
+# Test dosyaları
+tests/
+api/tests/
+
+# Arşiv ve geliştirme araçları
+archieve/
+.agents/
+*.md
+
+# Web frontend (ayrı deploy edilir)
+web/node_modules
+web/dist
+web/.next
+web/out
+
+# Yerel geliştirme veri dosyaları (GCS'ten çekilmeli)
+api/data/audit_logs.db
+api/data/vector_index.json
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# CI/CD scripts (container'da çalışmaz)
+scripts/evaluate_accuracy.py
+scripts/build_vector_index.py
+scripts/fetch_official_btb.py
+scripts/import_official_customs_excel.py

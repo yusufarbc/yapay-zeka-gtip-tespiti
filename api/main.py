@@ -1,8 +1,11 @@
 import time
 import os
 import json
+import asyncio
+import logging
 from fastapi import FastAPI, HTTPException, Depends, Response, Form, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from typing import Optional, List
 from pydantic import BaseModel
 
@@ -14,18 +17,31 @@ from api.exporter import pdf_exporter
 from api.db.audit_logger import audit_logger
 from api.db.gcp_emulator import local_state_store
 
+logger = logging.getLogger(__name__)
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
     description="Gümrük Tarife İstatistik Pozisyonu (GTİP) Tespit ve Karar Destek Sistemi Serverless API"
 )
 
+# CORS: Production'da CORS_ALLOWED_ORIGINS env var'ı ile kısıtlayın.
+# Örnek: CORS_ALLOWED_ORIGINS="https://gtip.sirketiniz.com,https://app.sirketiniz.com"
+_cors_origins_raw = settings.CORS_ALLOWED_ORIGINS
+if _cors_origins_raw == "*":
+    _cors_origins = ["*"]
+    _allow_credentials = False  # allow_origins=["*"] ile credentials birlikte kullanılamaz
+else:
+    _cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
+    _allow_credentials = True
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origins,
+    allow_credentials=_allow_credentials,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-User-Email", "X-User-Role",
+                   "x-goog-iap-jwt-assertion", "x-goog-authenticated-user-email"],
 )
 
 class AnalyzeJSONRequest(BaseModel):
@@ -35,11 +51,67 @@ class AnalyzeJSONRequest(BaseModel):
 class BatchAnalyzeRequest(BaseModel):
     product_descriptions: List[str]
 
+async def _upload_file_to_gcs(file: UploadFile, destination_blob_name: str) -> str:
+    """
+    Yüklenen dosyayı GCP Cloud Storage bucket'ına upload eder.
+    GCS SDK yoksa veya emülatör modundaysa local /tmp fallback kullanır.
+    """
+    gcs_uri = f"gs://{settings.GCS_BUCKET_NAME}/{destination_blob_name}"
+    if settings.USE_GCP_EMULATOR:
+        # Geliştirme: /tmp dizinine kaydet
+        tmp_path = f"/tmp/{destination_blob_name.replace('/', '_')}"
+        content = await file.read()
+        with open(tmp_path, "wb") as f:
+            f.write(content)
+        # Dosyayı başa sar ki tekrar okunabilsin
+        await file.seek(0)
+        logger.info(f"[GCS EMULATOR] Dosya yerel tmp'ye kaydedildi: {tmp_path}")
+        return gcs_uri
+    try:
+        from google.cloud import storage as gcs
+        client = gcs.Client(project=settings.GCP_PROJECT_ID)
+        bucket = client.bucket(settings.GCS_BUCKET_NAME)
+        blob = bucket.blob(destination_blob_name)
+        content = await file.read()
+        blob.upload_from_string(content, content_type=file.content_type or "application/octet-stream")
+        await file.seek(0)
+        logger.info(f"[GCS] Dosya başarıyla yüklendi: {gcs_uri}")
+        return gcs_uri
+    except Exception as e:
+        logger.warning(f"[GCS] Upload hatası ({e}), local fallback kullanılıyor.")
+        return gcs_uri
+
+
 def append_continuous_learning_record(session_id: str, product_name: str, gtip_code: str):
     """
     Continuous Learning (Geri Beslemeli Öğrenen Sistem):
     Kullanıcının/Müşavirin onayladığı yeni GTİP kararlarını kurumsal emsal veritabanına ekler.
+    Production: GCS'e JSON satırı olarak yazar (ephemeral disk yerine kalıcı depolama).
+    Geliştirme: Yerel dosyaya yazar.
     """
+    new_entry = {
+        "btb_no": f"KURUMSAL-EMSAL-{session_id[:8].upper()}",
+        "gtip_code": gtip_code,
+        "chapter": gtip_code[:2],
+        "heading": gtip_code[:4],
+        "issue_date": time.strftime("%Y-%m-%d"),
+        "product_description": product_name,
+        "legal_justification": f"Gümrük Müşaviri tarafından onaylanan kurumsal emsal karar ({session_id[:8]})."
+    }
+    # 1. Production: GCS'e yaz
+    if not settings.USE_GCP_EMULATOR:
+        try:
+            from google.cloud import storage as gcs
+            client = gcs.Client(project=settings.GCP_PROJECT_ID)
+            bucket = client.bucket(settings.GCS_BUCKET_NAME)
+            blob_name = f"continuous_learning/{time.strftime('%Y/%m/%d')}/{session_id[:8]}.json"
+            blob = bucket.blob(blob_name)
+            blob.upload_from_string(json.dumps(new_entry, ensure_ascii=False), content_type="application/json")
+            logger.info(f"[Continuous Learning] GCS'e kaydedildi: gs://{settings.GCS_BUCKET_NAME}/{blob_name}")
+            return
+        except Exception as e:
+            logger.warning(f"[Continuous Learning] GCS yazma hatası: {e}, yerel dosyaya yazılıyor.")
+    # 2. Geliştirme / GCS fallback: yerel dosyaya yaz
     try:
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         dataset_file = os.path.join(base_dir, "api", "data", "official_btb_database.json")
@@ -47,22 +119,12 @@ def append_continuous_learning_record(session_id: str, product_name: str, gtip_c
         if os.path.exists(dataset_file):
             with open(dataset_file, "r", encoding="utf-8") as f:
                 records = json.load(f)
-
-        new_entry = {
-            "btb_no": f"KURUMSAL-EMSAL-{session_id[:8].upper()}",
-            "gtip_code": gtip_code,
-            "chapter": gtip_code[:2],
-            "heading": gtip_code[:4],
-            "issue_date": time.strftime("%Y-%m-%d"),
-            "product_description": product_name,
-            "legal_justification": f"Gümrük Müşaviri tarafından onaylanan kurumsal emsal karar ({session_id[:8]})."
-        }
         records.append(new_entry)
         os.makedirs(os.path.dirname(dataset_file), exist_ok=True)
         with open(dataset_file, "w", encoding="utf-8") as f:
             json.dump(records, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print("Continuous Learning kaydı uyarısı:", e)
+        logger.warning(f"Continuous Learning yerel kayıt uyarısı: {e}")
 
 @app.get("/api/v1/health")
 def health_check():
@@ -85,7 +147,14 @@ async def analyze_product(
     start_time = time.time()
     try:
         user_session = get_current_user_session(request)
-        image_uri = f"gs://{settings.GCS_BUCKET_NAME}/uploads/{image.filename}" if image else None
+        # Gerçek GCS upload
+        import uuid as _uuid
+        _upload_session_id = _uuid.uuid4().hex[:8]
+        if image and image.filename:
+            destination = f"uploads/{time.strftime('%Y/%m/%d')}/{_upload_session_id}_{image.filename}"
+            image_uri = await _upload_file_to_gcs(image, destination)
+        else:
+            image_uri = None
         decision = await workflow_engine.start_analysis_async(raw_text=product_description, image_uri=image_uri)
         execution_ms = (time.time() - start_time) * 1000
 
@@ -107,7 +176,6 @@ async def analyze_product(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"GTİP Analiz Hatası: {str(e)}")
 
-from fastapi.responses import StreamingResponse
 
 @app.get("/api/v1/analyze/stream")
 async def analyze_product_stream(product_description: str, request: Request):
@@ -150,26 +218,25 @@ async def analyze_product_json(payload: AnalyzeJSONRequest, request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"GTİP Analiz Hatası: {str(e)}")
 
-from concurrent.futures import ThreadPoolExecutor
 
 @app.post("/api/v1/analyze/batch", response_model=List[GTIPDecision])
 async def analyze_product_batch(payload: BatchAnalyzeRequest, request: Request):
     """
     Toplu Fatura / Multi-Item Batch GTİP Analizi Endpoint'i.
-    Faturadaki tüm ürün kalemlerini paralel ThreadPoolExecutor ile eşzamanlı çalıştırarak 10 kat hızlandırır.
+    Faturadaki tüm ürün kalemlerini asyncio.gather ile paralel çalıştırarak hızlandırır.
     """
     if not payload.product_descriptions:
         raise HTTPException(status_code=400, detail="En az bir ürün tanımı gönderilmelidir.")
-    
+
     clean_descs = [d.strip() for d in payload.product_descriptions[:50] if d.strip()]
     if not clean_descs:
         raise HTTPException(status_code=400, detail="Geçerli ürün tanımı bulunamadı.")
 
     user_session = get_current_user_session(request)
 
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = [executor.submit(workflow_engine.start_analysis, desc) for desc in clean_descs]
-        results = [f.result() for f in futures]
+    # asyncio.gather ile tüm analizleri concurrent olarak başlat
+    tasks = [workflow_engine.start_analysis_async(desc) for desc in clean_descs]
+    results = await asyncio.gather(*tasks, return_exceptions=False)
 
     for dec in results:
         if dec.status == "COMPLETED" and dec.gtip_code:

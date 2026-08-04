@@ -111,17 +111,46 @@ class LocalVectorStore:
 
 class LocalStateStore:
     """
-    Offline Cloud Firestore State Emülatörü.
-    Oturum durumlarını ve HITL soru-cevap durumlarını yerelde saklar.
+    GCP Cloud Firestore Oturum State Yöneticisi.
+    Production: Firestore `gtip_sessions` koleksiyonu — Cloud Run restart'larında state korunur.
+    Geliştirme / emülatör: In-memory dict fallback.
     """
+    COLLECTION = "gtip_sessions"
+
     def __init__(self):
-        self._states: Dict[str, Dict[str, Any]] = {}
+        self._memory: Dict[str, Dict[str, Any]] = {}
+        self._firestore_client: Optional[Any] = None
+        self._init_firestore()
+
+    def _init_firestore(self):
+        try:
+            from api.config import settings
+            if settings.USE_GCP_EMULATOR:
+                return  # Geliştirmede memory kullan
+            from google.cloud import firestore
+            self._firestore_client = firestore.Client(project=settings.GCP_PROJECT_ID)
+        except Exception:
+            pass  # Firestore yoksa memory fallback
 
     def get_state(self, session_id: str) -> Optional[Dict[str, Any]]:
-        return self._states.get(session_id)
+        if self._firestore_client:
+            try:
+                doc = self._firestore_client.collection(self.COLLECTION).document(session_id).get()
+                if doc.exists:
+                    return doc.to_dict()
+            except Exception:
+                pass
+        return self._memory.get(session_id)
 
     def save_state(self, session_id: str, state: Dict[str, Any]):
-        self._states[session_id] = state
+        self._memory[session_id] = state  # Her zaman memory'e yaz (hızlı okuma için)
+        if self._firestore_client:
+            try:
+                self._firestore_client.collection(self.COLLECTION).document(session_id).set(state)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"[StateStore] Firestore yazma hatası: {e}")
 
 local_vector_store = LocalVectorStore()
 local_state_store = LocalStateStore()
+
