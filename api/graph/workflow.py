@@ -194,17 +194,29 @@ class GTIPWorkflowEngine:
             )
         top_candidate = candidates[0]
 
-        confidence = 0.95
+        is_yes = (selected_option_id == "OPT_YES" or "YES" in selected_option_id.upper() or "EVET" in selected_option_id.upper())
+        base_score = top_candidate.score if hasattr(top_candidate, 'score') and top_candidate.score else 0.85
+
+        if is_yes:
+            confidence = round(min(0.96, max(0.80, base_score * 1.05)), 2)
+            audit_note_msg = "Gümrük Müşaviri 'EVET' yanıtı verdi. Teknik şart doğrulandı."
+            llm_commentary = (
+                f"Yapay Zeka Ajan Değerlendirmesi: Gümrük Müşavirimizin seçtiği 'EVET' teyidi uyarınca "
+                f"ürünün niteliği ve ilgili fasıl notları %{int(confidence*100)} güven skoru ile doğrulanmıştır."
+            )
+        else:
+            # HAYIR yanıtında güven skoru düşer (%62 / ŞÜPHELİ UYARISI)
+            confidence = round(max(0.55, min(0.72, base_score * 0.70)), 2)
+            audit_note_msg = "⚠️ Gümrük Müşaviri 'HAYIR' yanıtı verdi. Teknik şart sağlanamadı (ŞÜPHELİ / DÜŞÜK GÜVEN)."
+            llm_commentary = (
+                f"⚠️ ŞÜPHELİ / UYUMSUZ TEYİT: Gümrük Müşavirimiz 'HAYIR (Teknik özellik sağlanmıyor)' yanıtını seçtiği için "
+                f"ürün bu pozisyonun yasal şartını karşılamamaktadır. Güven skoru %{int(confidence*100)} seviyesine düşürülmüştür. "
+                f"Alternatif tarife pozisyonu (örn. aksam/parça veya ikincil alt açılım) değerlendirilmelidir."
+            )
 
         official_statute_text = (
             f"Türk Gümrük Tarife Cetveli (TGTC) Madde {top_candidate.gtip_code[:4]} ve GİR Kuralları: "
             f"{top_candidate.description}. (Resmi Mevzuat Veritabanı Kaydı)"
-        )
-
-        llm_commentary = (
-            f"Yapay Zeka Ajan Değerlendirmesi: Gümrük Müşavirimizin seçtiği ek teknik teyit uyarınca "
-            f"ürünün {features.primary_material} niteliği ve ilgili fasıl notları doğrulanmış, "
-            f"%95 güven skoru ile {top_candidate.gtip_code} tarife pozisyonu kesinleştirilmiştir."
         )
 
         precedents = top_candidate.precedents

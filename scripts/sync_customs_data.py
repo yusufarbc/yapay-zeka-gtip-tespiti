@@ -160,8 +160,9 @@ def upload_raw_to_gcs(data: List[Dict[str, Any]]) -> str:
         blob.upload_from_string(json_content, content_type="application/json")
         logger.info(f"[GCS] ✅ {len(data)} kayıt başarıyla yüklendi: {gcs_uri}")
     except Exception as e:
-        logger.warning(f"[GCS] Yükleme hatası ({e}). Yerel dosyaya düşlüyor.")
-        local_path = f"/tmp/btb_scraped_{date_str}.json"
+        import tempfile
+        logger.warning(f"[GCS] Yükleme hatası ({e}). Yerel dosyaya düşülüyor.")
+        local_path = os.path.join(tempfile.gettempdir(), f"btb_scraped_{date_str}.json")
         with open(local_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         logger.info(f"[GCS Fallback] Yerel dosyaya kaydedildi: {local_path}")

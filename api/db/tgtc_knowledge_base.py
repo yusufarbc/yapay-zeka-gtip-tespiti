@@ -6,18 +6,120 @@ import re
 from typing import Dict, List
 
 KEYWORD_CHAPTER_MAP = {
-    "mas": "94", "sandalye": "94", "mobilya": "94", "koltuk": "94", "yatak": "94", "sehpa": "94",
-    "parfum": "33", "parfüm": "33", "kozmetik": "33", "krem": "33", "losyon": "33",
-    "ayakkab": "64", "ayakkabı": "64", "ayakkabi": "64", "bot": "64", "terlik": "64", "cizme": "64", "çizme": "64",
-    "cant": "42", "çant": "42", "cuzdan": "42", "cüzdan": "42", "bavul": "42", "saraciye": "42",
-    "oyuncak": "95", "kumandali": "95", "kumandalı": "95", "yaris arabas": "95", "yarış arabas": "95",
-    "arab": "87", "bisiklet": "87", "otomobil": "87", "tasit": "87", "taşıt": "87",
-    "bilgisayar": "84", "laptop": "84", "notebook": "84", "buzdolab": "84", "camasir": "84", "çamaşır": "84",
-    "iphone": "85", "akilli": "85", "akıllı": "85", "telefon": "85", "sarj": "85", "şarj": "85", "batarya": "85", "firca": "85", "fırça": "85", "tv": "85", "televizyon": "85",
-    "entegre": "85", "pdip": "85", "cip": "85", "çip": "85", "yari iletken": "85", "yarı iletken": "85", "transistor": "85", "transistör": "85", "mikroislemci": "85", "mikroişlemci": "85", "devre": "85", "elektronik": "85", "diyot": "85", "direnc": "85", "direnç": "85", "kondansator": "85", "kondansatör": "85", "trafo": "85", "guc kaynagi": "85", "güç kaynağı": "85", "entegre devre": "85",
-    "ilac": "30", "ilaç": "30", "parasetamol": "30", "asi": "30", "aşı": "30", "tablet": "30",
-    "lastik": "40", "kaucuk": "40", "kauçuk": "40", "zeytinyag": "15", "zeytinyağı": "15", "yag": "15", "yağ": "15", "kahve": "09", "cay": "09", "çay": "09",
-    "tuvalet": "48", "kagit": "48", "kağıt": "48", "seluloz": "48", "selüloz": "48", "ultrason": "90", "tibbi": "90", "tıbbi": "90", "cerrahi": "90"
+    # 01-05: Canlı Hayvanlar ve Hayvansal Ürünler
+    "sigir": "01", "sığır": "01", "dana": "01", "tavuk": "01", "civciv": "01", "koyun": "01",
+    "et": "02", "biftek": "02", "kıyma": "02", "biftek": "02", "kanat": "02",
+    "balik": "03", "balık": "03", "somon": "03", "karides": "03", "hamsi": "03", "levrek": "03",
+    "sut": "04", "süt": "04", "peynir": "04", "bal": "04", "yumurta": "04", "tereyag": "04", "tereyağı": "04",
+
+    # 06-14: Bitkisel ve Tarımsal Ürünler
+    "cicek": "06", "çiçek": "06", "orkide": "06", "fidan": "06", "bitki": "06",
+    "sebze": "07", "patates": "07", "domates": "07", "sogan": "07", "soğan": "07",
+    "meyve": "08", "elma": "08", "portakal": "08", "muz": "08", "fındık": "08", "findik": "08",
+    "kahve": "09", "cay": "09", "çay": "09", "karabiber": "09", "baharat": "09",
+    "bugday": "10", "buğday": "10", "misir": "10", "mısır": "10", "pirinc": "10", "pirinç": "10", "hububat": "10",
+    "un": "11", "nisasta": "11", "nişasta": "11", "malt": "11",
+    "soya": "12", "tohum": "12", "aycicegi": "12", "ayçiçeği": "12",
+    "bitkisel ozut": "13", "bitkisel özüt": "13", "zamk": "13",
+
+    # 15-24: Yağlar, Gıdalar, İçecekler, Tütün
+    "zeytinyag": "15", "zeytinyağı": "15", "aycicek yagi": "15", "ayçiçek yağı": "15", "yag": "15", "yağ": "15",
+    "konserve": "16", "ton baligi": "16", "ton balığı": "16",
+    "seker": "17", "şeker": "17", "sakkaroz": "17", "glukoz": "17",
+    "cikolata": "18", "çikolata": "18", "kakao": "18",
+    "biskuvi": "19", "bisküvi": "19", "gofret": "19", "makarna": "19", "ekmek": "19",
+    "salca": "20", "salça": "20", "meyve suyu": "20", "recel": "20", "reçel": "20",
+    "gida takviyesi": "21", "gıda takviyesi": "21", "vitamin": "21", "sos": "21",
+    "gazoz": "22", "kola": "22", "mesrubat": "22", "meşrubat": "22", "su": "22", "sarap": "22", "şarap": "22", "bira": "22",
+    "yem": "23", "kedi mamasi": "23", "kedi maması": "23", "kopek mamasi": "23", "köpek maması": "23",
+    "sigara": "24", "tutun": "24", "tütün": "24",
+
+    # 25-38: Mineraller, Kimyasallar, İlaç, Parfüm, Gübre
+    "cimento": "25", "çimento": "25", "tuz": "25", "alci": "25", "alçı": "25", "mermer ham": "25",
+    "cevher": "26", "demir cevheri": "26",
+    "benzin": "27", "dizel": "27", "motorin": "27", "petrol": "27", "madeni yag": "27", "madeni yağ": "27", "gres": "27",
+    "hidrojen": "28", "oksijen": "28", "asit": "28", "sodyum": "28",
+    "metanol": "29", "alkol": "29", "organik kimyasal": "29",
+    "ilac": "30", "ilaç": "30", "parasetamol": "30", "asi": "30", "aşı": "30", "tablet": "30", "serum": "30",
+    "gubre": "31", "gübre": "31", "ure": "31", "üre": "31", "azotlu gubre": "31",
+    "boya": "32", "cila": "32", "pigment": "32", "murekkep": "32", "mürekkep": "32",
+    "parfum": "33", "parfüm": "33", "kozmetik": "33", "krem": "33", "losyon": "33", "sampuan": "33", "şampuan": "33",
+    "deterjan": "34", "sabun": "34", "yikama": "34", "yıkama": "34",
+    "tutkal": "35", "yapistirici": "35", "yapıştırıcı": "35", "enzim": "35",
+    "patlayici": "36", "patlayıcı": "36", "kibrit": "36",
+    "fotograf": "37", "fotoğraf": "37", "film plaka": "37",
+    "bocek ilaci": "38", "böcek ilacı": "38", "dezenfektan": "38", "kimyasal": "38",
+
+    # 39-49: Plastik, Kauçuk, Deri, Ahşap, Kağıt
+    "plastik": "39", "polietilen": "39", "polipropilen": "39", "pvc": "39", "pet saklama": "39", "plastik kap": "39",
+    "lastik": "40", "kaucuk": "40", "kauçuk": "40", "oto lastigi": "40", "oto lastiği": "40",
+    "deri ham": "41", "vidala": "41", "post": "41",
+    "cant": "42", "çant": "42", "cuzdan": "42", "cüzdan": "42", "bavul": "42", "saraciye": "42", "deri canta": "42",
+    "kurk": "43", "kürk": "43",
+    "ahsap": "44", "ahşap": "44", "kereste": "44", "kontrplak": "44", "odun": "44",
+    "mantar": "45", "tapa": "45",
+    "bambu": "46", "hasir": "46", "hasır": "46", "sepet": "46",
+    "seluloz": "47", "selüloz": "47", "kagit hamuru": "47",
+    "kagit": "48", "kağıt": "48", "karton": "48", "tuvalet kagidi": "48", "tuvalet kağıdı": "48", "kutu kagit": "48",
+    "kitap": "49", "dergi": "49", "gazete": "49", "baski": "49", "baskı": "49",
+
+    # 50-63: Tekstil, Kumaş, Giyim
+    "ipek": "50",
+    "yun": "51", "yün": "51",
+    "pamuk": "52", "pamuklu": "52",
+    "keten": "53",
+    "filament": "54", "polyester kumaş": "54",
+    "sentetik kumaş": "55",
+    "nonwoven": "56", "tela": "56", "kece": "56", "keçe": "56", "halat": "56",
+    "hali": "57", "halı": "57", "kilim": "57",
+    "dantel": "58", "kurdele": "58", "serit": "58", "şerit": "58",
+    "branda": "59", "kaplama kumas": "59",
+    "orme kumas": "60", "örme kumaş": "60", "suprem": "60", "süprem": "60",
+    "t-shirt": "61", "tshirt": "61", "tişört": "61", "kazak": "61", "orme giyim": "61", "örme giyim": "61",
+    "pantolon": "62", "ceket": "62", "takim elbise": "62", "takım elbise": "62", "kaban": "62", "dokuma giyim": "62",
+    "nevresim": "63", "yatak ortusu": "63", "yatak örtüsü": "63", "havlu": "63", "perde": "63",
+
+    # 64-83: Ayakkabı, Seramik, Cam, Metaller, Aletler
+    "ayakkab": "64", "ayakkabı": "64", "ayakkabi": "64", "bot": "64", "terlik": "64", "cizme": "64", "çizme": "64", "sandalet": "64",
+    "sapka": "65", "şapka": "65", "kask": "65", "bere": "65",
+    "semsiye": "66", "şemsiye": "66",
+    "yapay cicek": "67", "yapay çiçek": "67",
+    "mermer": "68", "tas karo": "68", "taş karo": "68", "cimento esya": "68",
+    "seramik": "69", "porselen": "69", "fayans": "69", "karo": "69",
+    "cam": "70", "zuccaciye": "70", "züccaciye": "70", "sise": "70", "şişe": "70", "cam yunu": "70",
+    "altin": "71", "altın": "71", "gumus": "71", "gümüş": "71", "mücevher": "71", "mucevher": "71", "yüzük": "71",
+    "celik": "72", "çelik": "72", "demir": "72", "sac": "72",
+    "boru": "73", "profil": "73", "vida": "73", "civata": "73", "cıvata": "73", "celik esya": "73",
+    "bakir": "74", "bakır": "74", "bakir tel": "74",
+    "nikel": "75",
+    "aluminyum": "76", "alüminyum": "76", "aluminyum profil": "76",
+    "kursun": "78", "kurşun": "78",
+    "cinko": "79", "çinko": "79",
+    "kalay": "80",
+    "tungsten": "81", "titanyum": "81",
+    "el aleti": "82", "tornavida": "82", "pense": "82", "bicak": "82", "bıçak": "82",
+    "kilit": "83", "anahtar": "83", "kasa": "83",
+
+    # 84-85: Makineler, Bilgisayar, Elektronik
+    "bilgisayar": "84", "laptop": "84", "notebook": "84", "buzdolab": "84", "buzdolabı": "84", "camasir": "84", "çamaşır": "84", "pompa": "84", "kompresor": "84", "kompresör": "84", "klima": "84", "jenerator": "84", "jeneratör": "84", "vana": "84", "rulman": "84", "motor mekanik": "84",
+    "iphone": "85", "akilli": "85", "akıllı": "85", "telefon": "85", "sarj": "85", "şarj": "85", "batarya": "85", "aku": "85", "akü": "85", "firca": "85", "fırça": "85", "tv": "85", "televizyon": "85", "entegre": "85", "pdip": "85", "cip": "85", "çip": "85", "yari iletken": "85", "yarı iletken": "85", "transistor": "85", "transistör": "85", "mikroislemci": "85", "mikroişlemci": "85", "devre": "85", "elektronik": "85", "diyot": "85", "direnc": "85", "direnç": "85", "kondansator": "85", "kondansatör": "85", "trafo": "85", "guc kaynagi": "85", "güç kaynağı": "85", "entegre devre": "85",
+
+    # 86-93: Taşıtlar, Tıbbi Cihazlar, Saat, Silah
+    "vagon": "86", "lokomotif": "86", "ray": "86",
+    "arab": "87", "bisiklet": "87", "otomobil": "87", "tasit": "87", "taşıt": "87", "motosiklet": "87", "skuter": "87", "traktor": "87", "traktör": "87", "kamyon": "87", "otobus": "87", "otobüs": "87",
+    "drone": "88", "ucak": "88", "uçak": "88", "helikopter": "88",
+    "gemi": "89", "tekne": "89", "yat": "89", "bot": "89",
+    "ultrason": "90", "tibbi": "90", "tıbbi": "90", "cerrahi": "90", "mr cihaz": "90", "rontgen": "90", "röntgen": "90", "gozluk": "90", "gözlük": "90", "mikroskop": "90", "teleskop": "90",
+    "saat": "91", "kol saati": "91", "duvar saati": "91",
+    "gitar": "92", "piyano": "92", "keman": "92", "muzik aleti": "92", "müzik aleti": "92",
+    "silah": "93", "tufek": "93", "tüfek": "93", "tabanca": "93", "mermi": "93",
+
+    # 94-99: Mobilya, Oyuncaklar, Çeşitli Eşya
+    "mas": "94", "sandalye": "94", "mobilya": "94", "koltuk": "94", "yatak": "94", "sehpa": "94", "avize": "94", "led ampul": "94", "aydinlatma": "94", "aydınlatma": "94",
+    "oyuncak": "95", "kumandali": "95", "kumandalı": "95", "yaris arabas": "95", "yarış arabas": "95", "bebek oyuncak": "95", "top": "95", "spor aleti": "95",
+    "hijyenik ped": "96", "bebek bezi": "96", "tukenmez kalem": "96", "tükenmez kalem": "96", "cakmak": "96", "çakmak": "96", "fermuar": "96", "dugme": "96", "düğme": "96",
+    "tablo": "97", "antika": "97", "sanat eseri": "97",
+    "muafiyet": "98", "diplomatik": "99"
 }
 
 GIR_RULES = {

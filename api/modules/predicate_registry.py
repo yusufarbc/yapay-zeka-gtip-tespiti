@@ -146,30 +146,35 @@ class PredicateRegistryEngine:
     def get_predicates_for_gtip(self, gtip_code: str) -> List[LegalPredicate]:
         """
         GTİP koduna ait yasal koşul ağacını döndürür.
-        Önce 6 haneli HS koduna, sonra 4 haneli pozisyona bakar.
+        Önce 6 haneli HS koduna, sonra 4 haneli pozisyona, ardından Fasıl düzeyine bakar.
         """
+        from api.db.tgtc_knowledge_base import TGTC_CHAPTERS
+
         hs6 = gtip_code[:7].replace(".", "") if len(gtip_code) >= 6 else gtip_code[:6]
         pos4 = gtip_code[:4]
+        chap2 = gtip_code[:2]
 
-        # 6 haneli HS alt pozisyon kontrolü
+        # 1. 6 haneli HS alt pozisyon kontrolü
         for k in PREDICATE_REGISTRY:
             clean_k = k.replace(".", "")
             if clean_k == hs6 or clean_k == gtip_code[:len(clean_k)]:
                 return PREDICATE_REGISTRY[k]
 
-        # 4 haneli pozisyon kontrolü
+        # 2. 4 haneli pozisyon kontrolü
         for k in PREDICATE_REGISTRY:
             clean_k = k.replace(".", "")
             if clean_k[:4] == pos4:
                 return PREDICATE_REGISTRY[k]
 
-        # Jenerik Varsayılan Kural (Eğer spesifik pozisyon yazılmamışsa)
+        # 3. 99 Fasıl TGTC Mevzuat İzahnamesinden Dinamik Yasal Predikat Türetimi
+        chap_title = TGTC_CHAPTERS.get(chap2, "Genel Gümrük Tarife Cetveli Eşyası")
+
         return [
             LegalPredicate(
-                predicate_id=f"P_GENERIC_{pos4}",
-                description=f"Eşya TGTC Pozisyon {pos4} notlarında tanımlanan teknik niteliklere uygun mudur?",
+                predicate_id=f"P_{chap2}_{pos4}",
+                description=f"Ürün TGTC Fasıl {chap2} ({chap_title}) kapsamındaki {pos4} pozisyonu yasal tanımına ve teknik spesifikasyonlarına uygun mudur?",
                 required_value="TRUE",
-                statute_reference=f"TGTC Pozisyon {pos4} İzahnamesi & GİR 1/6"
+                statute_reference=f"TGTC Fasıl {chap2} İzahnamesi, Madde {pos4} & GİR 1/6"
             )
         ]
 

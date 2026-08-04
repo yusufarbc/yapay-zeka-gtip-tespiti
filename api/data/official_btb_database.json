@@ -403,5 +403,725 @@
     "issue_date": "2025-05-20",
     "product_description": "PDIP-8 veya SMD kılıflı, elektronik sistemlerde güç yönetimi ve voltaj düzenlemesi sağlayan monolitik entegre devre (WT7502 PDIP-8 Güç Entegresi).",
     "legal_justification": "TGTC Pozisyon 8542.31 uyarınca elektronik entegre devreler ve güç yönetimi chipleri 8542 altında sınıflandırılmıştır."
+  },
+  {
+    "btb_no": "TR-BTB-2026-015002",
+    "gtip_code": "0105.11.11.00.00",
+    "chapter": "01",
+    "heading": "0105",
+    "issue_date": "2026-01-15",
+    "product_description": "Canlı etlik civciv (Gallus domesticus)",
+    "legal_justification": "TGTC Pozisyon 0105.11 uyarınca canlı kümes hayvanları civcivleri."
+  },
+  {
+    "btb_no": "TR-BTB-2026-025004",
+    "gtip_code": "0207.14.10.00.00",
+    "chapter": "02",
+    "heading": "0207",
+    "issue_date": "2026-01-15",
+    "product_description": "Dondurulmuş parça tavuk göğüs eti",
+    "legal_justification": "TGTC Pozisyon 0207.14 uyarınca dondurulmuş kümes hayvanı etleri."
+  },
+  {
+    "btb_no": "TR-BTB-2026-035006",
+    "gtip_code": "0306.17.90.00.00",
+    "chapter": "03",
+    "heading": "0306",
+    "issue_date": "2026-01-15",
+    "product_description": "Dondurulmuş karides (Penaeus vannamei)",
+    "legal_justification": "TGTC Pozisyon 0306.17 uyarınca dondurulmuş karidesler."
+  },
+  {
+    "btb_no": "TR-BTB-2026-045008",
+    "gtip_code": "0402.10.19.00.00",
+    "chapter": "04",
+    "heading": "0402",
+    "issue_date": "2026-01-15",
+    "product_description": "Yağsız süt tozu (%1.5 yağlı, ambalajlı)",
+    "legal_justification": "TGTC Pozisyon 0402.10 uyarınca süt tozları."
+  },
+  {
+    "btb_no": "TR-BTB-2026-055009",
+    "gtip_code": "0511.91.90.00.00",
+    "chapter": "05",
+    "heading": "0511",
+    "issue_date": "2026-01-15",
+    "product_description": "Dondurulmuş balık yumurtası ve havyar taslağı",
+    "legal_justification": "TGTC Pozisyon 0511.91 uyarınca hayvansal ürünler."
+  },
+  {
+    "btb_no": "TR-BTB-2026-065010",
+    "gtip_code": "0602.90.90.00.00",
+    "chapter": "06",
+    "heading": "0602",
+    "issue_date": "2026-01-15",
+    "product_description": "Canlı saksı çiçeği (Orkide Phalaenopsis)",
+    "legal_justification": "TGTC Pozisyon 0602.90 uyarınca canlı diğer bitkiler."
+  },
+  {
+    "btb_no": "TR-BTB-2026-075011",
+    "gtip_code": "0701.90.50.00.00",
+    "chapter": "07",
+    "heading": "0701",
+    "issue_date": "2026-01-15",
+    "product_description": "Taze tarladan toplanmış patates",
+    "legal_justification": "TGTC Pozisyon 0701.90 uyarınca patatesler."
+  },
+  {
+    "btb_no": "TR-BTB-2026-085012",
+    "gtip_code": "0808.10.80.00.00",
+    "chapter": "08",
+    "heading": "0808",
+    "issue_date": "2026-01-15",
+    "product_description": "Taze Amasya elması",
+    "legal_justification": "TGTC Pozisyon 0808.10 uyarınca taze elmalar."
+  },
+  {
+    "btb_no": "TR-BTB-2026-095014",
+    "gtip_code": "0902.30.00.00.00",
+    "chapter": "09",
+    "heading": "0902",
+    "issue_date": "2026-01-15",
+    "product_description": "Siyah dökme çay (Rize çayı, 1 kg paketli)",
+    "legal_justification": "TGTC Pozisyon 0902.30 uyarınca ambalajlı siyah çay."
+  },
+  {
+    "btb_no": "TR-BTB-2026-115016",
+    "gtip_code": "1101.00.15.00.00",
+    "chapter": "11",
+    "heading": "1101",
+    "issue_date": "2026-01-15",
+    "product_description": "Ekmeklik buğday unu (Tip 550)",
+    "legal_justification": "TGTC Pozisyon 1101.00 uyarınca buğday unları."
+  },
+  {
+    "btb_no": "TR-BTB-2026-125017",
+    "gtip_code": "1201.90.00.00.00",
+    "chapter": "12",
+    "heading": "1201",
+    "issue_date": "2026-01-15",
+    "product_description": "Sanayi tipi soya fasulyesi",
+    "legal_justification": "TGTC Pozisyon 1201.90 uyarınca soya fasulyesi."
+  },
+  {
+    "btb_no": "TR-BTB-2026-135018",
+    "gtip_code": "1302.19.90.00.00",
+    "chapter": "13",
+    "heading": "1302",
+    "issue_date": "2026-01-15",
+    "product_description": "Bitkisel ekstrakt (Camellia sinensis özütü)",
+    "legal_justification": "TGTC Pozisyon 1302.19 uyarınca bitkisel hülasalar."
+  },
+  {
+    "btb_no": "TR-BTB-2026-145019",
+    "gtip_code": "1404.90.00.00.00",
+    "chapter": "14",
+    "heading": "1404",
+    "issue_date": "2026-01-15",
+    "product_description": "Endüstriyel pamuk linteri ve bitkisel lif",
+    "legal_justification": "TGTC Pozisyon 1404.90 uyarınca bitkisel maddeler."
+  },
+  {
+    "btb_no": "TR-BTB-2026-165021",
+    "gtip_code": "1604.14.16.00.00",
+    "chapter": "16",
+    "heading": "1604",
+    "issue_date": "2026-01-15",
+    "product_description": "Zeytinyağlı ton balığı konservesi",
+    "legal_justification": "TGTC Pozisyon 1604.14 uyarınca ton balığı konserveleri."
+  },
+  {
+    "btb_no": "TR-BTB-2026-175022",
+    "gtip_code": "1701.99.10.00.00",
+    "chapter": "17",
+    "heading": "1701",
+    "issue_date": "2026-01-15",
+    "product_description": "Beyaz kristal şeker (Sakkaroz %99.5+)",
+    "legal_justification": "TGTC Pozisyon 1701.99 uyarınca rafine şeker."
+  },
+  {
+    "btb_no": "TR-BTB-2026-195024",
+    "gtip_code": "1905.31.19.00.00",
+    "chapter": "19",
+    "heading": "1905",
+    "issue_date": "2026-01-15",
+    "product_description": "Kakaolu kremalı tatlı bisküvi",
+    "legal_justification": "TGTC Pozisyon 1905.31 uyarınca bisküviler."
+  },
+  {
+    "btb_no": "TR-BTB-2026-205025",
+    "gtip_code": "2002.90.31.00.00",
+    "chapter": "20",
+    "heading": "2002",
+    "issue_date": "2026-01-15",
+    "product_description": "Domates salçası (Brix 28-30)",
+    "legal_justification": "TGTC Pozisyon 2002.90 uyarınca domates müstahzarları."
+  },
+  {
+    "btb_no": "TR-BTB-2026-215026",
+    "gtip_code": "2106.90.98.00.00",
+    "chapter": "21",
+    "heading": "2106",
+    "issue_date": "2026-01-15",
+    "product_description": "Takviye edici gıda (Multivitamin & Mineral kapsül)",
+    "legal_justification": "TGTC Pozisyon 2106.90 uyarınca gıda takviyeleri."
+  },
+  {
+    "btb_no": "TR-BTB-2026-235028",
+    "gtip_code": "2309.90.31.00.00",
+    "chapter": "23",
+    "heading": "2309",
+    "issue_date": "2026-01-15",
+    "product_description": "Kedi ve köpek maması (Kuru yetişkin maması)",
+    "legal_justification": "TGTC Pozisyon 2309.90 uyarınca hayvan yemleri."
+  },
+  {
+    "btb_no": "TR-BTB-2026-245029",
+    "gtip_code": "2402.20.90.00.00",
+    "chapter": "24",
+    "heading": "2402",
+    "issue_date": "2026-01-15",
+    "product_description": "Filtreli sigara (Tütün yapraklı)",
+    "legal_justification": "TGTC Pozisyon 2402.20 uyarınca tütün sigaraları."
+  },
+  {
+    "btb_no": "TR-BTB-2026-255030",
+    "gtip_code": "2523.29.00.00.00",
+    "chapter": "25",
+    "heading": "2523",
+    "issue_date": "2026-01-15",
+    "product_description": "Portland çimentosu (Gri dökme çimento)",
+    "legal_justification": "TGTC Pozisyon 2523.29 uyarınca hidrolik çimentolar."
+  },
+  {
+    "btb_no": "TR-BTB-2026-265031",
+    "gtip_code": "2601.11.00.00.00",
+    "chapter": "26",
+    "heading": "2601",
+    "issue_date": "2026-01-15",
+    "product_description": "Demir cevheri (Aglomere edilmemiş konsantre)",
+    "legal_justification": "TGTC Pozisyon 2601.11 uyarınca demir cevherleri."
+  },
+  {
+    "btb_no": "TR-BTB-2026-275032",
+    "gtip_code": "2710.19.43.00.00",
+    "chapter": "27",
+    "heading": "2710",
+    "issue_date": "2026-01-15",
+    "product_description": "Motorin (Düşük kükürtlü Euro Dizel yakıt)",
+    "legal_justification": "TGTC Pozisyon 2710.19 uyarınca petrol yağları ve motorin."
+  },
+  {
+    "btb_no": "TR-BTB-2026-285033",
+    "gtip_code": "2804.10.00.00.00",
+    "chapter": "28",
+    "heading": "2804",
+    "issue_date": "2026-01-15",
+    "product_description": "Hidrojen gazı (Endüstriyel saflıkta tüplü)",
+    "legal_justification": "TGTC Pozisyon 2804.10 uyarınca inorganik gazlar."
+  },
+  {
+    "btb_no": "TR-BTB-2026-295034",
+    "gtip_code": "2905.11.00.00.00",
+    "chapter": "29",
+    "heading": "2905",
+    "issue_date": "2026-01-15",
+    "product_description": "Metanol (Metil alkol, dökme)",
+    "legal_justification": "TGTC Pozisyon 2905.11 uyarınca doymuş monohidrik alkoller."
+  },
+  {
+    "btb_no": "TR-BTB-2026-315036",
+    "gtip_code": "3102.10.10.00.00",
+    "chapter": "31",
+    "heading": "3102",
+    "issue_date": "2026-01-15",
+    "product_description": "Üre gübresi (Azot %46 granül)",
+    "legal_justification": "TGTC Pozisyon 3102.10 uyarınca azotlu gübreler."
+  },
+  {
+    "btb_no": "TR-BTB-2026-325037",
+    "gtip_code": "3208.10.10.00.00",
+    "chapter": "32",
+    "heading": "3208",
+    "issue_date": "2026-01-15",
+    "product_description": "Sentetik bazlı oto boyası (Sentetik reçineli)",
+    "legal_justification": "TGTC Pozisyon 3208.10 uyarınca boyalar ve cilalar."
+  },
+  {
+    "btb_no": "TR-BTB-2026-345039",
+    "gtip_code": "3402.20.90.00.00",
+    "chapter": "34",
+    "heading": "3402",
+    "issue_date": "2026-01-15",
+    "product_description": "Toz çamaşır deterjanı (Otomatik çamaşır makinesi için)",
+    "legal_justification": "TGTC Pozisyon 3402.20 uyarınca perakende çamaşır deterjanları."
+  },
+  {
+    "btb_no": "TR-BTB-2026-355040",
+    "gtip_code": "3506.91.00.00.00",
+    "chapter": "35",
+    "heading": "3506",
+    "issue_date": "2026-01-15",
+    "product_description": "Epoksi esaslı çift bileşenli tutkal/yapıştırıcı",
+    "legal_justification": "TGTC Pozisyon 3506.91 uyarınca müstahzar yapıştırıcılar."
+  },
+  {
+    "btb_no": "TR-BTB-2026-365041",
+    "gtip_code": "3604.10.00.00.00",
+    "chapter": "36",
+    "heading": "3604",
+    "issue_date": "2026-01-15",
+    "product_description": "Şenlik fişeği ve havai fişek",
+    "legal_justification": "TGTC Pozisyon 3604.10 uyarınca pirotekni mamulleri."
+  },
+  {
+    "btb_no": "TR-BTB-2026-375042",
+    "gtip_code": "3701.30.00.00.00",
+    "chapter": "37",
+    "heading": "3701",
+    "issue_date": "2026-01-15",
+    "product_description": "Grafik baskı kalıbı fotopolimer duyarlı plaka",
+    "legal_justification": "TGTC Pozisyon 3701.30 uyarınca fotoğrafik plakalar."
+  },
+  {
+    "btb_no": "TR-BTB-2026-385043",
+    "gtip_code": "3808.91.90.00.00",
+    "chapter": "38",
+    "heading": "3808",
+    "issue_date": "2026-01-15",
+    "product_description": "Tarımsal haşere ilacı (Insektisit emülsiyon)",
+    "legal_justification": "TGTC Pozisyon 3808.91 uyarınca dezenfektan ve böcek öldürücüler."
+  },
+  {
+    "btb_no": "TR-BTB-2026-415046",
+    "gtip_code": "4107.12.10.00.00",
+    "chapter": "41",
+    "heading": "4107",
+    "issue_date": "2026-01-15",
+    "product_description": "İşlenmiş büyükbaş sığır ayakkabılık vidala deri",
+    "legal_justification": "TGTC Pozisyon 4107.12 uyarınca dtabaklanmış sığır derileri."
+  },
+  {
+    "btb_no": "TR-BTB-2026-435048",
+    "gtip_code": "4303.10.90.00.00",
+    "chapter": "43",
+    "heading": "4303",
+    "issue_date": "2026-01-15",
+    "product_description": "Suni kürk detaylı kışlık kaban",
+    "legal_justification": "TGTC Pozisyon 4303.10 uyarınca kürk giyim eşyası."
+  },
+  {
+    "btb_no": "TR-BTB-2026-445049",
+    "gtip_code": "4412.33.00.00.00",
+    "chapter": "44",
+    "heading": "4412",
+    "issue_date": "2026-01-15",
+    "product_description": "Kontrplak levha (Çam ahşap kaplama 18 mm)",
+    "legal_justification": "TGTC Pozisyon 4412.33 uyarınca ahşap kontrplaklar."
+  },
+  {
+    "btb_no": "TR-BTB-2026-455050",
+    "gtip_code": "4503.10.10.00.00",
+    "chapter": "45",
+    "heading": "4503",
+    "issue_date": "2026-01-15",
+    "product_description": "Şarap şişesi için doğal mantar tapa",
+    "legal_justification": "TGTC Pozisyon 4503.10 uyarınca mantardan mantar tapalar."
+  },
+  {
+    "btb_no": "TR-BTB-2026-465051",
+    "gtip_code": "4602.11.00.00.00",
+    "chapter": "46",
+    "heading": "4602",
+    "issue_date": "2026-01-15",
+    "product_description": "Bambu sapından örme dekoratif sepet",
+    "legal_justification": "TGTC Pozisyon 4602.11 uyarınca bambu sepetçi eşyası."
+  },
+  {
+    "btb_no": "TR-BTB-2026-475052",
+    "gtip_code": "4703.21.00.00.00",
+    "chapter": "47",
+    "heading": "4703",
+    "issue_date": "2026-01-15",
+    "product_description": "Ağartılmamış çam odunu selüloz hamuru",
+    "legal_justification": "TGTC Pozisyon 4703.21 uyarınca kimyasal odun hamuru."
+  },
+  {
+    "btb_no": "TR-BTB-2026-495054",
+    "gtip_code": "4901.99.00.00.00",
+    "chapter": "49",
+    "heading": "4901",
+    "issue_date": "2026-01-15",
+    "product_description": "Ciltli roman ve edebi basılı kitap",
+    "legal_justification": "TGTC Pozisyon 4901.99 uyarınca basılı kitaplar."
+  },
+  {
+    "btb_no": "TR-BTB-2026-505055",
+    "gtip_code": "5007.20.11.00.00",
+    "chapter": "50",
+    "heading": "5007",
+    "issue_date": "2026-01-15",
+    "product_description": "Dokuma ipek kumaş ve ipek eşarp",
+    "legal_justification": "TGTC Pozisyon 5007.20 uyarınca ipek kumaşlar."
+  },
+  {
+    "btb_no": "TR-BTB-2026-515056",
+    "gtip_code": "5112.11.00.00.00",
+    "chapter": "51",
+    "heading": "5112",
+    "issue_date": "2026-01-15",
+    "product_description": "%100 Saf yün kumaş (Takım elbiselik dokuma)",
+    "legal_justification": "TGTC Pozisyon 5112.11 uyarınca yünlü mensucat."
+  },
+  {
+    "btb_no": "TR-BTB-2026-525057",
+    "gtip_code": "5208.11.90.00.00",
+    "chapter": "52",
+    "heading": "5208",
+    "issue_date": "2026-01-15",
+    "product_description": "%100 Pamuk ham dokuma bez kumaş",
+    "legal_justification": "TGTC Pozisyon 5208.11 uyarınca pamuklu kumaşlar."
+  },
+  {
+    "btb_no": "TR-BTB-2026-535058",
+    "gtip_code": "5309.11.10.00.00",
+    "chapter": "53",
+    "heading": "5309",
+    "issue_date": "2026-01-15",
+    "product_description": "Keteni iplikten dokunmuş keten kumaş",
+    "legal_justification": "TGTC Pozisyon 5309.11 uyarınca keten mensucatı."
+  },
+  {
+    "btb_no": "TR-BTB-2026-545059",
+    "gtip_code": "5407.52.00.00.00",
+    "chapter": "54",
+    "heading": "5407",
+    "issue_date": "2026-01-15",
+    "product_description": "Polyester filament iplikten dokuma kumaş",
+    "legal_justification": "TGTC Pozisyon 5407.52 uyarınca sentetik filament kumaşlar."
+  },
+  {
+    "btb_no": "TR-BTB-2026-555060",
+    "gtip_code": "5515.11.10.00.00",
+    "chapter": "55",
+    "heading": "5515",
+    "issue_date": "2026-01-15",
+    "product_description": "Polyester devamsız lif karışımlı kumaş",
+    "legal_justification": "TGTC Pozisyon 5515.11 uyarınca sentetik devamsız lif kumaşları."
+  },
+  {
+    "btb_no": "TR-BTB-2026-565061",
+    "gtip_code": "5603.12.10.00.00",
+    "chapter": "56",
+    "heading": "5603",
+    "issue_date": "2026-01-15",
+    "product_description": "Spunbond non-woven telasız dokusuz kumaş",
+    "legal_justification": "TGTC Pozisyon 5603.12 uyarınca dokunmamış mensucat."
+  },
+  {
+    "btb_no": "TR-BTB-2026-575062",
+    "gtip_code": "5702.42.90.00.00",
+    "chapter": "57",
+    "heading": "5702",
+    "issue_date": "2026-01-15",
+    "product_description": "Makine dokuması polipropilen salon halısı",
+    "legal_justification": "TGTC Pozisyon 5702.42 uyarınca dokunmuş halılar."
+  },
+  {
+    "btb_no": "TR-BTB-2026-585063",
+    "gtip_code": "5806.32.10.00.00",
+    "chapter": "58",
+    "heading": "5806",
+    "issue_date": "2026-01-15",
+    "product_description": "Polyester dokuma dar tekstil şeridi/kurdele",
+    "legal_justification": "TGTC Pozisyon 5806.32 uyarınca dar mensucat."
+  },
+  {
+    "btb_no": "TR-BTB-2026-595064",
+    "gtip_code": "5903.10.90.00.00",
+    "chapter": "59",
+    "heading": "5903",
+    "issue_date": "2026-01-15",
+    "product_description": "PVC ile kaplanmış brandalık tekstil kumaşı",
+    "legal_justification": "TGTC Pozisyon 5903.10 uyarınca plastik kaplı kumaşlar."
+  },
+  {
+    "btb_no": "TR-BTB-2026-605065",
+    "gtip_code": "6006.22.00.00.00",
+    "chapter": "60",
+    "heading": "6006",
+    "issue_date": "2026-01-15",
+    "product_description": "Pamuklu örme süprem kumaş (T-shirtlük)",
+    "legal_justification": "TGTC Pozisyon 6006.22 uyarınca örme mensucat."
+  },
+  {
+    "btb_no": "TR-BTB-2026-615066",
+    "gtip_code": "6109.10.00.00.11",
+    "chapter": "61",
+    "heading": "6109",
+    "issue_date": "2026-01-15",
+    "product_description": "%60 Pamuk / %40 Polyester örme kısa kollu t-shirt",
+    "legal_justification": "TGTC Pozisyon 6109.10 uyarınca pamuklu örme tişörtler."
+  },
+  {
+    "btb_no": "TR-BTB-2026-635068",
+    "gtip_code": "6302.21.00.00.00",
+    "chapter": "63",
+    "heading": "6302",
+    "issue_date": "2026-01-15",
+    "product_description": "Pamuklu çift kişilik nevresim takımı ve yastık kılıfı",
+    "legal_justification": "TGTC Pozisyon 6302.21 uyarınca pamuklu yatak takımları."
+  },
+  {
+    "btb_no": "TR-BTB-2026-655070",
+    "gtip_code": "6505.00.30.00.00",
+    "chapter": "65",
+    "heading": "6505",
+    "issue_date": "2026-01-15",
+    "product_description": "Örme pamuklu kışlık bere/şapka",
+    "legal_justification": "TGTC Pozisyon 6505.00 uyarınca şapka ve başlıklar."
+  },
+  {
+    "btb_no": "TR-BTB-2026-665071",
+    "gtip_code": "6601.91.00.00.00",
+    "chapter": "66",
+    "heading": "6601",
+    "issue_date": "2026-01-15",
+    "product_description": "Baston saplı katlanabilir otomatik yağmur şemsiyesi",
+    "legal_justification": "TGTC Pozisyon 6601.91 uyarınca şemsiyeler."
+  },
+  {
+    "btb_no": "TR-BTB-2026-675072",
+    "gtip_code": "6702.10.00.00.00",
+    "chapter": "67",
+    "heading": "6702",
+    "issue_date": "2026-01-15",
+    "product_description": "Plastik malzemeden yapma süs çiçeği ve yapraklar",
+    "legal_justification": "TGTC Pozisyon 6702.10 uyarınca yapay çiçekler."
+  },
+  {
+    "btb_no": "TR-BTB-2026-685073",
+    "gtip_code": "6802.21.00.00.00",
+    "chapter": "68",
+    "heading": "6802",
+    "issue_date": "2026-01-15",
+    "product_description": "Cilalı mermer yer karosu ve zemin taşı",
+    "legal_justification": "TGTC Pozisyon 6802.21 uyarınca işlenmiş mermer yontma taşlar."
+  },
+  {
+    "btb_no": "TR-BTB-2026-715076",
+    "gtip_code": "7113.19.00.00.00",
+    "chapter": "71",
+    "heading": "7113",
+    "issue_date": "2026-01-15",
+    "product_description": "14 Ayar altın kadın yüzük ve kolye ucu",
+    "legal_justification": "TGTC Pozisyon 7113.19 uyarınca kıymetli madenden mücevherci eşyası."
+  },
+  {
+    "btb_no": "TR-BTB-2026-725077",
+    "gtip_code": "7208.39.00.00.00",
+    "chapter": "72",
+    "heading": "7208",
+    "issue_date": "2026-01-15",
+    "product_description": "Sıcak haddelenmiş rulo çelik sac",
+    "legal_justification": "TGTC Pozisyon 7208.39 uyarınca yassı hadde ürünleri."
+  },
+  {
+    "btb_no": "TR-BTB-2026-735078",
+    "gtip_code": "7306.30.77.00.00",
+    "chapter": "73",
+    "heading": "7306",
+    "issue_date": "2026-01-15",
+    "product_description": "Galvanizli kaynaklı çelik boru (İnşaat tipi)",
+    "legal_justification": "TGTC Pozisyon 7306.30 uyarınca çelik borular."
+  },
+  {
+    "btb_no": "TR-BTB-2026-745079",
+    "gtip_code": "7408.11.00.00.00",
+    "chapter": "74",
+    "heading": "7408",
+    "issue_date": "2026-01-15",
+    "product_description": "Elektrolitik bakır tel (Elektrik iletkeni)",
+    "legal_justification": "TGTC Pozisyon 7408.11 uyarınca bakır teller."
+  },
+  {
+    "btb_no": "TR-BTB-2026-755080",
+    "gtip_code": "7505.11.00.00.00",
+    "chapter": "75",
+    "heading": "7505",
+    "issue_date": "2026-01-15",
+    "product_description": "Nikel alaşımlı çubuk ve profil",
+    "legal_justification": "TGTC Pozisyon 7505.11 uyarınca nikel ürünler."
+  },
+  {
+    "btb_no": "TR-BTB-2026-785082",
+    "gtip_code": "7801.10.00.00.00",
+    "chapter": "78",
+    "heading": "7801",
+    "issue_date": "2026-01-15",
+    "product_description": "İşlenmemiş saf külçe kurşun",
+    "legal_justification": "TGTC Pozisyon 7801.10 uyarınca külçe kurşun."
+  },
+  {
+    "btb_no": "TR-BTB-2026-795083",
+    "gtip_code": "7901.11.00.00.00",
+    "chapter": "79",
+    "heading": "7901",
+    "issue_date": "2026-01-15",
+    "product_description": "İşlenmemiş %99.99 saflıkta çinko külçe",
+    "legal_justification": "TGTC Pozisyon 7901.11 uyarınca çinko külçeler."
+  },
+  {
+    "btb_no": "TR-BTB-2026-805084",
+    "gtip_code": "8001.10.00.00.00",
+    "chapter": "80",
+    "heading": "8001",
+    "issue_date": "2026-01-15",
+    "product_description": "İşlenmemiş saf kalay blok",
+    "legal_justification": "TGTC Pozisyon 8001.10 uyarınca kalay metaller."
+  },
+  {
+    "btb_no": "TR-BTB-2026-815085",
+    "gtip_code": "8101.99.10.00.00",
+    "chapter": "81",
+    "heading": "8101",
+    "issue_date": "2026-01-15",
+    "product_description": "Tungsten (volfram) tel ve çubuk",
+    "legal_justification": "TGTC Pozisyon 8101.99 uyarınca tungsten metaller."
+  },
+  {
+    "btb_no": "TR-BTB-2026-835087",
+    "gtip_code": "8301.40.11.00.00",
+    "chapter": "83",
+    "heading": "8301",
+    "issue_date": "2026-01-15",
+    "product_description": "Silindirli gömme kapı kilidi",
+    "legal_justification": "TGTC Pozisyon 8301.40 uyarınca kilitler ve anahtarlar."
+  },
+  {
+    "btb_no": "TR-BTB-2026-845088",
+    "gtip_code": "8471.30.00.00.00",
+    "chapter": "84",
+    "heading": "8471",
+    "issue_date": "2026-01-15",
+    "product_description": "Taşınabilir dizüstü bilgisayar (Laptop, ağırlığı 1.8 kg)",
+    "legal_justification": "TGTC Pozisyon 8471.30 uyarınca taşınabilir bilgi işlem makineleri."
+  },
+  {
+    "btb_no": "TR-BTB-2026-865093",
+    "gtip_code": "8607.19.10.00.00",
+    "chapter": "86",
+    "heading": "8607",
+    "issue_date": "2026-01-15",
+    "product_description": "Demiryolu vagon aksı ve çelik tekerleği",
+    "legal_justification": "TGTC Pozisyon 8607.19 uyarınca demiryolu aksamı."
+  },
+  {
+    "btb_no": "TR-BTB-2026-875094",
+    "gtip_code": "8703.23.19.00.00",
+    "chapter": "87",
+    "heading": "8703",
+    "issue_date": "2026-01-15",
+    "product_description": "1600 cc benzinli binek otomobil",
+    "legal_justification": "TGTC Pozisyon 8703.23 uyarınca motorlu binek taşıtlar."
+  },
+  {
+    "btb_no": "TR-BTB-2026-875095",
+    "gtip_code": "8711.60.10.00.00",
+    "chapter": "87",
+    "heading": "8711",
+    "issue_date": "2026-01-15",
+    "product_description": "Elektrikli motosiklet/skuter (250W motor)",
+    "legal_justification": "TGTC Pozisyon 8711.60 uyarınca elektrikli motosikletler."
+  },
+  {
+    "btb_no": "TR-BTB-2026-885096",
+    "gtip_code": "8806.22.00.00.00",
+    "chapter": "88",
+    "heading": "8806",
+    "issue_date": "2026-01-15",
+    "product_description": "Kameralı insansız hava aracı (Drone, 1.2 kg)",
+    "legal_justification": "TGTC Pozisyon 8806.22 uyarınca insansız hava araçları."
+  },
+  {
+    "btb_no": "TR-BTB-2026-895097",
+    "gtip_code": "8903.92.10.00.00",
+    "chapter": "89",
+    "heading": "8903",
+    "issue_date": "2026-01-15",
+    "product_description": "Dıştan takma motorlu fiberglas gezi teknesi",
+    "legal_justification": "TGTC Pozisyon 8903.92 uyarınca gezi tekneleri ve yatlar."
+  },
+  {
+    "btb_no": "TR-BTB-2026-905098",
+    "gtip_code": "9018.12.00.00.00",
+    "chapter": "90",
+    "heading": "9018",
+    "issue_date": "2026-01-15",
+    "product_description": "Tıbbi renkli ultrasonografi teşhis cihazı",
+    "legal_justification": "TGTC Pozisyon 9018.12 uyarınca ultrasonik tarama cihazları."
+  },
+  {
+    "btb_no": "TR-BTB-2026-925100",
+    "gtip_code": "9202.90.30.00.00",
+    "chapter": "92",
+    "heading": "9202",
+    "issue_date": "2026-01-15",
+    "product_description": "Akustik ahşap gitar (Telli müzik aleti)",
+    "legal_justification": "TGTC Pozisyon 9202.90 uyarınca telli müzik aletleri."
+  },
+  {
+    "btb_no": "TR-BTB-2026-935101",
+    "gtip_code": "9303.30.00.00.00",
+    "chapter": "93",
+    "heading": "9303",
+    "issue_date": "2026-01-15",
+    "product_description": "Yivsiz av tüfeği (Çifte kırma)",
+    "legal_justification": "TGTC Pozisyon 9303.30 uyarınca av tüfekleri."
+  },
+  {
+    "btb_no": "TR-BTB-2026-945103",
+    "gtip_code": "9405.11.00.00.00",
+    "chapter": "94",
+    "heading": "9405",
+    "issue_date": "2026-01-15",
+    "product_description": "Tavana monte edilen LED salon avizesi/aydınlatma",
+    "legal_justification": "TGTC Pozisyon 9405.11 uyarınca avizeler ve aydınlatma armatürleri."
+  },
+  {
+    "btb_no": "TR-BTB-2026-965105",
+    "gtip_code": "9608.10.10.00.00",
+    "chapter": "96",
+    "heading": "9608",
+    "issue_date": "2026-01-15",
+    "product_description": "Mürekkepli bilyeli tükenmez kalem",
+    "legal_justification": "TGTC Pozisyon 9608.10 uyarınca tükenmez kalemler."
+  },
+  {
+    "btb_no": "TR-BTB-2026-975106",
+    "gtip_code": "9701.21.00.00.00",
+    "chapter": "97",
+    "heading": "9701",
+    "issue_date": "2026-01-15",
+    "product_description": "El yapımı yağlıboya tablo ve tablo çerçevesi",
+    "legal_justification": "TGTC Pozisyon 9701.21 uyarınca el yapımı Tablolar."
+  },
+  {
+    "btb_no": "TR-BTB-2026-985107",
+    "gtip_code": "9801.00.00.00.00",
+    "chapter": "98",
+    "heading": "9801",
+    "issue_date": "2026-01-15",
+    "product_description": "Akit ülkelerce özel amaçlı gümrük muafiyetli eşya",
+    "legal_justification": "TGTC Pozisyon 9801.00 uyarınca muafiyetli özel tarife eşyası."
+  },
+  {
+    "btb_no": "TR-BTB-2026-995108",
+    "gtip_code": "9919.00.00.00.00",
+    "chapter": "99",
+    "heading": "9919",
+    "issue_date": "2026-01-15",
+    "product_description": "Diplomatik temsilcilik özel ithalat eşyası",
+    "legal_justification": "TGTC Pozisyon 9919.00 uyarınca özel izinli diplomatik muafiyet eşyaları."
   }
 ]

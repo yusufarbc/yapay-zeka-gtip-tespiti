@@ -39,11 +39,32 @@ export const GTIPResultCard = ({ decision }) => {
 
   const confidencePercent = Math.round((decision.confidence_score || 0) * 100);
 
+  // Dinamik Güven Seviyesi ve Şüpheli Durum Yönetimi
+  let statusBadge = <span className="badge badge-success" style={{ padding: '4px 12px', fontSize: '0.8rem' }}>✓ Karar Kesinleşti (Yüksek Güven)</span>;
+  let borderColor = 'var(--status-emerald-border)';
+  let scoreColor = 'var(--status-emerald)';
+  let scoreBg = 'var(--status-emerald-bg)';
+  let scoreLabel = 'Yüksek Güven (Auditor Verified)';
+
+  if (confidencePercent < 80 && confidencePercent >= 60) {
+    statusBadge = <span className="badge badge-warning" style={{ padding: '4px 12px', fontSize: '0.8rem' }}>⚠️ ŞÜPHELİ / ORTA GÜVEN (Müşavir İncelemesi Önerilir)</span>;
+    borderColor = 'var(--status-amber-border)';
+    scoreColor = 'var(--status-amber)';
+    scoreBg = 'var(--status-amber-bg)';
+    scoreLabel = 'Şüpheli / Orta Güven';
+  } else if (confidencePercent < 60) {
+    statusBadge = <span className="badge badge-warning" style={{ padding: '4px 12px', fontSize: '0.8rem', background: '#fef2f2', color: '#dc2626', borderColor: '#fca5a5' }}>❌ DÜŞÜK GÜVEN / UYUMSUZ (Teknik Koşul Sağlanmadı)</span>;
+    borderColor = 'rgba(239, 68, 68, 0.4)';
+    scoreColor = '#dc2626';
+    scoreBg = '#fef2f2';
+    scoreLabel = 'Düşük Güven / Riskli';
+  }
+
   return (
     <div className="glass-panel" style={{
       padding: '28px',
       marginBottom: '24px',
-      border: '1px solid var(--status-emerald-border)',
+      border: `1.5px solid ${borderColor}`,
       background: 'var(--bg-surface)',
       boxShadow: 'var(--shadow-lg)'
     }}>
@@ -52,9 +73,7 @@ export const GTIPResultCard = ({ decision }) => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-            <span className="badge badge-success" style={{ padding: '4px 12px', fontSize: '0.8rem' }}>
-              ✓ Karar Kesinleşti
-            </span>
+            {statusBadge}
             <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
               Oturum ID: {decision.session_id.substring(0, 8)}
             </span>
@@ -83,17 +102,17 @@ export const GTIPResultCard = ({ decision }) => {
         {/* Güven Skoru Göstergesi */}
         <div style={{
           textAlign: 'right',
-          background: 'var(--status-emerald-bg)',
+          background: scoreBg,
           padding: '12px 20px',
           borderRadius: '12px',
-          border: '1px solid var(--status-emerald-border)',
-          boxShadow: '0 2px 8px rgba(5, 150, 105, 0.1)'
+          border: `1px solid ${borderColor}`,
+          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.05)'
         }}>
-          <div className="font-mono" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--status-emerald)', lineHeight: 1 }}>
+          <div className="font-mono" style={{ fontSize: '1.8rem', fontWeight: 800, color: scoreColor, lineHeight: 1 }}>
             %{confidencePercent}
           </div>
-          <span style={{ fontSize: '0.76rem', color: 'var(--status-emerald)', fontWeight: 700, marginTop: '4px', display: 'block' }}>
-            Güven Skoru (Auditor Verified)
+          <span style={{ fontSize: '0.76rem', color: scoreColor, fontWeight: 700, marginTop: '4px', display: 'block' }}>
+            {scoreLabel}
           </span>
         </div>
       </div>

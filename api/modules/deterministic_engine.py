@@ -35,10 +35,14 @@ class DeterministicDecisionEngine:
         verified_count = sum(1 for r in verification_results if r.status in [PredicateStatus.TRUE, PredicateStatus.FALSE])
         unknown_predicates = [r for r in verification_results if r.status == PredicateStatus.UNKNOWN]
 
-        # Matematiksel Güven Skoru Hesabı
-        calc_confidence = round(verified_count / total_count, 2)
-        # Taban güven skoru %95 (Tüm şartlar deterministik doğrulandıysa %96-99 verilir)
-        final_confidence = 0.96 if calc_confidence == 1.0 else round(0.70 + (calc_confidence * 0.25), 2)
+        # Dinamik Güven Skoru Hesabı: RAG Taban Skoru * Predikat Doğrulama Oranı
+        base_score = top_candidate.score if hasattr(top_candidate, 'score') and top_candidate.score else 0.80
+        calc_ratio = (verified_count / total_count) if total_count > 0 else 0.5
+
+        if calc_ratio == 1.0:
+            final_confidence = round(min(0.96, max(0.82, base_score * 1.05)), 2)
+        else:
+            final_confidence = round(max(0.58, min(0.78, base_score * (0.5 + 0.5 * calc_ratio))), 2)
 
         # Uygulanan yasal mevzuat metni
         official_statute = (
@@ -52,7 +56,7 @@ class DeterministicDecisionEngine:
         ]
 
         # 1. DURUM A: Tüm Yasal Şartlar Deterministik Olarak Doğrulandı (%100 Kesin Karar)
-        if not unknown_predicates and calc_confidence == 1.0:
+        if not unknown_predicates and calc_ratio == 1.0:
             llm_commentary = (
                 f"Yapay Zeka Mantıksal Doğrulama (Predicate Logic): Ürünün teknik özellikleri ve yasal predikat ağacı "
                 f"({verified_count}/{total_count} kural) %100 deterministik olarak doğrulanmış, halüsinasyon riski %0 tutularak "
