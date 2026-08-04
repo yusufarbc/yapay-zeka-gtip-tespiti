@@ -109,16 +109,19 @@ class LocalVectorStore:
         results.sort(key=lambda x: x["similarity_score"], reverse=True)
         return results[:top_k]
 
+import tempfile
+
 class LocalStateStore:
     """
-    GCP Cloud Firestore Oturum State Yöneticisi.
-    Production: Firestore `gtip_sessions` koleksiyonu — Cloud Run restart'larında state korunur.
-    Geliştirme / emülatör: In-memory dict fallback.
+    GCP Cloud Firestore & Disk Destekli Oturum State Yöneticisi.
+    Production: Multi-worker Cloud Run container ortamında disk (/tmp/gtip_sessions) ve Firestore entegrasyonu ile state korunur.
     """
     COLLECTION = "gtip_sessions"
 
     def __init__(self):
         self._memory: Dict[str, Dict[str, Any]] = {}
+        self._storage_dir = os.path.join(tempfile.gettempdir(), "gtip_sessions")
+        os.makedirs(self._storage_dir, exist_ok=True)
         self._firestore_client: Optional[Any] = None
         self._init_firestore()
 
@@ -126,24 +129,55 @@ class LocalStateStore:
         try:
             from api.config import settings
             if settings.USE_GCP_EMULATOR:
-                return  # Geliştirmede memory kullan
+                return  # Geliştirmede memory ve yerel disk kullan
             from google.cloud import firestore
             self._firestore_client = firestore.Client(project=settings.GCP_PROJECT_ID)
         except Exception:
-            pass  # Firestore yoksa memory fallback
+            pass  # Firestore bağlantı hatasında disk & memory fallback çalışır
 
     def get_state(self, session_id: str) -> Optional[Dict[str, Any]]:
+        # 1. Hızlı In-Memory Kontrol
+        if session_id in self._memory:
+            return self._memory[session_id]
+
+        # 2. Yerel Disk Fallback Kontrol (Multi-worker Cloud Run süreci paylaşımı)
+        file_path = os.path.join(self._storage_dir, f"{session_id}.json")
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    state = json.load(f)
+                    self._memory[session_id] = state
+                    return state
+            except Exception:
+                pass
+
+        # 3. Firestore Kontrolü
         if self._firestore_client:
             try:
                 doc = self._firestore_client.collection(self.COLLECTION).document(session_id).get()
                 if doc.exists:
-                    return doc.to_dict()
+                    state = doc.to_dict()
+                    self._memory[session_id] = state
+                    return state
             except Exception:
                 pass
-        return self._memory.get(session_id)
+
+        return None
 
     def save_state(self, session_id: str, state: Dict[str, Any]):
-        self._memory[session_id] = state  # Her zaman memory'e yaz (hızlı okuma için)
+        # 1. In-Memory Kayıt
+        self._memory[session_id] = state
+
+        # 2. Disk Dosyası Kaydı (Cloud Run Container süreci paylaşımı)
+        try:
+            file_path = os.path.join(self._storage_dir, f"{session_id}.json")
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"[StateStore] Disk yazma uyarısı: {e}")
+
+        # 3. Firestore Kaydı
         if self._firestore_client:
             try:
                 self._firestore_client.collection(self.COLLECTION).document(session_id).set(state)
