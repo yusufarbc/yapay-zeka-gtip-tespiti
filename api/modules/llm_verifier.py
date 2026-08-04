@@ -9,9 +9,12 @@ Metinde bilgi yoksa Asla Tahmin Etmez, `UNKNOWN` der.
 import json
 import re
 import os
+import logging
 from typing import List, Dict, Any
 from api.schemas.predicate import LegalPredicate, PredicateVerificationResult, PredicateStatus
 from api.config import settings
+
+logger = logging.getLogger("LLMFactVerifier")
 
 class LLMFactVerifier:
     def verify_predicates(
@@ -93,7 +96,7 @@ class LLMFactVerifier:
                     return final_results
 
             except Exception as e:
-                print("LLM Predicate Verifier uyarısı:", e)
+                logger.warning(f"LLM Predicate Verifier uyarısı: {e}")
 
         # 2. Deterministik Yerel Kural Doğrulayıcı (Offline / Fallback Mode)
         # Metindeki teknik kelimeleri ve parametreleri deterministik kontrol eder.
@@ -155,10 +158,9 @@ class LLMFactVerifier:
                     status = PredicateStatus.UNKNOWN
 
             else:
-                # Varsayılan doğrulanmış kabul (Eğer metin yeterince zenginse)
-                if len(text_lower) > 20:
-                    status = PredicateStatus.TRUE
-                    quote = raw_text[:40]
+                # Bilinmeyen / Metinde açık delil olmayan özel yasal şartlarda strictly UNKNOWN döndürülür
+                status = PredicateStatus.UNKNOWN
+                quote = None
 
             results.append(
                 PredicateVerificationResult(

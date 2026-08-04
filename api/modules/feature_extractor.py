@@ -104,7 +104,8 @@ class FeatureExtractor:
                         technical_specifications=llm_specs
                     )
             except Exception as e:
-                print("LLM Feature extraction uyarısı:", e)
+                import logging
+                logging.getLogger("FeatureExtractor").warning(f"LLM Feature extraction uyarısı: {e}")
 
         lines = [l.strip() for l in raw_text.split('\n') if l.strip()]
         product_name = lines[0][:80] if lines else "Analiz Edilen Ürün"
