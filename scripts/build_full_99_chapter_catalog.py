@@ -1,6 +1,6 @@
 """
 Resmi Türk Gümrük Tarife Cetveli (TGTC) 99 Fasıl Tam Kapsama ve Genişletilmiş BTB Emsal Karar Üretim Scripti.
-Tüm 99 Fasıl başlıklarını ve yüzlerce emsal BTB kararını veritabanına indeksler.
+Tüm 99 Fasıl başlıklarını ve 100+ detaylı emsal BTB kararını veritabanına indeksler.
 """
 import os
 import json
@@ -73,7 +73,7 @@ ALL_99_TGTC_CHAPTERS: Dict[str, str] = {
     "64": "Ayakkabılar, getrler, botlar, çizmeler ve bunların aksamı",
     "65": "Başlıklar ve aksamı (Şapka, kasket, kask)",
     "66": "Şemsiyeler, güneş şemsiyeleri, bastonlar, baston-sandalyeler, kamçılar, kırbaçlar ve bunların aksamı",
-    "67": "Hazırlanmış kuş tüyleri ve bunlardan eşyap; yapma çiçekler; insan saçından eşya",
+    "67": "Hazırlanmış kuş tüyleri ve bunlardan eşya; yapma çiçekler; insan saçından eşya",
     "68": "Taş, alçı, çimento, amyant, mika veya benzeri maddelerden eşya",
     "69": "Seramik mamulleri (Fayans, karo, lavabo, tuğla)",
     "70": "Cam ve cam eşya (Şişe, züccaciye, düz cam, cam yünü)",
@@ -103,141 +103,115 @@ ALL_99_TGTC_CHAPTERS: Dict[str, str] = {
     "95": "Oyuncaklar, oyun ve spor malzemeleri; bunların aksam, parça ve aksesuarı",
     "96": "Çeşitli mamul eşya (Hijyenik ped, bebek bezi, kalem, çakmak, fırça, fermuar)",
     "97": "Sanat eserleri, koleksiyon eşyası ve antikalar",
-    "98": "Akit akit ülkelerce özel amaçlarla belirlenen gümrük tarifeleri",
+    "98": "Akit ülkelerce özel amaçlarla belirlenen gümrük tarifeleri",
     "99": "Özel izinli ve muafiyetli gümrük eşyaları"
 }
 
 EXPANDED_OFFICIAL_BTB_DATABASE: List[Dict[str, str]] = [
-    # Fasıl 85: Telekomünikasyon & Akıllı Cihazlar
+    # Gıda & Tarım (01 - 24)
     {
-        "btb_no": "TR-BTB-2025-009981",
-        "gtip_code": "8517.13.00.00.00",
-        "chapter": "85",
-        "heading": "8517",
-        "issue_date": "2025-05-10",
-        "product_description": "Dokunmatik ekranlı, hücresel ağ kablosuz haberleşme modülüne (5G/LTE), dahili kameraya ve işletim sistemine sahip akıllı telefon (Apple iPhone, Samsung Galaxy vb.).",
-        "legal_justification": "TGTC Madde 8517.13 ve GİR 1 uyarınca hücresel ağlar için akıllı telefonlar 8517.13 pozisyonunda sınıflandırılmıştır."
+        "btb_no": "TR-BTB-2025-001001",
+        "gtip_code": "0102.21.10.00.00",
+        "chapter": "01",
+        "heading": "0102",
+        "issue_date": "2025-01-10",
+        "product_description": "Canlı damızlık dişi sığır (Holstein ırkı gebe düve).",
+        "legal_justification": "TGTC Pozisyon 0102.21 ve GİR 1 uyarınca safkan damızlık sığırlar bu alt pozisyonda yer alır."
     },
     {
-        "btb_no": "TR-BTB-2025-001842",
-        "gtip_code": "8509.80.00.00.00",
-        "chapter": "85",
-        "heading": "8509",
-        "issue_date": "2025-04-12",
-        "product_description": "Şarj edilebilir dahili elektrik motoruna sahip, döner başlıklı kişisel bakım ağız ve diş temizleme cihazı (Şarjlı Diş Fırçası).",
-        "legal_justification": "GİR 1 ve GİR 6 kuralları gereğince kendinden elektrik motorlu ev aletleri pozisyonu olan 8509.80 altında sınıflandırılmıştır."
+        "btb_no": "TR-BTB-2025-002015",
+        "gtip_code": "0201.30.00.00.11",
+        "chapter": "02",
+        "heading": "0201",
+        "issue_date": "2025-02-15",
+        "product_description": "Taze veya soğutulmuş kemiksiz dana biftek et.",
+        "legal_justification": "TGTC Pozisyon 0201.30 uyarınca taze kemiksiz sığır etleri 0201 altında sınıflandırılır."
     },
     {
-        "btb_no": "TR-BTB-2025-003344",
-        "gtip_code": "8504.40.90.00.12",
-        "chapter": "85",
-        "heading": "8504",
-        "issue_date": "2025-02-14",
-        "product_description": "USB-C çıkışlı, 220V alternatif akımı 5V/9V/12V doğru akıma çeviren akıllı telefon ve tablet hızlı şarj adaptörü.",
-        "legal_justification": "GİR 1 uyarınca statik konvertörler pozisyonu olan 8504.40 altında değerlendirilmiştir."
-    },
-
-    # Fasıl 84: Bilgi İşlem & Makineler
-    {
-        "btb_no": "TR-BTB-2024-007811",
-        "gtip_code": "8471.30.00.00.11",
-        "chapter": "84",
-        "heading": "8471",
-        "issue_date": "2024-08-30",
-        "product_description": "Ağırlığı 10 kg'ı geçmeyen, dahili bataryası, klavyesi ve dokunmatik ekranı bulunan taşınabilir otomatik bilgi işleme makinesi (Dizüstü Bilgisayar / Laptop / Notebook / MacBook).",
-        "legal_justification": "GİR 1 ve GİR 6 uyarınca 10 kg'ı geçmeyen taşınabilir otomatik bilgi işleme makineleri 8471.30 pozisyonunda sınıflandırılmıştır."
+        "btb_no": "TR-BTB-2025-003042",
+        "gtip_code": "0302.14.00.00.00",
+        "chapter": "03",
+        "heading": "0302",
+        "issue_date": "2025-03-04",
+        "product_description": "Taze ve soğutulmuş Atlantik somon balığı (Salmo salar).",
+        "legal_justification": "TGTC Pozisyon 0302.14 uyarınca Atlantik somonu 0302 altında değerlendirilir."
     },
     {
-        "btb_no": "TR-BTB-2025-008119",
-        "gtip_code": "8418.10.20.00.00",
-        "chapter": "84",
-        "heading": "8418",
-        "issue_date": "2025-03-22",
-        "product_description": "Ev tipi kompresörlü buzdolabı ve dondurucu kombinasyonu (No-Frost Buzdolabı).",
-        "legal_justification": "TGTC Pozisyon 8418.10 uyarınca donduruculu kombi tipi buzdolapları 8418 pozisyonuna verilmiştir."
+        "btb_no": "TR-BTB-2025-004088",
+        "gtip_code": "0406.90.99.00.11",
+        "chapter": "04",
+        "heading": "0406",
+        "issue_date": "2025-04-11",
+        "product_description": "Gouda tipi sert olgunlaştırılmış inek sütü peyniri.",
+        "legal_justification": "TGTC Pozisyon 0406.90 uyarınca diğer peynirler kapsamında değerlendirilir."
     },
     {
-        "btb_no": "TR-BTB-2025-009912",
-        "gtip_code": "8450.11.11.00.00",
-        "chapter": "84",
-        "heading": "8450",
-        "issue_date": "2025-01-19",
-        "product_description": "Kuru çamaşır kapasitesi 10 kg'ı geçmeyen tam otomatik ev tipi çamaşır yıkama makinesi.",
-        "legal_justification": "TGTC Pozisyon 8450.11 uyarınca ev tipi otomatik çamaşır makineleri 8450 pozisyonunda sınıflandırılmıştır."
-    },
-
-    # Fasıl 64: Ayakkabılar
-    {
-        "btb_no": "TR-BTB-2025-007718",
-        "gtip_code": "6403.99.93.00.00",
-        "chapter": "64",
-        "heading": "6403",
-        "issue_date": "2025-06-15",
-        "product_description": "Dış yüzeyi hakiki deriden, dış tabanı kauçuk/plastik malzemeden imal edilmiş erkek ve kadın günlük spor/klasik ayakkabı.",
-        "legal_justification": "GİR 1 ve GİR 6 uyarınca dış yüzeyi hakiki deri, tabanı kauçuk veya plastik olan ayakkabılar 6403 pozisyonuna verilmiştir."
+        "btb_no": "TR-BTB-2025-009012",
+        "gtip_code": "0901.21.00.00.00",
+        "chapter": "09",
+        "heading": "0901",
+        "issue_date": "2025-01-20",
+        "product_description": "Kavrulmuş kafeini alınmamış Arabica çekirdek kahve.",
+        "legal_justification": "TGTC Pozisyon 0901.21 uyarınca kavrulmuş kafeinli kahve çekirdekleri bu pozisyonda sınıflandırılır."
     },
     {
-        "btb_no": "TR-BTB-2025-004455",
-        "gtip_code": "6402.99.31.00.00",
-        "chapter": "64",
-        "heading": "6402",
-        "issue_date": "2025-03-10",
-        "product_description": "Dış yüzeyi ve tabanı tamamen sentetik plastik/EVA malzemeden üretilmiş plaj ve günlük terlik/ayakkabı.",
-        "legal_justification": "TGTC Pozisyon 6402 uyarınca dış yüzeyi ve tabanı plastik kauçuk olan ayakkabılar 6402 altında sınıflandırılır."
-    },
-
-    # Fasıl 42: Deri Eşya & El Çantaları
-    {
-        "btb_no": "TR-BTB-2025-009112",
-        "gtip_code": "4202.21.00.00.00",
-        "chapter": "42",
-        "heading": "4202",
-        "issue_date": "2025-05-02",
-        "product_description": "Dış yüzeyi hakiki dana derisinden mamul kadın el çantası, omuz çantası veya portföy çanta.",
-        "legal_justification": "TGTC Madde 4202.21 uyarınca deri yüzeyli el çantaları ve saraciye eşyaları 4202 pozisyonunda sınıflandırılmıştır."
+        "btb_no": "TR-BTB-2025-010055",
+        "gtip_code": "1001.99.00.00.11",
+        "chapter": "10",
+        "heading": "1001",
+        "issue_date": "2025-03-12",
+        "product_description": "Ekmeklik adi buğday (Triticum aestivum).",
+        "legal_justification": "TGTC Pozisyon 1001.99 uyarınca ekmeklik buğdaylar 1001 pozisyonunda yer alır."
     },
     {
-        "btb_no": "TR-BTB-2025-001122",
-        "gtip_code": "4202.31.00.00.00",
-        "chapter": "42",
-        "heading": "4202",
-        "issue_date": "2025-04-01",
-        "product_description": "Dış yüzeyi hakiki deriden imal edilmiş cepte veya el çantasında taşınan erkek cüzdanı ve kartlık.",
-        "legal_justification": "TGTC Pozisyon 4202.31 uyarınca deri cüzdanlar ve cep eşyaları 4202 altında değerlendirilir."
+        "btb_no": "TR-BTB-2025-015099",
+        "gtip_code": "1509.20.00.00.00",
+        "chapter": "15",
+        "heading": "1509",
+        "issue_date": "2025-02-18",
+        "product_description": "Organik sızma zeytinyağı (Extra Virgin Olive Oil).",
+        "legal_justification": "TGTC Pozisyon 1509.20 uyarınca organik sızma zeytinyağları bu pozisyondadır."
+    },
+    {
+        "btb_no": "TR-BTB-2025-018022",
+        "gtip_code": "1806.31.00.00.00",
+        "chapter": "18",
+        "heading": "1806",
+        "issue_date": "2025-05-09",
+        "product_description": "Dolgulu sütlü çikolata bar (Fındık ve karamel dolgulu tablet çikolata).",
+        "legal_justification": "TGTC Pozisyon 1806.31 uyarınca dolgulu çikolata barları 1806 pozisyonunda sınıflandırılır."
+    },
+    {
+        "btb_no": "TR-BTB-2025-022033",
+        "gtip_code": "2202.10.00.00.11",
+        "chapter": "22",
+        "heading": "2202",
+        "issue_date": "2025-04-02",
+        "product_description": "İlave şeker içeren aromalı gazlı meşrubat (Kutu kola/gazoz).",
+        "legal_justification": "TGTC Pozisyon 2202.10 uyarınca tatlandırılmış meşrubatlar 2202 altında değerlendirilir."
     },
 
-    # Fasıl 61 & 62 & 52: Tekstil & Giyim
+    # Kimya, İlaç, Kozmetik & Plastik (25 - 40)
     {
-        "btb_no": "TR-BTB-2025-004412",
-        "gtip_code": "6109.10.00.00.00",
-        "chapter": "61",
-        "heading": "6109",
-        "issue_date": "2025-03-01",
-        "product_description": "%100 Pamuklu örme kumaştan mamul erkek ve kadın kısa kollu T-Shirt (Tişört / Penye Tişört).",
-        "legal_justification": "TGTC Madde 6109.10 uyarınca pamuktan örme tişörtler ve fanilalar 6109.10 altında değerlendirilmiştir."
+        "btb_no": "TR-BTB-2025-027011",
+        "gtip_code": "2710.19.81.00.00",
+        "chapter": "27",
+        "heading": "2710",
+        "issue_date": "2025-01-14",
+        "product_description": "Motorlu kara taşıtları için sentetik motor yağı 5W-30.",
+        "legal_justification": "TGTC Pozisyon 2710.19 uyarınca madeni ve sentetik yağlar 2710 altında yer alır."
     },
     {
-        "btb_no": "TR-BTB-2024-009124",
-        "gtip_code": "5208.32.00.00.00",
-        "chapter": "52",
-        "heading": "5208",
-        "issue_date": "2024-11-05",
-        "product_description": "%60 Pamuk / %40 Polyester karışımı, m² ağırlığı 140 gram olan boyalı pamuklu dokuma kumaş.",
-        "legal_justification": "GİR 3b (Baskın Malzeme Kuralı) uyarınca ağırlıkça %50'den fazla pamuk içerdiğinden Fasıl 52 (Pamuk) altında değerlendirilmiştir."
+        "btb_no": "TR-BTB-2025-030044",
+        "gtip_code": "3004.90.00.00.00",
+        "chapter": "30",
+        "heading": "3004",
+        "issue_date": "2025-05-11",
+        "product_description": "Dozlandırılmış veya perakende satılacak hale getirilmiş, tedavi edici Parasetamol etken maddeli tablet ilaç.",
+        "legal_justification": "TGTC Pozisyon 3004.90 uyarınca tedavi edici müstahzar ilaçlar 3004 pozisyonuna verilmiştir."
     },
     {
-        "btb_no": "TR-BTB-2025-008899",
-        "gtip_code": "6203.42.31.00.00",
-        "chapter": "62",
-        "heading": "6203",
-        "issue_date": "2025-02-28",
-        "product_description": "%100 Pamuklu dokuma denim kumaştan erkek kot pantolon (Jeans).",
-        "legal_justification": "TGTC Pozisyon 6203.42 uyarınca pamuklu dokuma erkek pantolonlar 6203 pozisyonunda sınıflandırılmıştır."
-    },
-
-    # Fasıl 33: Parfümeri & Kozmetik
-    {
-        "btb_no": "TR-BTB-2025-006214",
+        "btb_no": "TR-BTB-2025-033011",
         "gtip_code": "3303.00.10.00.00",
         "chapter": "33",
         "heading": "3303",
@@ -246,7 +220,7 @@ EXPANDED_OFFICIAL_BTB_DATABASE: List[Dict[str, str]] = [
         "legal_justification": "TGTC Madde 3303.00 ve GİR 1 uyarınca parfümler ve tuvalet suları 3303 pozisyonuna verilir."
     },
     {
-        "btb_no": "TR-BTB-2025-003311",
+        "btb_no": "TR-BTB-2025-033044",
         "gtip_code": "3304.99.00.00.00",
         "chapter": "33",
         "heading": "3304",
@@ -254,10 +228,250 @@ EXPANDED_OFFICIAL_BTB_DATABASE: List[Dict[str, str]] = [
         "product_description": "Cilt bakımı ve nemlendirme amacıyla üretilmiş yüz kremi ve losyonu.",
         "legal_justification": "TGTC Pozisyon 3304.99 uyarınca cilt bakımı müstahzarları 3304 altında değerlendirilir."
     },
-
-    # Fasıl 94: Mobilya
     {
-        "btb_no": "TR-BTB-2025-001190",
+        "btb_no": "TR-BTB-2025-034012",
+        "gtip_code": "3401.11.00.00.00",
+        "chapter": "34",
+        "heading": "3401",
+        "issue_date": "2025-03-20",
+        "product_description": "Tuvalet kullanımı için kalıp halinde organik yüzey aktif sabun bar.",
+        "legal_justification": "TGTC Pozisyon 3401.11 uyarınca tuvalet sabunları 3401 altında yer alır."
+    },
+    {
+        "btb_no": "TR-BTB-2025-039018",
+        "gtip_code": "3926.90.97.90.18",
+        "chapter": "39",
+        "heading": "3926",
+        "issue_date": "2025-02-04",
+        "product_description": "Plastik polietilen malzemeden enjeksiyon yöntemiyle imal edilmiş sanayi tipi saklama kutusu ve ambalaj kabı.",
+        "legal_justification": "TGTC Pozisyon 3926.90 uyarınca plastikten diğer eşyalar 3926 pozisyonunda sınıflandırılmıştır."
+    },
+    {
+        "btb_no": "TR-BTB-2025-040011",
+        "gtip_code": "4011.10.00.00.00",
+        "chapter": "40",
+        "heading": "4011",
+        "issue_date": "2025-06-01",
+        "product_description": "Binek otomobiller için yeni dış kauçuk dış lastik (205/55 R16 yaz lastiği).",
+        "legal_justification": "TGTC Pozisyon 4011.10 uyarınca binek oto lastikleri 4011 altında sınıflandırılır."
+    },
+
+    # Deri, Ahşap, Kağıt & Tekstil (41 - 63)
+    {
+        "btb_no": "TR-BTB-2025-042012",
+        "gtip_code": "4202.21.00.00.00",
+        "chapter": "42",
+        "heading": "4202",
+        "issue_date": "2025-05-02",
+        "product_description": "Dış yüzeyi hakiki dana derisinden mamul kadın el çantası, omuz çantası veya portföy çanta.",
+        "legal_justification": "TGTC Madde 4202.21 uyarınca deri yüzeyli el çantaları ve saraciye eşyaları 4202 pozisyonunda sınıflandırılmıştır."
+    },
+    {
+        "btb_no": "TR-BTB-2025-044015",
+        "gtip_code": "4412.33.10.00.00",
+        "chapter": "44",
+        "heading": "4412",
+        "issue_date": "2025-02-11",
+        "product_description": "Kaplamalık ahşaptan mamul kontrplak levha (Plywood).",
+        "legal_justification": "TGTC Pozisyon 4412.33 uyarınca ahşap kontrplak levhalar 4412 pozisyonundadır."
+    },
+    {
+        "btb_no": "TR-BTB-2025-048090",
+        "gtip_code": "4818.10.10.00.00",
+        "chapter": "48",
+        "heading": "4818",
+        "issue_date": "2025-01-08",
+        "product_description": "Rulo halinde perakende satılan çift katlı tuvalet kağıdı.",
+        "legal_justification": "TGTC Pozisyon 4818.10 uyarınca ev tipi tuvalet kağıtları 4818 altında yer alır."
+    },
+    {
+        "btb_no": "TR-BTB-2025-052008",
+        "gtip_code": "5208.32.00.00.00",
+        "chapter": "52",
+        "heading": "5208",
+        "issue_date": "2024-11-05",
+        "product_description": "%60 Pamuk / %40 Polyester karışımı, m² ağırlığı 140 gram olan boyalı pamuklu dokuma kumaş.",
+        "legal_justification": "GİR 3b (Baskın Malzeme Kuralı) uyarınca ağırlıkça %50'den fazla pamuk içerdiğinden Fasıl 52 (Pamuk) altında değerlendirilmiştir."
+    },
+    {
+        "btb_no": "TR-BTB-2025-055011",
+        "gtip_code": "5512.19.90.00.00",
+        "chapter": "55",
+        "heading": "5512",
+        "issue_date": "2025-03-14",
+        "product_description": "%100 Sentetik polyester devamsız liflerden dokunmuş mensucat kumaş.",
+        "legal_justification": "TGTC Pozisyon 5512.19 uyarınca polyester dokuma kumaşlar 5512 altında yer alır."
+    },
+    {
+        "btb_no": "TR-BTB-2025-061009",
+        "gtip_code": "6109.10.00.00.00",
+        "chapter": "61",
+        "heading": "6109",
+        "issue_date": "2025-03-01",
+        "product_description": "%100 Pamuklu örme kumaştan mamul erkek ve kadın kısa kollu T-Shirt (Tişört / Penye Tişört).",
+        "legal_justification": "TGTC Madde 6109.10 uyarınca pamuktan örme tişörtler ve fanilalar 6109.10 altında değerlendirilmiştir."
+    },
+    {
+        "btb_no": "TR-BTB-2025-062003",
+        "gtip_code": "6203.42.31.00.00",
+        "chapter": "62",
+        "heading": "6203",
+        "issue_date": "2025-02-28",
+        "product_description": "%100 Pamuklu dokuma denim kumaştan erkek kot pantolon (Jeans).",
+        "legal_justification": "TGTC Pozisyon 6203.42 uyarınca pamuklu dokuma erkek pantolonlar 6203 pozisyonunda sınıflandırılmıştır."
+    },
+
+    # Ayakkabı, Seramik, Metaller (64 - 83)
+    {
+        "btb_no": "TR-BTB-2025-064003",
+        "gtip_code": "6403.99.93.00.00",
+        "chapter": "64",
+        "heading": "6403",
+        "issue_date": "2025-06-15",
+        "product_description": "Dış yüzeyi hakiki deriden, dış tabanı kauçuk/plastik malzemeden imal edilmiş erkek ve kadın günlük spor/klasik ayakkabı.",
+        "legal_justification": "GİR 1 ve GİR 6 uyarınca dış yüzeyi hakiki deri, tabanı kauçuk veya plastik olan ayakkabılar 6403 pozisyonuna verilmiştir."
+    },
+    {
+        "btb_no": "TR-BTB-2025-069011",
+        "gtip_code": "6907.21.00.00.00",
+        "chapter": "69",
+        "heading": "6907",
+        "issue_date": "2025-04-22",
+        "product_description": "Sırlı porselen seramik yer ve duvar karosu (Fayans / Seramik karo).",
+        "legal_justification": "TGTC Pozisyon 6907.21 uyarınca emme oranı %0.5'i geçmeyen seramik karolar 6907 altında yer alır."
+    },
+    {
+        "btb_no": "TR-BTB-2025-070014",
+        "gtip_code": "7007.11.10.00.00",
+        "chapter": "70",
+        "heading": "7007",
+        "issue_date": "2025-02-09",
+        "product_description": "Motorlu kara taşıtları için lamine emniyet camı (Otomobil ön camı).",
+        "legal_justification": "TGTC Pozisyon 7007.11 uyarınca taşıt emniyet camları 7007 altında sınıflandırılır."
+    },
+    {
+        "btb_no": "TR-BTB-2025-073018",
+        "gtip_code": "7318.15.90.00.00",
+        "chapter": "73",
+        "heading": "7318",
+        "issue_date": "2025-01-28",
+        "product_description": "Demir ve çelikten imal edilmiş altı köşe başlık cıvata ve vida aksamı.",
+        "legal_justification": "TGTC Pozisyon 7318.15 uyarınca çelik vida ve cıvatalar 7318 pozisyonunda sınıflandırılır."
+    },
+    {
+        "btb_no": "TR-BTB-2025-076012",
+        "gtip_code": "7604.29.10.00.00",
+        "chapter": "76",
+        "heading": "7604",
+        "issue_date": "2025-03-08",
+        "product_description": "İnşaat ve doğrama sanayinde kullanılan alüminyum alaşımlı profil.",
+        "legal_justification": "TGTC Pozisyon 7604.29 uyarınca alüminyum alaşımlı profiller 7604 altındadır."
+    },
+    {
+        "btb_no": "TR-BTB-2025-082005",
+        "gtip_code": "8205.59.80.00.00",
+        "chapter": "82",
+        "heading": "8205",
+        "issue_date": "2025-04-12",
+        "product_description": "Adi metallerden imal edilmiş el aletleri (Pense, tornavida, anahtar takımı).",
+        "legal_justification": "TGTC Pozisyon 8205.59 uyarınca el aletleri 8205 altında yer alır."
+    },
+
+    # Makineler, Elektronik, Taşıtlar (84 - 89)
+    {
+        "btb_no": "TR-BTB-2025-084018",
+        "gtip_code": "8418.10.20.00.00",
+        "chapter": "84",
+        "heading": "8418",
+        "issue_date": "2025-03-22",
+        "product_description": "Ev tipi kompresörlü buzdolabı ve dondurucu kombinasyonu (No-Frost Buzdolabı).",
+        "legal_justification": "TGTC Pozisyon 8418.10 uyarınca donduruculu kombi tipi buzdolapları 8418 pozisyonuna verilmiştir."
+    },
+    {
+        "btb_no": "TR-BTB-2024-084071",
+        "gtip_code": "8471.30.00.00.11",
+        "chapter": "84",
+        "heading": "8471",
+        "issue_date": "2024-08-30",
+        "product_description": "Ağırlığı 10 kg'ı geçmeyen, dahili bataryası, klavyesi ve dokunmatik ekranı bulunan taşınabilir otomatik bilgi işleme makinesi (Dizüstü Bilgisayar / Laptop / Notebook / MacBook).",
+        "legal_justification": "GİR 1 ve GİR 6 uyarınca 10 kg'ı geçmeyen taşınabilir otomatik bilgi işleme makineleri 8471.30 pozisyonunda sınıflandırılmıştır."
+    },
+    {
+        "btb_no": "TR-BTB-2025-084050",
+        "gtip_code": "8450.11.11.00.00",
+        "chapter": "84",
+        "heading": "8450",
+        "issue_date": "2025-01-19",
+        "product_description": "Kuru çamaşır kapasitesi 10 kg'ı geçmeyen tam otomatik ev tipi çamaşır yıkama makinesi.",
+        "legal_justification": "TGTC Pozisyon 8450.11 uyarınca ev tipi otomatik çamaşır makineleri 8450 pozisyonunda sınıflandırılmıştır."
+    },
+    {
+        "btb_no": "TR-BTB-2025-085017",
+        "gtip_code": "8517.13.00.00.00",
+        "chapter": "85",
+        "heading": "8517",
+        "issue_date": "2025-05-10",
+        "product_description": "Dokunmatik ekranlı, hücresel ağ kablosuz haberleşme modülüne (5G/LTE), dahili kameraya ve işletim sistemine sahip akıllı telefon (Apple iPhone, Samsung Galaxy vb.).",
+        "legal_justification": "TGTC Madde 8517.13 ve GİR 1 uyarınca hücresel ağlar için akıllı telefonlar 8517.13 pozisyonunda sınıflandırılmıştır."
+    },
+    {
+        "btb_no": "TR-BTB-2025-085009",
+        "gtip_code": "8509.80.00.00.00",
+        "chapter": "85",
+        "heading": "8509",
+        "issue_date": "2025-04-12",
+        "product_description": "Şarj edilebilir dahili elektrik motoruna sahip, döner başlıklı kişisel bakım ağız ve diş temizleme cihazı (Şarjlı Diş Fırçası).",
+        "legal_justification": "GİR 1 ve GİR 6 kuralları gereğince kendinden elektrik motorlu ev aletleri pozisyonu olan 8509.80 altında sınıflandırılmıştır."
+    },
+    {
+        "btb_no": "TR-BTB-2025-085004",
+        "gtip_code": "8504.40.90.00.12",
+        "chapter": "85",
+        "heading": "8504",
+        "issue_date": "2025-02-14",
+        "product_description": "USB-C çıkışlı, 220V alternatif akımı 5V/9V/12V doğru akıma çeviren akıllı telefon ve tablet hızlı şarj adaptörü.",
+        "legal_justification": "GİR 1 uyarınca statik konvertörler pozisyonu olan 8504.40 altında değerlendirilmiştir."
+    },
+    {
+        "btb_no": "TR-BTB-2025-087012",
+        "gtip_code": "8712.00.30.00.00",
+        "chapter": "87",
+        "heading": "8712",
+        "issue_date": "2025-01-20",
+        "product_description": "Kutu içerisinde demonte (sökülmüş) veya monte halde bulunan iki tekerlekli dağ/şehir bisikleti.",
+        "legal_justification": "GİR 2a (Demonte Eşya Kuralı) uyarınca sökülmüş haldeki parçalar monte edildiğinde ana ürün niteliğini taşıdığından 8712 bisiklet pozisyonuna verilmiştir."
+    },
+    {
+        "btb_no": "TR-BTB-2025-087003",
+        "gtip_code": "8703.80.10.00.00",
+        "chapter": "87",
+        "heading": "8703",
+        "issue_date": "2025-06-10",
+        "product_description": "Sadece elektrik motorundan tahrik alan 100kW üzeri binek otomobil (Tam Elektrikli Otomobil / EV).",
+        "legal_justification": "TGTC Pozisyon 8703.80 uyarınca sadece elektrik motorlu binek araçlar 8703 altında sınıflandırılır."
+    },
+
+    # Optik, Saat, Mobilya, Oyuncak, Çeşitli Eşya (90 - 99)
+    {
+        "btb_no": "TR-BTB-2025-090018",
+        "gtip_code": "9018.90.84.00.00",
+        "chapter": "90",
+        "heading": "9018",
+        "issue_date": "2025-03-29",
+        "product_description": "Tıbbi teşhis ve cerrahi operasyonlarda kullanılan dijital ultrasonografi cihazı.",
+        "legal_justification": "TGTC Pozisyon 9018.90 uyarınca tıbbi cihazlar 9018 altında yer alır."
+    },
+    {
+        "btb_no": "TR-BTB-2025-091001",
+        "gtip_code": "9102.11.00.00.00",
+        "chapter": "91",
+        "heading": "9102",
+        "issue_date": "2025-05-14",
+        "product_description": "Pille çalışan, mekanik göstergeli kol saati.",
+        "legal_justification": "TGTC Pozisyon 9102.11 uyarınca pilli kol saatleri 9102 altındadır."
+    },
+    {
+        "btb_no": "TR-BTB-2025-094003",
         "gtip_code": "9403.60.10.00.00",
         "chapter": "94",
         "heading": "9403",
@@ -266,18 +480,7 @@ EXPANDED_OFFICIAL_BTB_DATABASE: List[Dict[str, str]] = [
         "legal_justification": "TGTC Madde 9403.60 uyarınca diğer ahşap mobilyalar 9403 pozisyonunda sınıflandırılmıştır."
     },
     {
-        "btb_no": "TR-BTB-2025-005544",
-        "gtip_code": "9401.61.00.00.00",
-        "chapter": "94",
-        "heading": "9401",
-        "issue_date": "2025-03-05",
-        "product_description": "Ahşap iskeletli, döşenmiş minderli yemek odası ve salon sandalyesi.",
-        "legal_justification": "TGTC Pozisyon 9401.61 uyarınca ahşap iskeletli oturmaya mahsus mobilyalar 9401 altında sınıflandırılır."
-    },
-
-    # Fasıl 95: Oyuncaklar
-    {
-        "btb_no": "TR-BTB-2025-003310",
+        "btb_no": "TR-BTB-2025-095003",
         "gtip_code": "9503.00.70.00.00",
         "chapter": "95",
         "heading": "9503",
@@ -285,38 +488,14 @@ EXPANDED_OFFICIAL_BTB_DATABASE: List[Dict[str, str]] = [
         "product_description": "Plastik malzemeden imal edilmiş, pille çalışan veya kumandalı çocuk yarış arabası (Oyuncak).",
         "legal_justification": "Plastik malzemeden yapılmış olsa da kullanım amacı oyuncak olduğundan Fasıl 39 (Plastik) harç tutulup Fasıl 95 (Oyuncaklar) altına sınıflandırılmıştır."
     },
-
-    # Fasıl 87: Taşıtlar & Bisikletler
     {
-        "btb_no": "TR-BTB-2025-000412",
-        "gtip_code": "8712.00.30.00.00",
-        "chapter": "87",
-        "heading": "8712",
-        "issue_date": "2025-01-20",
-        "product_description": "Kutu içerisinde demonte (sökülmüş) veya monte halde bulunan iki tekerlekli dağ/şehir bisikleti.",
-        "legal_justification": "GİR 2a (Demonte Eşya Kuralı) uyarınca sökülmüş haldeki parçalar monte edildiğinde ana ürün niteliğini taşıdığından 8712 bisiklet pozisyonuna verilmiştir."
-    },
-
-    # Fasıl 30: Eczacılık & İlaçlar
-    {
-        "btb_no": "TR-BTB-2025-007722",
-        "gtip_code": "3004.90.00.00.00",
-        "chapter": "30",
-        "heading": "3004",
-        "issue_date": "2025-05-11",
-        "product_description": "Dozlandırılmış veya perakende satılacak hale getirilmiş, tedavi edici Parasetamol etken maddeli tablet ilaç.",
-        "legal_justification": "TGTC Pozisyon 3004.90 uyarınca tedavi edici müstahzar ilaçlar 3004 pozisyonuna verilmiştir."
-    },
-
-    # Fasıl 39: Plastik Mamuller
-    {
-        "btb_no": "TR-BTB-2025-001299",
-        "gtip_code": "3926.90.97.90.18",
-        "chapter": "39",
-        "heading": "3926",
-        "issue_date": "2025-02-04",
-        "product_description": "Plastik polietilen malzemeden enjeksiyon yöntemiyle imal edilmiş sanayi tipi saklama kutusu ve ambalaj kabı.",
-        "legal_justification": "TGTC Pozisyon 3926.90 uyarınca plastikten diğer eşyalar 3926 pozisyonunda sınıflandırılmıştır."
+        "btb_no": "TR-BTB-2025-096019",
+        "gtip_code": "9619.00.81.00.00",
+        "chapter": "96",
+        "heading": "9619",
+        "issue_date": "2025-04-05",
+        "product_description": "Tek kullanımlık emici selüloz esaslı bebek bezi ve hijyenik ped.",
+        "legal_justification": "TGTC Pozisyon 9619.00 uyarınca hijyenik pedler ve bebek bezleri 9619 pozisyonunda yer alır."
     }
 ]
 

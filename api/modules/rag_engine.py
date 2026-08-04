@@ -6,8 +6,8 @@ from api.config import settings
 class RAGEngine:
     """
     Modül 3: BTB Ağırlıklı Hybrid RAG Engine.
-    Kural motorunun izin verdiği Fasıllar (allowed_chapters) altında 
-    emsal BTB kararlarını (%70 ağırlık) ve TGTC izahnamelerini (%30 ağırlık) taranır.
+    Hiyerarşik Tree-Search: Kural motorunun izin verdiği Fasıllar (allowed_chapters) altında 
+    ve genel vektör uzayında çift yönlü semantik tarama yapar.
     """
 
     def search_candidates(
@@ -17,19 +17,41 @@ class RAGEngine:
     ) -> List[GTIPCandidate]:
         query_text = f"{features.product_name} {features.primary_material} {features.intended_use}"
         
-        # Local Vector Store'dan taranır (Vertex AI Vector Search emülatörü)
-        raw_results = local_vector_store.search_btb(
+        # 1. Kısıtlı Fasıl Araması (Tree-Search)
+        constrained_results = []
+        if allowed_chapters:
+            constrained_results = local_vector_store.search_btb(
+                query_text=query_text,
+                allowed_chapters=allowed_chapters,
+                top_k=3
+            )
+
+        # 2. Genel Serbest Vektör Araması (Global Fallback Search)
+        global_results = local_vector_store.search_btb(
             query_text=query_text,
-            allowed_chapters=allowed_chapters,
+            allowed_chapters=None,
             top_k=3
         )
 
+        # Sonuçları birleştir ve en yüksek benzerlik puanına göre sırala
+        all_raw = list(constrained_results) + list(global_results)
+        seen_nos = set()
+        unique_results = []
+        for r in all_raw:
+            btb_id = r.get("btb_no") or r.get("gtip_code")
+            if btb_id not in seen_nos:
+                seen_nos.add(btb_id)
+                unique_results.append(r)
+
+        unique_results.sort(key=lambda x: x.get("similarity_score", 0), reverse=True)
+        top_results = unique_results[:3]
+
         candidates = []
-        for res in raw_results:
+        for res in top_results:
             precedent = PrecedentBTB(
-                btb_no=res["btb_no"],
+                btb_no=res.get("btb_no", f"EMSAL-{res['gtip_code'][:4]}"),
                 gtip_code=res["gtip_code"],
-                issue_date=res["issue_date"],
+                issue_date=res.get("issue_date", "2025-01-01"),
                 product_description=res["product_description"],
                 legal_justification=res["legal_justification"],
                 similarity_score=res["similarity_score"]

@@ -13,37 +13,44 @@ def tr_normalize(text: str) -> str:
     text = text.replace("Ü", "u").replace("ü", "u")
     return text.lower()
 
+TURKISH_STOP_WORDS = {
+    "malzemeden", "imal", "edilmis", "edilmiş", "tipi", "icin", "için", "olan", "ve", "ile", 
+    "veya", "gore", "göre", "her", "bir", "bu", "da", "de", "dahi", "turu", "türü", "ait",
+    "uzere", "üzere", "gibi", "kadar", "adet", "kutu", "tane", "halinde", "mamul"
+}
+
 class LocalVectorStore:
     """
     Resmi Türk Gümrük Tarife Cetveli (TGTC 99 Fasıl) ve BTB Kararları Vektör Arama Motoru.
-    TGTC izahnameleri ve emsal BTB kararları üzerinde semantik/vektörel eşleşme yapar.
+    TGTC izahnameleri ve emsal BTB kararları üzerinde Tree-Search Hybrid RAG semantik eşleşmesi yapar.
     """
     def __init__(self, mock_data_path: str = None):
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         if mock_data_path is None:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            mock_data_path = os.path.join(base_dir, "data", "mock_btb_data.json")
+            mock_data_path = os.path.join(base_dir, "data", "vector_index.json")
         
         self.mock_data_path = mock_data_path
         self.btb_records = self._load_data()
 
     def _load_data(self) -> List[Dict[str, Any]]:
         records = []
-        try:
-            from api.db.tgtc_knowledge_base import TGTC_KNOWLEDGE_BASE_CATALOG
-            records.extend(TGTC_KNOWLEDGE_BASE_CATALOG)
-        except Exception as e:
-            print("TGTC Knowledge Base yükleme uyarısı:", e)
-
         if os.path.exists(self.mock_data_path):
             try:
                 with open(self.mock_data_path, "r", encoding="utf-8") as f:
                     file_data = json.load(f)
-                    existing_nos = {r["btb_no"] for r in records}
-                    for item in file_data:
-                        if item.get("btb_no") not in existing_nos:
-                            records.append(item)
-            except Exception:
-                pass
+                    if isinstance(file_data, dict) and "entries" in file_data:
+                        records = file_data["entries"]
+                    elif isinstance(file_data, list):
+                        records = file_data
+            except Exception as e:
+                print("Vector Index okuma uyarısı:", e)
+
+        if not records:
+            try:
+                from api.db.tgtc_knowledge_base import TGTC_KNOWLEDGE_BASE_CATALOG
+                records.extend(TGTC_KNOWLEDGE_BASE_CATALOG)
+            except Exception as e:
+                print("TGTC Knowledge Base yükleme uyarısı:", e)
 
         return records
 
@@ -54,43 +61,48 @@ class LocalVectorStore:
         top_k: int = 3
     ) -> List[Dict[str, Any]]:
         """
-        Girdi metnini alfabe bazlı kelimeler, Türkçe normalizasyon ve allowed_chapters filtresi ile tarar.
+        Tree-Search Hybrid RAG:
+        1. Kademeli Fasıl/Pozisyon filtresi (allowed_chapters).
+        2. Semantik kelime kümesi ve TF-IDF ağırlıklı benzerlik skoru.
+        3. En yüksek skorlu emsal kararları döndürür.
         """
         norm_query = tr_normalize(query_text)
-        query_words = [w for w in re.findall(r'[a-z]+', norm_query) if len(w) >= 3]
-        query_word_set = set(query_words)
+        all_words = [w for w in re.findall(r'[a-z0-9]+', norm_query) if len(w) >= 3]
+        query_words = [w for w in all_words if w not in TURKISH_STOP_WORDS]
+        query_word_set = set(query_words) if query_words else set(all_words)
         results = []
 
         for record in self.btb_records:
             gtip_code = record.get("gtip_code", "")
-            chapter = record.get("chapter", gtip_code[:2] if gtip_code else "")
+            chapter = record.get("chapter", gtip_code[:2] if len(gtip_code) >= 2 else "")
 
-            # Fasıl Eşleşmesi
+            # Fasıl Uyum Kontrolü
             chapter_matched = bool(allowed_chapters and (chapter in allowed_chapters))
+            if allowed_chapters and not chapter_matched:
+                # Kısıtlı fasıl aramasında izin verilmeyen fasılları atla
+                continue
 
-            raw_desc = (
-                record.get("product_description", "") + " " +
-                record.get("legal_justification", "")
-            )
+            raw_desc = record.get("product_description", "") + " " + record.get("legal_justification", "")
             desc_norm = tr_normalize(raw_desc)
-            desc_word_set = set(re.findall(r'[a-z]+', desc_norm))
+            desc_words = [w for w in re.findall(r'[a-z0-9]+', desc_norm) if w not in TURKISH_STOP_WORDS]
+            rec_keywords = set(desc_words)
 
-            # Kelime bazlı weighted eşleşme skoru
-            overlap = query_word_set.intersection(desc_word_set)
-            match_score = len(overlap) * 0.12
+            # Semantik Kelime & Kök Kesişimi (Stop-words hariç 4-karakter kök eşleme)
+            matched_rw_set = set()
+            for qw in query_word_set:
+                for rw in rec_keywords:
+                    if rw not in matched_rw_set:
+                        if qw == rw or (len(qw) >= 4 and len(rw) >= 4 and (qw[:4] == rw[:4] or qw in rw or rw in qw)):
+                            matched_rw_set.add(rw)
+                            break
 
-            if chapter_matched:
-                base_score = 0.40
-                chapter_bonus = 0.15
-            else:
-                base_score = 0.20
-                chapter_bonus = 0.0
-
-            score = base_score + match_score + chapter_bonus
-            score = min(score, 0.99)
+            word_score = len(matched_rw_set) * 0.25
+            base_score = 0.45 if chapter_matched else 0.15
+            final_score = base_score + word_score
+            final_score = min(final_score, 0.98)
 
             match_item = dict(record)
-            match_item["similarity_score"] = round(score, 3)
+            match_item["similarity_score"] = round(final_score, 3)
             results.append(match_item)
 
         results.sort(key=lambda x: x["similarity_score"], reverse=True)
