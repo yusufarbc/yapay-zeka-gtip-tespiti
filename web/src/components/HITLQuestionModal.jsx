@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { HelpCircle, ArrowRight } from 'lucide-react';
+import { HelpCircle, ArrowRight, CheckCircle, ShieldAlert } from 'lucide-react';
 
 export const HITLQuestionModal = ({ question, onRespond, isSubmitting }) => {
   const [selectedOpt, setSelectedOpt] = useState('');
@@ -11,65 +11,105 @@ export const HITLQuestionModal = ({ question, onRespond, isSubmitting }) => {
     onRespond(question.question_id, selectedOpt);
   };
 
+  const getOptionBadge = (text) => {
+    const cleanText = text.toUpperCase();
+    if (cleanText.includes('EVET')) {
+      return <span className="badge badge-success" style={{ padding: '2px 8px' }}>EVET</span>;
+    } else if (cleanText.includes('HAYIR')) {
+      return <span className="badge badge-warning" style={{ padding: '2px 8px' }}>HAYIR</span>;
+    }
+    return null;
+  };
+
+  const cleanOptionText = (text) => {
+    // Strip raw prefix if concatenated (e.g., OPT_YESEVET -> EVET)
+    let cleaned = text.replace(/^(OPT_[A-Z0-9_]+)+/gi, '').trim();
+    if (!cleaned) cleaned = text;
+    return cleaned;
+  };
+
   return (
     <div className="glass-panel" style={{
       padding: '24px',
       marginBottom: '24px',
-      border: '1px solid var(--status-amber-border)',
-      background: 'var(--status-amber-bg)'
+      border: '1.5px solid var(--status-amber-border)',
+      background: 'var(--status-amber-bg)',
+      boxShadow: 'var(--shadow-lg)'
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
-        <div style={{ background: 'var(--status-amber)', padding: '8px', borderRadius: '6px', display: 'flex' }}>
-          <HelpCircle size={20} color="#ffffff" />
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', marginBottom: '16px' }}>
+        <div style={{
+          background: 'var(--status-amber)',
+          padding: '10px',
+          borderRadius: '10px',
+          display: 'flex',
+          boxShadow: '0 2px 8px rgba(180, 83, 9, 0.25)'
+        }}>
+          <ShieldAlert size={24} color="#ffffff" />
         </div>
-        <div>
-          <span className="badge badge-warning">İnsan Onayı Bekleniyor (Müşavir Netleştirmesi)</span>
-          <h3 style={{ fontSize: '1rem', fontWeight: 700, marginTop: '4px', color: 'var(--text-primary)' }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+            <span className="badge badge-warning">İnsan Onayı Bekleniyor (Müşavir Netleştirmesi)</span>
+          </div>
+          <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.4 }}>
             {question.question_text}
           </h3>
         </div>
       </div>
 
-      <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-        Denetçi Ajan (Auditor Agent) seçilen GTİP tarife pozisyonunu kesinleştirmek için aşağıdaki teknik seçeneği onaylamanızı bekliyor:
+      <p style={{ fontSize: '0.86rem', color: 'var(--text-secondary)', marginBottom: '18px', lineHeight: 1.5 }}>
+        Denetçi Ajan (Auditor Agent) seçilen GTİP tarife pozisyonunu kesinleştirmek için aşağıdaki teknik seçeneği teyit etmenizi bekliyor:
       </p>
 
       {/* Seçenek Listesi */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '20px' }}>
-        {question.options.map((opt) => {
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '22px' }}>
+        {question.options.map((opt, idx) => {
           const isSelected = selectedOpt === opt.option_id;
+          const letter = String.fromCharCode(65 + idx); // A, B, C...
+          const displayText = cleanOptionText(opt.text);
+          const badge = getOptionBadge(displayText);
+
           return (
             <div
               key={opt.option_id}
               onClick={() => setSelectedOpt(opt.option_id)}
               style={{
                 background: 'var(--bg-surface)',
-                border: isSelected ? '2px solid var(--text-primary)' : '1px solid var(--border-subtle)',
-                borderRadius: '8px',
-                padding: '14px',
+                border: isSelected ? '2px solid var(--primary-brand)' : '1px solid var(--border-subtle)',
+                borderRadius: '10px',
+                padding: '16px 18px',
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                transition: 'all 0.15s ease'
+                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                boxShadow: isSelected ? 'var(--shadow-md)' : 'none',
+                transform: isSelected ? 'translateY(-1px)' : 'none'
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1 }}>
                 <div style={{
-                  width: '24px',
-                  height: '24px',
+                  width: '28px',
+                  height: '28px',
                   borderRadius: '50%',
                   background: isSelected ? 'var(--primary-brand)' : 'var(--bg-surface-subtle)',
-                  color: isSelected ? '#ffffff' : 'var(--text-primary)',
+                  color: isSelected ? '#ffffff' : 'var(--text-secondary)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   fontWeight: 700,
-                  fontSize: '0.78rem'
+                  fontSize: '0.82rem',
+                  transition: 'all 0.15s ease',
+                  flexShrink: 0
                 }}>
-                  {opt.option_id}
+                  {isSelected ? <CheckCircle size={16} color="#ffffff" /> : letter}
                 </div>
-                <span style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-primary)' }}>{opt.text}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  {badge}
+                  <span style={{ fontSize: '0.92rem', fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.4 }}>
+                    {displayText}
+                  </span>
+                </div>
               </div>
             </div>
           );
@@ -80,10 +120,16 @@ export const HITLQuestionModal = ({ question, onRespond, isSubmitting }) => {
         onClick={handleSubmit}
         className="btn-primary"
         disabled={!selectedOpt || isSubmitting}
-        style={{ width: '100%', justifyContent: 'center' }}
+        style={{
+          width: '100%',
+          justify: 'center',
+          padding: '12px 20px',
+          fontSize: '0.92rem',
+          boxShadow: selectedOpt ? '0 4px 14px rgba(0, 0, 0, 0.2)' : 'none'
+        }}
       >
         <span>{isSubmitting ? 'Yanıt İletiliyor...' : 'Yanıtı Gönder ve GTİP Kodu Al'}</span>
-        <ArrowRight size={16} />
+        <ArrowRight size={18} />
       </button>
     </div>
   );

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Header } from './components/Header';
 import { FileUploader } from './components/FileUploader';
-import { PipelineStatus } from './components/PipelineStatus';
 import { HITLQuestionModal } from './components/HITLQuestionModal';
 import { GTIPResultCard } from './components/GTIPResultCard';
 import { AuditHistoryTable } from './components/AuditHistoryTable';
@@ -52,7 +51,7 @@ export function App() {
       setDecision(result);
     } catch (err) {
       console.error(err);
-      setErrorMsg(err.response?.data?.detail || "GTİP analizi sırasında beklenmeyen bir hata oluştu.");
+      setErrorMsg(err.response?.data?.detail || err.message || "GTİP analizi sırasında beklenmeyen bir hata oluştu.");
     } finally {
       setIsAnalyzing(false);
       fetchLogs();
@@ -69,7 +68,7 @@ export function App() {
       setDecision(result);
     } catch (err) {
       console.error(err);
-      setErrorMsg("HITL yanıtı iletilirken hata oluştu.");
+      setErrorMsg(err.response?.data?.detail || err.message || "Müşavir teyit yanıtı iletilirken hata oluştu.");
     } finally {
       setIsSubmittingHITL(false);
       fetchLogs();
@@ -83,7 +82,17 @@ export function App() {
       <main style={{ maxWidth: '1100px', margin: '0 auto', padding: '0 20px 40px', width: '100%', flex: 1 }}>
         
         {errorMsg && (
-          <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', padding: '14px', borderRadius: '8px', color: '#dc2626', marginBottom: '20px', fontSize: '0.9rem', fontWeight: 500 }}>
+          <div style={{
+            background: 'var(--status-amber-bg)',
+            border: '1px solid var(--status-amber-border)',
+            padding: '14px 18px',
+            borderRadius: '10px',
+            color: 'var(--status-amber)',
+            marginBottom: '20px',
+            fontSize: '0.9rem',
+            fontWeight: 600,
+            boxShadow: 'var(--shadow-sm)'
+          }}>
             ⚠️ {errorMsg}
           </div>
         )}
@@ -92,8 +101,7 @@ export function App() {
           <>
             <FileUploader onStartAnalysis={handleStartAnalysis} isLoading={isAnalyzing} />
 
-            <PipelineStatus isAnalyzing={isAnalyzing} decision={decision} />
-
+            {/* Müşavir Teyidi Bekleyen Durumda Sadece Soru Kartı Gösterilir */}
             {decision && decision.status === 'WAITING_FOR_USER' && (
               <HITLQuestionModal
                 question={decision.hitl_question}
@@ -102,7 +110,10 @@ export function App() {
               />
             )}
 
-            <GTIPResultCard decision={decision} />
+            {/* Karar Kesinleştiğinde Sonuç Kartı Gösterilir */}
+            {decision && decision.status === 'COMPLETED' && (
+              <GTIPResultCard decision={decision} />
+            )}
 
             <AuditHistoryTable logs={auditLogs} />
           </>
@@ -112,12 +123,11 @@ export function App() {
 
       </main>
 
-      <footer style={{ textAlign: 'center', padding: '20px', fontSize: '0.8rem', color: 'var(--text-muted)', borderTop: '1px solid var(--border-subtle)' }}>
-        GTİP Tespit ve Karar Destek Portalı - GCP Multi-Layer Data & ETL Integrated
+      <footer style={{ textAlign: 'center', padding: '20px', fontSize: '0.82rem', color: 'var(--text-muted)', borderTop: '1px solid var(--border-subtle)' }}>
+        Türk Gümrük Tarife Cetveli (TGTC) Karar Destek Portalı • Kurumsal Müşavir Sürümü
       </footer>
     </div>
   );
 }
 
 export default App;
-

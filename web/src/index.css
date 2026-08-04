@@ -1,64 +1,74 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap');
 
 /* =========================================================
-   PÜR NÖTR GRİ & ŞIK KURUMSAL TEMA (SIFIR MAVİ / NO BLUE)
+   GTİP Karar Destek sistemi - Modern Premium UI/UX Design System
    ========================================================= */
 
-/* 1. AÇIK TEMA (LIGHT MODE) - Nötr Platin Gri & Beyaz */
+/* 1. AÇIK TEMA (LIGHT MODE) */
 :root, [data-theme="light"] {
-  --bg-primary: #f4f4f5;           /* Neutral Soft Gray Canvas */
+  --bg-primary: #f8fafc;           /* Slate 50 canvas */
   --bg-surface: #ffffff;           /* Pure White Cards */
-  --bg-surface-subtle: #e4e4e7;    /* Light Zinc Subdued */
-  --bg-header: #ffffff;            /* Header White */
+  --bg-surface-subtle: #f1f5f9;    /* Slate 100 Subdued */
+  --bg-header: rgba(255, 255, 255, 0.92);
   
-  --primary-brand: #18181b;         /* Deep Graphite / Charcoal Button */
-  --primary-brand-hover: #27272a;   /* Slightly Lighter Graphite */
+  --primary-brand: #0f172a;         /* Slate 900 Graphite */
+  --primary-brand-hover: #1e293b;   /* Slate 800 */
+  --accent-blue: #2563eb;          /* Royal Blue Accent */
   
-  --status-emerald: #047857;       /* Emerald Green */
+  --status-emerald: #059669;       /* Emerald 600 */
   --status-emerald-bg: #ecfdf5;
   --status-emerald-border: #a7f3d0;
   
-  --status-amber: #b45309;         /* Amber Warning */
+  --status-amber: #d97706;         /* Amber 600 */
   --status-amber-bg: #fffbeb;
   --status-amber-border: #fde68a;
   
-  --text-primary: #18181b;         /* Crisp Charcoal Text */
-  --text-secondary: #52525b;       /* Medium Zinc Text */
-  --text-muted: #71717a;           /* Muted Gray Text */
-  --border-subtle: #e4e4e7;        /* Crisp Light Border */
-  --shadow-panel: 0 1px 3px 0 rgba(0, 0, 0, 0.06);
+  --text-primary: #0f172a;         /* Crisp Slate 900 Text */
+  --text-secondary: #475569;       /* Slate 600 Text */
+  --text-muted: #64748b;           /* Slate 500 Text */
+  --border-subtle: #e2e8f0;        /* Slate 200 Border */
+  --border-focus: #3b82f6;
+  
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 14px -2px rgba(15, 23, 42, 0.06), 0 2px 6px -1px rgba(15, 23, 42, 0.03);
+  --shadow-lg: 0 10px 25px -5px rgba(15, 23, 42, 0.08), 0 4px 10px -2px rgba(15, 23, 42, 0.04);
 }
 
-/* 2. KOYU TEMA (DARK MODE) - Pür Koyu Gri / Charcoal / Zinc (SIFIR MAVİ) */
+/* 2. KOYU TEMA (DARK MODE) */
 [data-theme="dark"] {
-  --bg-primary: #121212;           /* Pure Dark Charcoal Background (No Navy Blue!) */
-  --bg-surface: #1e1e1e;           /* Solid Dark Gray Cards */
-  --bg-surface-subtle: #2d2d2d;    /* Medium Gray Surface */
-  --bg-header: #181818;            /* Pure Dark Header */
+  --bg-primary: #0b0f17;           /* Deep Charcoal Background */
+  --bg-surface: #131b2e;           /* Rich Navy/Charcoal Cards */
+  --bg-surface-subtle: #1e293b;    /* Medium Slate Surface */
+  --bg-header: rgba(19, 27, 46, 0.92);
   
-  --primary-brand: #333333;         /* Solid Dark Zinc Button */
-  --primary-brand-hover: #444444;   
+  --primary-brand: #3b82f6;         /* Electric Blue */
+  --primary-brand-hover: #2563eb;   
+  --accent-blue: #60a5fa;
   
-  --status-emerald: #34d399;       
-  --status-emerald-bg: rgba(52, 211, 153, 0.12);
-  --status-emerald-border: rgba(52, 211, 153, 0.3);
+  --status-emerald: #10b981;       
+  --status-emerald-bg: rgba(16, 185, 129, 0.12);
+  --status-emerald-border: rgba(16, 185, 129, 0.28);
   
-  --status-amber: #fbbf24;         
-  --status-amber-bg: rgba(251, 191, 36, 0.12);
-  --status-amber-border: rgba(251, 191, 36, 0.3);
+  --status-amber: #f59e0b;         
+  --status-amber-bg: rgba(245, 158, 11, 0.12);
+  --status-amber-border: rgba(245, 158, 11, 0.28);
   
-  --text-primary: #f4f4f5;         /* Pure Off-White Text */
-  --text-secondary: #a1a1aa;       /* Neutral Gray Secondary */
-  --text-muted: #71717a;           
-  --border-subtle: #333333;        /* Dark Neutral Border */
-  --shadow-panel: 0 4px 20px rgba(0, 0, 0, 0.5);
+  --text-primary: #f8fafc;         /* Crisp White Text */
+  --text-secondary: #94a3b8;       /* Slate 400 Secondary */
+  --text-muted: #64748b;           
+  --border-subtle: #1e293b;        /* Dark Slate Border */
+  --border-focus: #60a5fa;
+  
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 12px 30px rgba(0, 0, 0, 0.5);
 }
 
 * {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
 body {
@@ -67,41 +77,84 @@ body {
   min-height: 100vh;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-/* Executive Card Styling */
+/* Glassmorphism & Executive Cards */
 .glass-panel {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  box-shadow: var(--shadow-panel);
+  border-radius: 14px;
+  box-shadow: var(--shadow-md);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
-/* Kurumsal Buton Tasarımı (Sadece Koyu Gri / Zinc) */
+.glass-panel:hover {
+  box-shadow: var(--shadow-lg);
+}
+
+/* Form Controls */
+textarea, input[type="text"] {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+textarea:focus, input[type="text"]:focus {
+  border-color: var(--border-focus) !important;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15) !important;
+}
+
+/* Kurumsal Buton Tasarımları */
 .btn-primary {
   background-color: var(--primary-brand);
   color: #ffffff;
-  border: 1px solid var(--border-subtle);
-  padding: 10px 20px;
-  border-radius: 6px;
+  border: 1px solid transparent;
+  padding: 10px 22px;
+  border-radius: 10px;
   font-weight: 600;
   font-size: 0.88rem;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background-color: var(--primary-brand-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.btn-secondary {
+  background-color: var(--bg-surface-subtle);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.84rem;
   cursor: pointer;
   transition: all 0.15s ease;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
-.btn-primary:hover {
-  background-color: var(--primary-brand-hover);
-}
-
-.btn-primary:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-  box-shadow: none;
+.btn-secondary:hover {
+  background-color: var(--border-subtle);
+  color: var(--text-primary);
 }
 
 /* Theme Toggle Button */
@@ -109,32 +162,32 @@ body {
   background: var(--bg-surface-subtle);
   border: 1px solid var(--border-subtle);
   color: var(--text-primary);
-  padding: 6px 12px;
-  border-radius: 6px;
+  padding: 7px 14px;
+  border-radius: 8px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   font-weight: 600;
-  transition: all 0.15s ease;
+  transition: all 0.2s ease;
 }
 
 .theme-toggle-btn:hover {
-  background: var(--primary-brand);
-  color: #ffffff;
+  border-color: var(--border-focus);
+  transform: translateY(-1px);
 }
 
 /* Badges */
 .badge {
   padding: 4px 10px;
-  border-radius: 4px;
-  font-size: 0.75rem;
-  font-weight: 600;
+  border-radius: 6px;
+  font-size: 0.76rem;
+  font-weight: 700;
   letter-spacing: 0.2px;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
 }
 
 .badge-success {
@@ -155,8 +208,59 @@ body {
   border: 1px solid var(--border-subtle);
 }
 
-/* Active Pipeline Animation */
+/* Code Display Font */
+.font-mono {
+  font-family: 'JetBrains Mono', monospace !important;
+}
+
+/* Chip Suggestion Buttons */
+.template-chip {
+  background: var(--bg-surface-subtle);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.template-chip:hover {
+  background: var(--bg-surface);
+  border-color: var(--border-focus);
+  color: var(--text-primary);
+  transform: translateY(-1px);
+}
+
+/* Active Pipeline Pulse Animation */
 .pulse-active {
-  border-color: var(--text-secondary) !important;
-  background: var(--bg-surface-subtle) !important;
+  border-color: var(--border-focus) !important;
+  background: var(--bg-surface) !important;
+  animation: borderGlow 2s infinite ease-in-out;
+}
+
+@keyframes borderGlow {
+  0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.2); }
+  50% { box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1); }
+  100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.2); }
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }

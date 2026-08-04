@@ -65,7 +65,7 @@ gcloud run deploy "$SERVICE_NAME" \
     --image "$IMAGE_URI" \
     --region "$REGION" \
     --platform managed \
-    --no-allow-unauthenticated \
+    --allow-unauthenticated \
     --memory 2Gi \
     --cpu 2 \
     --concurrency 80 \
