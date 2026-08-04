@@ -1,17 +1,9 @@
 import React, { useState } from 'react';
-import { Sparkles, Image as ImageIcon, FileSearch, Lightbulb } from 'lucide-react';
+import { Sparkles, Image as ImageIcon, FileSearch } from 'lucide-react';
 
 export const FileUploader = ({ onStartAnalysis, isLoading }) => {
   const [description, setDescription] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
-
-  const sampleTemplates = [
-    { label: '🪵 Ahşap Yemek Masası / Sandalye', text: 'Ahşap malzemeden imal edilmiş ev ve yemek odası masası, sandalye' },
-    { label: '🪥 Şarjlı Diş Fırçası (Motorlu)', text: 'Şarj edilebilir dahili 3.7V elektrik motorlu diş fırçası, ağırlığı 250 gram' },
-    { label: '👕 Pamuklu Örme T-Shirt', text: '%60 Pamuk / %40 Polyester karışımı örme kısa kollu erkek t-shirt' },
-    { label: '📱 5G Akıllı Cep Telefonu', text: '5G hücresel ağ destekli akıllı cep telefonu, 6.7 inç ekran, bataryalı' },
-    { label: '🔌 Entegre Devre Çipi', text: 'Monolitik elektronik entegre devre çipi, güç yönetim PDIP kılıflı' }
-  ];
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -22,7 +14,7 @@ export const FileUploader = ({ onStartAnalysis, isLoading }) => {
   return (
     <div className="glass-panel" style={{ padding: '24px', marginBottom: '24px' }}>
       <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: '14px' }}>
+        <div style={{ marginBottom: '16px' }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.92rem', color: 'var(--text-primary)', marginBottom: '8px', fontWeight: 700 }}>
             <FileSearch size={18} color="var(--accent-blue)" />
             <span>Ürün Tanımı ve Teknik Özellikleri:</span>
@@ -31,7 +23,7 @@ export const FileUploader = ({ onStartAnalysis, isLoading }) => {
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Ürün adı, ticari tanımı, hammadde oranı veya kullanım amacını giriniz (Örn: %60 Pamuklu örme t-shirt...)"
+            placeholder="Ürün adı, ticari tanımı, hammadde oranı veya kullanım amacını giriniz..."
             rows={4}
             style={{
               width: '100%',
@@ -46,26 +38,6 @@ export const FileUploader = ({ onStartAnalysis, isLoading }) => {
               lineHeight: 1.5
             }}
           />
-        </div>
-
-        {/* Hızlı Örnek Şablonlar (Müşavir Kolaylığı) */}
-        <div style={{ marginBottom: '18px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '8px', fontWeight: 600 }}>
-            <Lightbulb size={14} color="var(--status-amber)" />
-            <span>Örnek Ürün Seçenekleri (1-Tıkla Doldur):</span>
-          </div>
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            {sampleTemplates.map((tmpl, i) => (
-              <button
-                key={i}
-                type="button"
-                className="template-chip"
-                onClick={() => setDescription(tmpl.text)}
-              >
-                {tmpl.label}
-              </button>
-            ))}
-          </div>
         </div>
 
         {/* Dosya Yükleme & Buton */}
