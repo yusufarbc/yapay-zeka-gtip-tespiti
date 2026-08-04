@@ -19,10 +19,14 @@ class ContextCacheManager:
         self.cached_content_name: Optional[str] = None
         self.client: Optional[Any] = None
 
-    def initialize_cache(self) -> Optional[str]:
+    def initialize_cache(self, model_name: str = None) -> Optional[str]:
         """
         TGTC 99 Fasıl ve GİR Mevzuat metinlerini Vertex AI Context Cache'e yükler.
         """
+        if not settings.USE_CONTEXT_CACHE:
+            logger.info("Context Caching devredışı bırakıldı (USE_CONTEXT_CACHE=False).")
+            return None
+
         api_key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
         if not api_key:
             logger.info("[SIMULATION] Vertex AI Context Cache hazırlandı (Çevrimdışı Mod).")
@@ -32,6 +36,7 @@ class ContextCacheManager:
             from google import genai
             from google.genai import types
 
+            target_model = model_name or settings.REASONING_LLM_MODEL
             self.client = genai.Client(api_key=api_key)
             
             # TGTC Mevzuat İzahnamelerini Yükle
@@ -47,7 +52,7 @@ class ContextCacheManager:
             )
 
             cache = self.client.caches.create(
-                model=settings.EXTRACTOR_LLM_MODEL,
+                model=target_model,
                 config=types.CreateCachedContentConfig(
                     contents=[full_context_text],
                     ttl="86400s", # 24 Saatlik Önbellek
@@ -60,9 +65,22 @@ class ContextCacheManager:
             logger.warning(f"Vertex AI Context Cache oluşturma uyarısı: {e}")
             return None
 
-    def get_cache_name(self) -> Optional[str]:
+    def get_cache_name(self, model_name: str = None) -> Optional[str]:
         if not self.cached_content_name:
-            self.cached_content_name = self.initialize_cache()
+            self.cached_content_name = self.initialize_cache(model_name)
         return self.cached_content_name
+
+    def get_cached_config(self, model_name: str = None) -> Any:
+        """
+        Gemini API çağrıları için cached_content içeren GenerateContentConfig döndürür.
+        """
+        cache_name = self.get_cache_name(model_name)
+        if not cache_name or cache_name.startswith("cachedContents/simulated"):
+            return None
+        try:
+            from google.genai import types
+            return types.GenerateContentConfig(cached_content=cache_name)
+        except Exception:
+            return None
 
 context_cache_manager = ContextCacheManager()

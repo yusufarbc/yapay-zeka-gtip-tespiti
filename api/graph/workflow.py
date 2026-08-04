@@ -70,6 +70,99 @@ class GTIPWorkflowEngine:
 
         return decision
 
+    async def start_analysis_async(self, raw_text: str, image_uri: str = None) -> GTIPDecision:
+        """
+        Asenkron non-blocking analiz metodu.
+        """
+        import asyncio
+        return await asyncio.to_thread(self.start_analysis, raw_text, image_uri)
+
+    async def start_analysis_stream(self, raw_text: str, image_uri: str = None):
+        """
+        Server-Sent Events (SSE) canlı akışı için aşamalı generator.
+        """
+        import asyncio
+        session_id = str(uuid.uuid4())
+
+        yield {
+            "stage": "FEATURE_EXTRACTION",
+            "status": "IN_PROGRESS",
+            "message": "Aşama 1: Multimodal ürün nitelikleri ve teknik parametreler çıkarılıyor...",
+            "session_id": session_id
+        }
+        await asyncio.sleep(0.05)
+        features = feature_extractor.extract_features(raw_text, image_uri)
+
+        yield {
+            "stage": "RULE_ENGINE",
+            "status": "IN_PROGRESS",
+            "message": f"Aşama 2: GİR Kuralları çalıştırılıyor (Baskın malzeme: {features.primary_material})...",
+            "session_id": session_id
+        }
+        await asyncio.sleep(0.05)
+        allowed_chapters, gir_rules = rule_engine.apply_rules(features)
+
+        yield {
+            "stage": "RAG_SEARCH",
+            "status": "IN_PROGRESS",
+            "message": f"Aşama 3: BTB ve TGTC veritabanında semantik tarama yapılıyor (Fasıllar: {allowed_chapters[:3]})...",
+            "session_id": session_id
+        }
+        await asyncio.sleep(0.05)
+        candidates = rag_engine.search_candidates(features, allowed_chapters)
+
+        if not candidates:
+            decision = GTIPDecision(
+                session_id=session_id,
+                status="MANUAL_REVIEW_REQUIRED",
+                audit_notes=["RAG uzayında uygun emsal karar bulunamadı. Kıdemli Müşavire yönlendirildi."]
+            )
+            yield {
+                "stage": "COMPLETED",
+                "status": "MANUAL_REVIEW_REQUIRED",
+                "message": "Aşama 4: Uygun emsal bulunamadı, manuel incelemeye yönlendirildi.",
+                "decision": decision.model_dump()
+            }
+            return
+
+        top_candidate = candidates[0]
+
+        yield {
+            "stage": "LLM_VERIFICATION",
+            "status": "IN_PROGRESS",
+            "message": f"Aşama 4: Predikat ağacı ve sembolik mantık kapısı doğrulanıyor (Aday: {top_candidate.gtip_code})...",
+            "session_id": session_id
+        }
+        await asyncio.sleep(0.05)
+        predicates = predicate_registry.get_predicates_for_gtip(top_candidate.gtip_code)
+        verification_results = llm_verifier.verify_predicates(raw_text, predicates)
+        decision = deterministic_engine.evaluate_decision(session_id, top_candidate, verification_results)
+
+        state_dict: Dict[str, Any] = {
+            "session_id": session_id,
+            "raw_text": raw_text,
+            "image_uri": image_uri,
+            "product_features": features.model_dump(),
+            "allowed_chapters": allowed_chapters,
+            "applied_gir_rules": gir_rules,
+            "candidates": [c.model_dump() for c in candidates],
+            "selected_gtip": top_candidate.gtip_code,
+            "confidence_score": decision.confidence_score,
+            "status": decision.status,
+            "official_statute_text": decision.official_statute_text,
+            "llm_reasoning_commentary": decision.llm_reasoning_commentary,
+            "hitl_question": decision.hitl_question.model_dump() if decision.hitl_question else None,
+            "audit_notes": decision.audit_notes
+        }
+        local_state_store.save_state(session_id, state_dict)
+
+        yield {
+            "stage": "COMPLETED",
+            "status": decision.status,
+            "message": f"Analiz tamamlandı. Karar: {decision.gtip_code or 'HITL Gerekli'} (Güven: %{int(decision.confidence_score*100)})",
+            "decision": decision.model_dump()
+        }
+
     def resume_analysis(self, session_id: str, selected_option_id: str) -> GTIPDecision:
         """
         Kullanıcı HITL sorusunu yanıtladığında akışı askıdan alıp (resume) tamamlar.

@@ -571,7 +571,18 @@ def match_chapters_from_cache(product_text: str) -> List[str]:
                     matched_chapters.append(chap)
 
     if matched_chapters:
-        return matched_chapters
+        # Gümrük Tekniği (GİR 1 / Fasıl Notları): Ana işlevsel ürün kategorilerini malzeme/kullanım fasıllarının önüne al
+        # 1. Ayakkabılarda (Fasıl 64) taban malzemesi olan Kauçuk (Fasıl 40) elenir.
+        if "64" in matched_chapters:
+            matched_chapters = ["64"] + [c for c in matched_chapters if c not in ["64", "40"]]
+        # 2. Mobilyalarda (Fasıl 94: masa, sandalye, mobilya) hammadde olan Ahşap (Fasıl 44) elenir.
+        if "94" in matched_chapters:
+            matched_chapters = ["94"] + [c for c in matched_chapters if c not in ["94", "44"]]
+        # 3. Motor Yağlarında (Fasıl 27: yağlar) kullanım alanı olan Taşıtlar (Fasıl 87) elenir.
+        if "27" in matched_chapters:
+            matched_chapters = ["27"] + [c for c in matched_chapters if c not in ["27", "87"]]
+
+        return list(dict.fromkeys(matched_chapters))
 
     # 2. Genel Fasıl Tanımları Taraması (Stop-words ve jenerik kelimeler hariç)
     generic_stop = {"diger", "diğer", "esya", "eşya", "maddeler", "kutular", "kaplar", "aksam", "parca", "parça", "veya", "olmayan"}

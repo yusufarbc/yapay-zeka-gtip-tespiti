@@ -28,6 +28,7 @@ class LLMFactVerifier:
         if api_key:
             try:
                 from google import genai
+                from api.modules.context_cache_manager import context_cache_manager
                 client = genai.Client(api_key=api_key)
                 
                 predicates_payload = [
@@ -54,10 +55,18 @@ class LLMFactVerifier:
                     "]"
                 )
 
-                response = client.models.generate_content(
-                    model=settings.AUDITOR_LLM_MODEL,
-                    contents=prompt
-                )
+                cached_config = context_cache_manager.get_cached_config(settings.AUDITOR_LLM_MODEL)
+                if cached_config:
+                    response = client.models.generate_content(
+                        model=settings.AUDITOR_LLM_MODEL,
+                        contents=prompt,
+                        config=cached_config
+                    )
+                else:
+                    response = client.models.generate_content(
+                        model=settings.AUDITOR_LLM_MODEL,
+                        contents=prompt
+                    )
 
                 if response.text:
                     clean_json = re.sub(r'```json\s*|\s*```', '', response.text).strip()

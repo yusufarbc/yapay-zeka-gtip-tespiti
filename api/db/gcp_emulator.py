@@ -37,9 +37,24 @@ class LocalVectorStore:
             with open(mock_data_path, "r", encoding="utf-8") as f:
                 content = json.load(f)
                 if isinstance(content, dict) and "entries" in content:
-                    self.btb_records = content["entries"]
+                    self.btb_records = list(content["entries"])
                 elif isinstance(content, list):
-                    self.btb_records = content
+                    self.btb_records = list(content)
+
+        # Resmi BTB veritabanından ek kararları da birleştir
+        btb_db_path = os.path.join(base_dir, "data", "official_btb_database.json")
+        if os.path.exists(btb_db_path):
+            try:
+                with open(btb_db_path, "r", encoding="utf-8") as f:
+                    btb_data = json.load(f)
+                    seen_keys = {r.get("btb_no") or r.get("gtip_code") for r in self.btb_records}
+                    for item in btb_data:
+                        b_id = item.get("btb_no") or item.get("gtip_code")
+                        if b_id not in seen_keys:
+                            seen_keys.add(b_id)
+                            self.btb_records.append(item)
+            except Exception as e:
+                print("BTB Database birleştirme uyarısı:", e)
 
     def search_btb(
         self, 

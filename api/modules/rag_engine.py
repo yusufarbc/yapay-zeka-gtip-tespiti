@@ -28,24 +28,18 @@ class RAGEngine:
                 top_k=3
             )
 
-        # 2. Genel Serbest Vektör Araması (Global Fallback Search)
-        global_results = local_vector_store.search_btb(
-            query_text=query_text,
-            allowed_chapters=None,
-            top_k=3
-        )
-
-        all_raw = list(constrained_results) + list(global_results)
-        seen_nos = set()
-        unique_results = []
-        for r in all_raw:
-            btb_id = r.get("btb_no") or r.get("gtip_code")
-            if btb_id not in seen_nos:
-                seen_nos.add(btb_id)
-                unique_results.append(r)
-
-        unique_results.sort(key=lambda x: x.get("similarity_score", 0), reverse=True)
-        top_results = unique_results[:3]
+        # 2. Top-K Aday Eşleştirme (Açık Fasıl Kısıtı Varsa Öncelikli Kullan)
+        if constrained_results:
+            constrained_results.sort(key=lambda x: x.get("similarity_score", 0), reverse=True)
+            top_results = constrained_results[:3]
+        else:
+            global_results = local_vector_store.search_btb(
+                query_text=query_text,
+                allowed_chapters=None,
+                top_k=3
+            )
+            global_results.sort(key=lambda x: x.get("similarity_score", 0), reverse=True)
+            top_results = global_results[:3]
 
         candidates = []
         if top_results:

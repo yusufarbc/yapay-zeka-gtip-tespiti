@@ -1753,6 +1753,57 @@
         "yonetimi"
       ],
       "vector_dim": 768
+    },
+    {
+      "btb_no": "TR-BTB-2025-064099",
+      "gtip_code": "6403.99.93.00.00",
+      "chapter": "64",
+      "heading": "6403",
+      "product_description": "Dış yüzeyi hakiki deriden mamul, tabanı kauçuk erkek günlük ayakkabı.",
+      "legal_justification": "TGTC Pozisyon 6403 ve Fasıl 64 Not 3a uyarınca dış yüzeyi hakiki deriden mamul ayakkabılar bu alt pozisyonda yer alır.",
+      "issue_date": "2025-06-04",
+      "keywords": [
+        "ayakkabi",
+        "deri",
+        "hakiki",
+        "kaucuk",
+        "erkek",
+        "gunluk"
+      ],
+      "vector_dim": 768
+    },
+    {
+      "btb_no": "TR-BTB-2025-094060",
+      "gtip_code": "9403.60.10.00.00",
+      "chapter": "94",
+      "heading": "9403",
+      "product_description": "Ahşap yemek masası ve mobilya takımı.",
+      "legal_justification": "TGTC Pozisyon 9403.60 uyarınca diğer ahşap mobilyalar bu pozisyonda sınıflandırılır.",
+      "issue_date": "2025-07-10",
+      "keywords": [
+        "ahsap",
+        "yemek",
+        "masasi",
+        "mobilya"
+      ],
+      "vector_dim": 768
+    },
+    {
+      "btb_no": "TR-BTB-2025-027019",
+      "gtip_code": "2710.19.81.00.00",
+      "chapter": "27",
+      "heading": "2710",
+      "product_description": "Sentetik motor yağı 5W-30 4L yağlama müstahzarı.",
+      "legal_justification": "TGTC Pozisyon 2710.19 uyarınca petrol yağları ve ağır yağlar bu alt pozisyonda yer alır.",
+      "issue_date": "2025-08-15",
+      "keywords": [
+        "sentetik",
+        "motor",
+        "yagi",
+        "yaglari",
+        "petrol"
+      ],
+      "vector_dim": 768
     }
   ]
 }

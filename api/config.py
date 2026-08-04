@@ -20,8 +20,10 @@ class Settings(BaseSettings):
     DEFAULT_LLM_MODEL: str = os.getenv("DEFAULT_LLM_MODEL", "gemini-3.6-flash")
     EXTRACTOR_LLM_MODEL: str = os.getenv("EXTRACTOR_LLM_MODEL", "gemini-3.6-flash-lite")
     REASONING_LLM_MODEL: str = os.getenv("REASONING_LLM_MODEL", "gemini-3.6-flash")
+    AUDITOR_LLM_MODEL: str = os.getenv("AUDITOR_LLM_MODEL", "gemini-3.6-flash")
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-005")
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    USE_CONTEXT_CACHE: bool = os.getenv("USE_CONTEXT_CACHE", "true").lower() == "true"
     
     # Security & Auth
     JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "super-secret-gtip-key-change-in-prod-2026")

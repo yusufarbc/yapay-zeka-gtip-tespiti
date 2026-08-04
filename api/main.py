@@ -86,7 +86,7 @@ async def analyze_product(
     try:
         user_session = get_current_user_session(request)
         image_uri = f"gs://{settings.GCS_BUCKET_NAME}/uploads/{image.filename}" if image else None
-        decision = workflow_engine.start_analysis(raw_text=product_description, image_uri=image_uri)
+        decision = await workflow_engine.start_analysis_async(raw_text=product_description, image_uri=image_uri)
         execution_ms = (time.time() - start_time) * 1000
 
         if decision.status == "COMPLETED" and decision.gtip_code:
@@ -107,12 +107,29 @@ async def analyze_product(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"GTİP Analiz Hatası: {str(e)}")
 
+from fastapi.responses import StreamingResponse
+
+@app.get("/api/v1/analyze/stream")
+async def analyze_product_stream(product_description: str, request: Request):
+    """
+    Canlı Akışlı Karar Takibi (Server-Sent Events / SSE) Endpoint'i.
+    4 aşamalı karar akışının her bir aşamasını istemciye anlık akış (text/event-stream) olarak iletir.
+    """
+    if not product_description or not product_description.strip():
+        raise HTTPException(status_code=400, detail="Geçerli bir ürün açıklaması girmelisiniz.")
+
+    async def event_generator():
+        async for event_data in workflow_engine.start_analysis_stream(raw_text=product_description.strip()):
+            yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 @app.post("/api/v1/analyze-json", response_model=GTIPDecision)
 async def analyze_product_json(payload: AnalyzeJSONRequest, request: Request):
     start_time = time.time()
     try:
         user_session = get_current_user_session(request)
-        decision = workflow_engine.start_analysis(raw_text=payload.product_description, image_uri=payload.image_uri)
+        decision = await workflow_engine.start_analysis_async(raw_text=payload.product_description, image_uri=payload.image_uri)
         execution_ms = (time.time() - start_time) * 1000
 
         if decision.status == "COMPLETED" and decision.gtip_code:
