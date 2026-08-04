@@ -103,7 +103,27 @@ class AuditorAgent:
                 )
                 return confidence, is_compliant, "Cihaz çalışma ve güç kaynağı netleşmeli.", hitl_question
 
-        # Tüm şartlar sağlandığında yüksek denetçi doğrulama puanı verilir
-        return min(confidence + 0.15, 0.96), True, None, None
+        # 4. Genel Doğrulama Artırımı ve Dinamik Soru Garantisi
+        final_confidence = min(confidence + 0.15, 0.96)
+        if final_confidence < 0.90 and not hitl_question:
+            hitl_question = HITLQuestion(
+                question_id=f"q_generic_confirm_{gtip[:4]}",
+                question_text=f"Sayın Müşavirim, '{features.product_name}' ürünü için tespit edilen {gtip[:4]} pozisyonunun teknik kullanım amacını teyit ediniz:",
+                missing_parameter="usage_confirmation",
+                options=[
+                    HITLOption(
+                        option_id="A",
+                        text="Sanayi, ticari ve profesyonel genel kullanım niteliğini onaylıyorum",
+                        impact_data={"confirmed": "true", "usage": "commercial"}
+                    ),
+                    HITLOption(
+                        option_id="B",
+                        text="Kişisel / ev tipi özel kullanım amacıyla değerlendirilsin",
+                        impact_data={"confirmed": "true", "usage": "personal"}
+                    )
+                ]
+            )
+
+        return final_confidence, True, None, hitl_question
 
 auditor_agent = AuditorAgent()

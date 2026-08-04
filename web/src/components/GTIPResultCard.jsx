@@ -3,7 +3,7 @@ import { Award, Download, Scale, CheckCircle2, Bot, Layers } from 'lucide-react'
 import { getPDFReportUrl } from '../api/client';
 
 export const GTIPResultCard = ({ decision }) => {
-  if (!decision || decision.status === 'WAITING_FOR_USER') return null;
+  if (!decision || (!decision.gtip_code && decision.status !== 'COMPLETED' && decision.status !== 'WAITING_FOR_USER')) return null;
 
   const pdfUrl = getPDFReportUrl(decision.session_id);
   const statuteText = decision.official_statute_text || decision.legal_justification || "Resmi Gümrük Tarife Cetveli (TGTC) hükümleri uyarınca.";

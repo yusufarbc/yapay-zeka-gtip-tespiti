@@ -5,9 +5,7 @@ export const FileUploader = ({ onStartAnalysis, isLoading }) => {
   const [description, setDescription] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
 
-  const handleQuickSample = (text) => {
-    setDescription(text);
-  };
+
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -43,61 +41,7 @@ export const FileUploader = ({ onStartAnalysis, isLoading }) => {
           />
         </div>
 
-        {/* Örnek Şablonlar */}
-        <div style={{ marginBottom: '20px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 500 }}>Örnek Şablonlar:</span>
-          
-          <button
-            type="button"
-            onClick={() => handleQuickSample("Şarj edilebilir dahili 3.7V elektrik motorlu, döner başlıklı diş temizleme cihazı (Şarjlı Diş Fırçası).")}
-            style={{
-              padding: '6px 12px',
-              borderRadius: '6px',
-              background: 'var(--bg-surface-subtle)',
-              border: '1px solid var(--border-subtle)',
-              color: 'var(--text-primary)',
-              fontSize: '0.78rem',
-              cursor: 'pointer',
-              fontWeight: 500
-            }}
-          >
-            🪥 Şarjlı Diş Fırçası (Fasıl 85)
-          </button>
 
-          <button
-            type="button"
-            onClick={() => handleQuickSample("%60 Pamuk / %40 Polyester karışımı dokuma kumaş. En: 150cm, m² ağırlığı 180 gr.")}
-            style={{
-              padding: '6px 12px',
-              borderRadius: '6px',
-              background: 'var(--bg-surface-subtle)',
-              border: '1px solid var(--border-subtle)',
-              color: 'var(--text-primary)',
-              fontSize: '0.78rem',
-              cursor: 'pointer',
-              fontWeight: 500
-            }}
-          >
-            🧵 %60 Pamuklu Kumaş (Fasıl 52)
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleQuickSample("Demontaj kutu içerisinde sökülmüş 24 vitesli iki tekerlekli bisiklet aksamları.")}
-            style={{
-              padding: '6px 12px',
-              borderRadius: '6px',
-              background: 'var(--bg-surface-subtle)',
-              border: '1px solid var(--border-subtle)',
-              color: 'var(--text-primary)',
-              fontSize: '0.78rem',
-              cursor: 'pointer',
-              fontWeight: 500
-            }}
-          >
-            🚲 Demonte Bisiklet (Fasıl 87)
-          </button>
-        </div>
 
         {/* Dosya Yükleme & Buton */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>

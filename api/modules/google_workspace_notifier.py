@@ -23,10 +23,10 @@ class GoogleWorkspaceNotifier:
     Google Workspace (Google Chat Spaces + Gmail) Kurumsal Bildirim Yöneticisi.
     """
     def __init__(self):
-        self.google_chat_webhook_url = os.getenv("GOOGLE_CHAT_WEBHOOK_URL") or settings.GCP_PROJECT_ID
+        self.google_chat_webhook_url = os.getenv("GOOGLE_CHAT_WEBHOOK_URL", "")
         self.smtp_server = os.getenv("GMAIL_SMTP_SERVER", "smtp.gmail.com")
         self.smtp_port = int(os.getenv("GMAIL_SMTP_PORT", 587))
-        self.sender_email = os.getenv("GMAIL_SENDER_EMAIL", "gtip-bildirim@kurum.com")
+        self.sender_email = os.getenv("GMAIL_SENDER_EMAIL", f"notifications@{settings.GCP_PROJECT_ID}.google")
         self.sender_password = os.getenv("GMAIL_APP_PASSWORD", "")
 
     def send_google_chat_card(

@@ -5,6 +5,21 @@ Resmi Türk Gümrük Tarife Cetveli (TGTC) 99 Fasıl Mevzuat ve İzahname Önbel
 import re
 from typing import Dict, List
 
+KEYWORD_CHAPTER_MAP = {
+    "mas": "94", "sandalye": "94", "mobilya": "94", "koltuk": "94", "yatak": "94", "sehpa": "94",
+    "parfum": "33", "parfüm": "33", "kozmetik": "33", "krem": "33", "losyon": "33",
+    "ayakkab": "64", "ayakkabı": "64", "ayakkabi": "64", "bot": "64", "terlik": "64", "cizme": "64", "çizme": "64",
+    "cant": "42", "çant": "42", "cuzdan": "42", "cüzdan": "42", "bavul": "42", "saraciye": "42",
+    "oyuncak": "95", "kumandali": "95", "kumandalı": "95", "yaris arabas": "95", "yarış arabas": "95",
+    "arab": "87", "bisiklet": "87", "otomobil": "87", "tasit": "87", "taşıt": "87",
+    "bilgisayar": "84", "laptop": "84", "notebook": "84", "buzdolab": "84", "camasir": "84", "çamaşır": "84",
+    "iphone": "85", "akilli": "85", "akıllı": "85", "telefon": "85", "sarj": "85", "şarj": "85", "batarya": "85", "firca": "85", "fırça": "85", "tv": "85", "televizyon": "85",
+    "entegre": "85", "pdip": "85", "cip": "85", "çip": "85", "yari iletken": "85", "yarı iletken": "85", "transistor": "85", "transistör": "85", "mikroislemci": "85", "mikroişlemci": "85", "devre": "85", "elektronik": "85", "diyot": "85", "direnc": "85", "direnç": "85", "kondansator": "85", "kondansatör": "85", "trafo": "85", "guc kaynagi": "85", "güç kaynağı": "85", "entegre devre": "85",
+    "ilac": "30", "ilaç": "30", "parasetamol": "30", "asi": "30", "aşı": "30", "tablet": "30",
+    "lastik": "40", "kaucuk": "40", "kauçuk": "40", "zeytinyag": "15", "zeytinyağı": "15", "yag": "15", "yağ": "15", "kahve": "09", "cay": "09", "çay": "09",
+    "tuvalet": "48", "kagit": "48", "kağıt": "48", "seluloz": "48", "selüloz": "48", "ultrason": "90", "tibbi": "90", "tıbbi": "90", "cerrahi": "90"
+}
+
 GIR_RULES = {
     "GIR_1": "Tarife pozisyonu ve ilgili bölüm veya fasıl notlarına göre sınıflandırma yapılır.",
     "GIR_2A": "Sökülmüş, demonte veya tamamlanmamış eşya, monte edilmiş ana eşyanın karakteristik özelliğini taşıyorsa ana pozisyonda sınıflandırılır.",
@@ -427,6 +442,15 @@ TGTC_KNOWLEDGE_BASE_CATALOG: List[Dict[str, str]] = [
         "legal_justification": "GİR 1 ve GİR 6 kuralları gereğince kendinden elektrik motorlu ev aletleri pozisyonu olan 8509.80 altında sınıflandırılmıştır."
     },
     {
+        "btb_no": "TR-BTB-2025-085042",
+        "gtip_code": "8542.31.90.00.00",
+        "chapter": "85",
+        "heading": "8542",
+        "issue_date": "2025-05-20",
+        "product_description": "PDIP-8 veya SMD kılıflı, elektronik sistemlerde güç yönetimi ve voltaj düzenlemesi sağlayan monolitik entegre devre (WT7502 PDIP-8 Güç Entegresi).",
+        "legal_justification": "TGTC Pozisyon 8542.31 uyarınca elektronik entegre devreler ve güç yönetimi chipleri 8542 altında sınıflandırılmıştır."
+    },
+    {
         "btb_no": "TR-BTB-2025-085004",
         "gtip_code": "8504.40.90.00.12",
         "chapter": "85",
@@ -452,6 +476,15 @@ TGTC_KNOWLEDGE_BASE_CATALOG: List[Dict[str, str]] = [
         "issue_date": "2025-06-10",
         "product_description": "Sadece elektrik motorundan tahrik alan 100kW üzeri binek otomobil (Tam Elektrikli Otomobil / EV).",
         "legal_justification": "TGTC Pozisyon 8703.80 uyarınca sadece elektrik motorlu binek araçlar 8703 altında sınıflandırılır."
+    },
+    {
+        "btb_no": "TR-BTB-2025-064001",
+        "gtip_code": "6403.99.93.00.00",
+        "chapter": "64",
+        "heading": "6403",
+        "issue_date": "2025-03-12",
+        "product_description": "Hakiki deri dış yüzeyli erkek ve kadın ayakkabısı (Hakiki Deri Erkek Ayakkabı).",
+        "legal_justification": "TGTC Madde 6403.99 uyarınca hakiki deri ayakkabılar 6403 pozisyonunda sınıflandırılır."
     },
     {
         "btb_no": "TR-BTB-2025-090018",
@@ -500,6 +533,15 @@ TGTC_KNOWLEDGE_BASE_CATALOG: List[Dict[str, str]] = [
     }
 ]
 
+TURKISH_STOP_WORDS = {
+    "malzemeden", "imal", "edilmis", "edilmiş", "tipi", "icin", "için", "olan", "ve", "ile", 
+    "veya", "gore", "göre", "her", "bir", "bu", "da", "de", "dahi", "turu", "türü", "ait",
+    "uzere", "üzere", "gibi", "kadar", "adet", "kutu", "tane", "halinde", "mamul",
+    "tasarim", "tasarimi", "yüksek", "yuksek", "dusuk", "düşük", "saglam", "sağlam", "kompakt",
+    "genel", "urun", "ürün", "cihaz", "aciklama", "açıklama", "ozellikleri", "özellikleri", "ozellik", "özellik",
+    "uygulamalari", "uygulamaları", "uygulama", "idealdir", "kullanilir", "kullanılır", "saglar", "sağlar"
+}
+
 def tr_normalize(text: str) -> str:
     if not text:
         return ""
@@ -509,54 +551,35 @@ def tr_normalize(text: str) -> str:
     text = text.replace("Ü", "u").replace("ü", "u")
     return text.lower()
 
-KEYWORD_CHAPTER_MAP = {
-    "mas": "94", "sandalye": "94", "mobilya": "94", "koltuk": "94", "yatak": "94", "sehpa": "94",
-    "parfum": "33", "parfüm": "33", "kozmetik": "33", "krem": "33", "losyon": "33",
-    "ayakkab": "64", "ayakkabı": "64", "bot": "64", "terlik": "64", "cizme": "64", "çizme": "64",
-    "cant": "42", "çant": "42", "cuzdan": "42", "cüzdan": "42", "bavul": "42", "saraciye": "42",
-    "oyuncak": "95", "kumandali": "95", "kumandalı": "95", "yaris arabas": "95", "yarış arabas": "95",
-    "arab": "87", "bisiklet": "87", "otomobil": "87", "tasit": "87", "taşıt": "87",
-    "bilgisayar": "84", "laptop": "84", "notebook": "84", "buzdolab": "84", "camasir": "84", "çamaşır": "84",
-    "telefon": "85", "sarj": "85", "şarj": "85", "batarya": "85", "firca": "85", "fırça": "85", "tv": "85", "televizyon": "85",
-    "ilac": "30", "ilaç": "30", "parasetamol": "30", "asi": "30", "aşı": "30", "tablet": "30",
-    "lastik": "40", "kaucuk": "40", "kauçuk": "40", "zeytinyag": "15", "zeytinyağı": "15", "yag": "15", "yağ": "15", "kahve": "09", "cay": "09", "çay": "09",
-    "tuvalet": "48", "kagit": "48", "kağıt": "48", "seluloz": "48", "selüloz": "48", "ultrason": "90", "tibbi": "90", "tıbbi": "90", "cerrahi": "90"
-}
-
 def match_chapters_from_cache(product_text: str) -> List[str]:
     """
-    Önbellekteki (Context Cache) 99 TGTC Fasıl Tanımları, Anahtar Kelimeler ve BTB İzahnameleri 
+    Önbellekteki (Context Cache) 99 TGTC Fasıl Tanımları ve İzahnameleri 
     üzerinde dinamik karşılaştırma yaparak eşleşen Fasılları döndürür.
     """
     norm_input = tr_normalize(product_text)
     input_words = set(re.findall(r'[a-z0-9]+', norm_input))
 
     matched_chapters = []
-
-    # 1. Anahtar Kelime Haritası (Domain Stem Synonyms)
+    
+    # 1. Öncelikli Domain Sözlüğü (KEYWORD_CHAPTER_MAP) Taraması
     for word in input_words:
+        if word in TURKISH_STOP_WORDS:
+            continue
         for stem, chap in KEYWORD_CHAPTER_MAP.items():
-            if stem in word:
+            if stem == word or (len(stem) >= 4 and len(word) >= 4 and (stem in word or word in stem or stem[:4] == word[:4])):
                 if chap not in matched_chapters:
                     matched_chapters.append(chap)
 
-    # 2. 99 TGTC Fasıl Tanımları Metin Kesişimi
+    if matched_chapters:
+        return matched_chapters
+
+    # 2. Genel Fasıl Tanımları Taraması (Stop-words ve jenerik kelimeler hariç)
+    generic_stop = {"diger", "diğer", "esya", "eşya", "maddeler", "kutular", "kaplar", "aksam", "parca", "parça", "veya", "olmayan"}
     for chap_code, chap_desc in TGTC_CHAPTERS.items():
         norm_desc = tr_normalize(chap_desc)
-        desc_words = set(re.findall(r'[a-z0-9]+', norm_desc))
+        desc_words = set(w for w in re.findall(r'[a-z0-9]+', norm_desc) if w not in TURKISH_STOP_WORDS and w not in generic_stop)
         common = input_words.intersection(desc_words)
-        if any(len(w) >= 3 for w in common):
-            if chap_code not in matched_chapters:
-                matched_chapters.append(chap_code)
-
-    # 3. BTB Kataloğundaki Ürün Açıklamaları Kesişimi
-    for rec in TGTC_KNOWLEDGE_BASE_CATALOG:
-        chap = rec.get("chapter")
-        if chap and chap not in matched_chapters:
-            norm_rec = tr_normalize(rec.get("product_description", ""))
-            rec_words = set(re.findall(r'[a-z0-9]+', norm_rec))
-            overlap = input_words.intersection(rec_words)
-            if len(overlap) >= 2:
-                matched_chapters.append(chap)
+        if any(len(w) >= 4 for w in common):
+            matched_chapters.append(chap_code)
 
     return matched_chapters

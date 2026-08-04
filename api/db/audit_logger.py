@@ -89,4 +89,28 @@ class AuditLogger:
                 ))
         return results
 
+    def export_bigquery_payloads(self, limit: int = 100) -> List[dict]:
+        """
+        BigQuery `gtip_audit_logs` tablosuna aktarım ve Looker Studio BI görselleştirme payload'u üretir.
+        """
+        entries = self.get_all_logs(limit=limit)
+        return [
+            {
+                "session_id": e.session_id,
+                "timestamp": e.timestamp,
+                "user_email": e.user_email,
+                "user_role": e.user_role,
+                "product_name": e.product_name,
+                "chapter_code": e.final_gtip_approved[:2] if e.final_gtip_approved else None,
+                "heading_code": e.final_gtip_approved[:4] if e.final_gtip_approved else None,
+                "initial_gtip_proposed": e.initial_gtip_proposed,
+                "final_gtip_approved": e.final_gtip_approved,
+                "confidence_score": e.confidence_score,
+                "is_hitl_triggered": e.is_hitl_triggered,
+                "user_feedback": e.user_feedback,
+                "execution_time_ms": e.execution_time_ms
+            }
+            for e in entries
+        ]
+
 audit_logger = AuditLogger()

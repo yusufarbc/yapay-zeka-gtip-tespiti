@@ -8,7 +8,7 @@ RUN npm ci
 
 COPY . .
 
-ARG VITE_API_URL=https://gtip-api-230333256951.europe-west3.run.app/api/v1
+ARG VITE_API_URL=https://gtip-backend-230333256951.europe-west3.run.app/api/v1
 ENV VITE_API_URL=${VITE_API_URL}
 
 RUN npm run build

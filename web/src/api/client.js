@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://gtip-api-230333256951.europe-west3.run.app/api/v1';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://gtip-backend-230333256951.europe-west3.run.app/api/v1';
 
 export const analyzeProduct = async (productDescription, file = null) => {
   const formData = new FormData();
@@ -29,6 +29,16 @@ export const respondHITL = async (sessionId, questionId, selectedOptionId, custo
 
 export const getAuditLogs = async () => {
   const response = await axios.get(`${API_BASE_URL}/audit/logs`);
+  return response.data;
+};
+
+export const getCustomsBTBs = async () => {
+  const response = await axios.get(`${API_BASE_URL}/customs-data/btbs`);
+  return response.data;
+};
+
+export const getTGTCChapters = async () => {
+  const response = await axios.get(`${API_BASE_URL}/customs-data/chapters`);
   return response.data;
 };
 

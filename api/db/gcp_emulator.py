@@ -16,7 +16,10 @@ def tr_normalize(text: str) -> str:
 TURKISH_STOP_WORDS = {
     "malzemeden", "imal", "edilmis", "edilmiş", "tipi", "icin", "için", "olan", "ve", "ile", 
     "veya", "gore", "göre", "her", "bir", "bu", "da", "de", "dahi", "turu", "türü", "ait",
-    "uzere", "üzere", "gibi", "kadar", "adet", "kutu", "tane", "halinde", "mamul"
+    "uzere", "üzere", "gibi", "kadar", "adet", "kutu", "tane", "halinde", "mamul",
+    "tasarim", "tasarimi", "yüksek", "yuksek", "dusuk", "düşük", "saglam", "sağlam", "kompakt",
+    "genel", "urun", "ürün", "cihaz", "aciklama", "açıklama", "ozellikleri", "özellikleri", "ozellik", "özellik",
+    "uygulamalari", "uygulamaları", "uygulama", "idealdir", "kullanilir", "kullanılır", "saglar", "sağlar"
 }
 
 class LocalVectorStore:
@@ -28,31 +31,15 @@ class LocalVectorStore:
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         if mock_data_path is None:
             mock_data_path = os.path.join(base_dir, "data", "vector_index.json")
-        
-        self.mock_data_path = mock_data_path
-        self.btb_records = self._load_data()
 
-    def _load_data(self) -> List[Dict[str, Any]]:
-        records = []
-        if os.path.exists(self.mock_data_path):
-            try:
-                with open(self.mock_data_path, "r", encoding="utf-8") as f:
-                    file_data = json.load(f)
-                    if isinstance(file_data, dict) and "entries" in file_data:
-                        records = file_data["entries"]
-                    elif isinstance(file_data, list):
-                        records = file_data
-            except Exception as e:
-                print("Vector Index okuma uyarısı:", e)
-
-        if not records:
-            try:
-                from api.db.tgtc_knowledge_base import TGTC_KNOWLEDGE_BASE_CATALOG
-                records.extend(TGTC_KNOWLEDGE_BASE_CATALOG)
-            except Exception as e:
-                print("TGTC Knowledge Base yükleme uyarısı:", e)
-
-        return records
+        self.btb_records: List[Dict[str, Any]] = []
+        if os.path.exists(mock_data_path):
+            with open(mock_data_path, "r", encoding="utf-8") as f:
+                content = json.load(f)
+                if isinstance(content, dict) and "entries" in content:
+                    self.btb_records = content["entries"]
+                elif isinstance(content, list):
+                    self.btb_records = content
 
     def search_btb(
         self, 
@@ -61,7 +48,6 @@ class LocalVectorStore:
         top_k: int = 3
     ) -> List[Dict[str, Any]]:
         """
-        Tree-Search Hybrid RAG:
         1. Kademeli Fasıl/Pozisyon filtresi (allowed_chapters).
         2. Semantik kelime kümesi ve TF-IDF ağırlıklı benzerlik skoru.
         3. En yüksek skorlu emsal kararları döndürür.
@@ -87,12 +73,12 @@ class LocalVectorStore:
             desc_words = [w for w in re.findall(r'[a-z0-9]+', desc_norm) if w not in TURKISH_STOP_WORDS]
             rec_keywords = set(desc_words)
 
-            # Semantik Kelime & Kök Kesişimi (Stop-words hariç 4-karakter kök eşleme)
+            # Semantik Kelime & Kök Kesişimi (Stop-words hariç 4-karakter tam/kök eşleme)
             matched_rw_set = set()
             for qw in query_word_set:
                 for rw in rec_keywords:
                     if rw not in matched_rw_set:
-                        if qw == rw or (len(qw) >= 4 and len(rw) >= 4 and (qw[:4] == rw[:4] or qw in rw or rw in qw)):
+                        if qw == rw or (len(qw) >= 4 and len(rw) >= 4 and qw[:4] == rw[:4]):
                             matched_rw_set.add(rw)
                             break
 

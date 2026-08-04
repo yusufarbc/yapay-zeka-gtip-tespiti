@@ -5,6 +5,7 @@ import { PipelineStatus } from './components/PipelineStatus';
 import { HITLQuestionModal } from './components/HITLQuestionModal';
 import { GTIPResultCard } from './components/GTIPResultCard';
 import { AuditHistoryTable } from './components/AuditHistoryTable';
+import { CustomsKnowledgeExplorer } from './components/CustomsKnowledgeExplorer';
 import { analyzeProduct, respondHITL, getAuditLogs } from './api/client';
 
 export function App() {
@@ -12,6 +13,7 @@ export function App() {
     return localStorage.getItem('gtip_theme') || 'light';
   });
 
+  const [activeNav, setActiveNav] = useState('analysis'); // 'analysis' | 'explorer'
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isSubmittingHITL, setIsSubmittingHITL] = useState(false);
   const [decision, setDecision] = useState(null);
@@ -76,7 +78,7 @@ export function App() {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <Header theme={theme} onToggleTheme={toggleTheme} />
+      <Header theme={theme} onToggleTheme={toggleTheme} activeNav={activeNav} onSelectNav={setActiveNav} />
 
       <main style={{ maxWidth: '1100px', margin: '0 auto', padding: '0 20px 40px', width: '100%', flex: 1 }}>
         
@@ -86,29 +88,36 @@ export function App() {
           </div>
         )}
 
-        <FileUploader onStartAnalysis={handleStartAnalysis} isLoading={isAnalyzing} />
+        {activeNav === 'analysis' ? (
+          <>
+            <FileUploader onStartAnalysis={handleStartAnalysis} isLoading={isAnalyzing} />
 
-        <PipelineStatus isAnalyzing={isAnalyzing} decision={decision} />
+            <PipelineStatus isAnalyzing={isAnalyzing} decision={decision} />
 
-        {decision && decision.status === 'WAITING_FOR_USER' && (
-          <HITLQuestionModal
-            question={decision.hitl_question}
-            onRespond={handleHITLRespond}
-            isSubmitting={isSubmittingHITL}
-          />
+            {decision && decision.status === 'WAITING_FOR_USER' && (
+              <HITLQuestionModal
+                question={decision.hitl_question}
+                onRespond={handleHITLRespond}
+                isSubmitting={isSubmittingHITL}
+              />
+            )}
+
+            <GTIPResultCard decision={decision} />
+
+            <AuditHistoryTable logs={auditLogs} />
+          </>
+        ) : (
+          <CustomsKnowledgeExplorer />
         )}
-
-        <GTIPResultCard decision={decision} />
-
-        <AuditHistoryTable logs={auditLogs} />
 
       </main>
 
       <footer style={{ textAlign: 'center', padding: '20px', fontSize: '0.8rem', color: 'var(--text-muted)', borderTop: '1px solid var(--border-subtle)' }}>
-        GTİP Tespit ve Karar Destek Portalı
+        GTİP Tespit ve Karar Destek Portalı - GCP Multi-Layer Data & ETL Integrated
       </footer>
     </div>
   );
 }
 
 export default App;
+

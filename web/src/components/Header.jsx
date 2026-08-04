@@ -1,7 +1,7 @@
 import React from 'react';
 import { Building2, Sun, Moon } from 'lucide-react';
 
-export const Header = ({ theme, onToggleTheme }) => {
+export const Header = ({ theme, onToggleTheme, activeNav, onSelectNav }) => {
   return (
     <header style={{
       padding: '16px 32px',
@@ -10,9 +10,9 @@ export const Header = ({ theme, onToggleTheme }) => {
       borderBottom: '1px solid var(--border-subtle)',
       boxShadow: 'var(--shadow-panel)'
     }}>
-      <div style={{ maxWidth: '1100px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ maxWidth: '1100px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
         
-        {/* Logo & Başlık (Siyah / Koyu Gri Kutu) */}
+        {/* Logo & Başlık */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div style={{
             background: 'var(--primary-brand)',
@@ -32,6 +32,40 @@ export const Header = ({ theme, onToggleTheme }) => {
               Türk Gümrük Tarife Cetveli (TGTC) Karar Destek Sistemi
             </p>
           </div>
+        </div>
+
+        {/* Ana Navigasyon Tabları */}
+        <div style={{ display: 'flex', gap: '8px', background: 'var(--bg-surface-subtle)', padding: '4px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+          <button
+            onClick={() => onSelectNav('analysis')}
+            style={{
+              background: activeNav === 'analysis' ? 'var(--bg-surface)' : 'transparent',
+              color: activeNav === 'analysis' ? 'var(--text-primary)' : 'var(--text-secondary)',
+              border: activeNav === 'analysis' ? '1px solid var(--border-subtle)' : 'none',
+              padding: '6px 14px',
+              borderRadius: '6px',
+              fontWeight: 600,
+              fontSize: '0.82rem',
+              cursor: 'pointer'
+            }}
+          >
+            🔍 GTİP Analiz Portalı
+          </button>
+          <button
+            onClick={() => onSelectNav('explorer')}
+            style={{
+              background: activeNav === 'explorer' ? 'var(--bg-surface)' : 'transparent',
+              color: activeNav === 'explorer' ? 'var(--text-primary)' : 'var(--text-secondary)',
+              border: activeNav === 'explorer' ? '1px solid var(--border-subtle)' : 'none',
+              padding: '6px 14px',
+              borderRadius: '6px',
+              fontWeight: 600,
+              fontSize: '0.82rem',
+              cursor: 'pointer'
+            }}
+          >
+            📚 Canlı Mevzuat & BTB Kütüphanesi
+          </button>
         </div>
 
         {/* Tema Değiştirici */}

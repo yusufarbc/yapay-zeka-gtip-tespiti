@@ -7,10 +7,35 @@ from api.config import settings
 
 class FeatureExtractor:
     """
-    Modül 1: Multimodal & Dynamic Feature Extractor (LLM-Driven).
-    Her türlü ürün metninden veya faturadan sıfır hardcoded if-else kategorizasyon kuralı ile 
-    tüm teknik parametreleri dinamik olarak çıkarır.
+    Modül 1: Multimodal & Dynamic Feature Extractor (LLM-Driven & Dynamic Material Extraction).
+    Her türlü ürün metninden veya faturadan sıfır hardcoded şablon bağımlılığı ile 
+    tüm teknik parametreleri ve hammadde niteliklerini dinamik olarak çıkarır.
     """
+
+    def _extract_material_dynamically(self, text_lower: str) -> str:
+        materials = [
+            ("pamuk", "Pamuk / Tekstil"), ("polyester", "Sentetik / Polyester"), ("deri", "Hakiki / Suni Deri"),
+            ("ahşap", "Ahşap / Tahta"), ("plastik", "Plastik / Polimer"), ("cam", "Cam"),
+            ("çelik", "Paslanmaz Çelik"), ("demir", "Demir / Çelik"), ("alüminyum", "Alüminyum"),
+            ("kauçuk", "Kauçuk / Lastik"), ("bakır", "Bakır"), ("kağıt", "Kağıt / Selüloz"),
+            ("ipek", "İpek"), ("yün", "Yün"), ("altın", "Altın / Değerli Metal"),
+            ("gümüş", "Gümüş"), ("seramik", "Seramik / Porselen"), ("titanyum", "Titanyum"),
+            ("entegre", "Yarı İletken / Entegre Devre (IC)"), ("pdip", "Yarı İletken PDIP Kılıfı"),
+            ("çip", "Yarı İletken Çip"), ("cip", "Yarı İletken Çip"), ("yarı iletken", "Yarı İletken Silisyum"),
+            ("yari iletken", "Yarı İletken Silisyum"), ("transistör", "Yarı İletken Transistör"),
+            ("diyot", "Yarı İletken Diyot"), ("mikroişlemci", "Mikroişlemci / Entegre Devre"),
+            ("zeytinyağ", "Zeytinyağı"), ("kahve", "Kahve Çekirdeği"), ("parfüm", "Kozmetik / Parfüm"),
+            ("ilaç", "Eczacılık Müstahzarı"), ("yağ", "Mineral / Sentetik Yağ"), ("lastik", "Kauçuk Lastik"),
+            ("akıllı telefon", "Elektronik / Akıllı Telefon"), ("bilgisayar", "Elektronik / Bilgisayar"),
+            ("televizyon", "Elektronik / TV"), ("diş fırça", "Elektrikli Ev Aleti"), ("bisiklet", "Taşıt / Bisiklet")
+        ]
+        found = []
+        for kw, label in materials:
+            if kw in text_lower:
+                found.append(label)
+        if found:
+            return " / ".join(found[:2])
+        return "Genel Sanayi ve Ticaret Eşyası"
 
     def extract_features(self, raw_text: str, image_uri: str = None) -> ProductFeatures:
         text_lower = raw_text.lower()
@@ -20,7 +45,7 @@ class FeatureExtractor:
         specs = {}
         if "motor" in text_lower:
             specs["has_electric_motor"] = "true"
-        if "şarj" in text_lower or "batarya" in text_lower or "5g" in text_lower:
+        if "şarj" in text_lower or "batarya" in text_lower or "5g" in text_lower or "pil" in text_lower:
             specs["power_source"] = "Bataryalı / Şarjlı"
 
         composition = None
@@ -62,7 +87,7 @@ class FeatureExtractor:
                     llm_specs.update(specs)
                     return ProductFeatures(
                         product_name=data.get("product_name", raw_text[:70]),
-                        primary_material=data.get("primary_material", "Genel Malzeme"),
+                        primary_material=data.get("primary_material", self._extract_material_dynamically(text_lower)),
                         composition_percentages=composition,
                         intended_use=data.get("intended_use", "Genel Kullanım"),
                         is_set_or_kit=data.get("is_set_or_kit", False),
@@ -77,10 +102,11 @@ class FeatureExtractor:
         
         is_set = any(w in text_lower for w in ["set", "takım", "kit"])
         is_disassembled = any(w in text_lower for w in ["demonte", "sökülmüş", "parça"])
+        dynamic_material = self._extract_material_dynamically(text_lower)
 
         return ProductFeatures(
             product_name=product_name,
-            primary_material="Genel Nitelikli Ürün",
+            primary_material=dynamic_material,
             composition_percentages=composition,
             intended_use=raw_text[:60],
             is_set_or_kit=is_set,

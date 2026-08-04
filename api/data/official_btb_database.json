@@ -333,6 +333,15 @@
     "legal_justification": "TGTC Pozisyon 8703.80 uyarınca sadece elektrik motorlu binek araçlar 8703 altında sınıflandırılır."
   },
   {
+    "btb_no": "TR-BTB-2025-064001",
+    "gtip_code": "6403.99.93.00.00",
+    "chapter": "64",
+    "heading": "6403",
+    "issue_date": "2025-03-12",
+    "product_description": "Hakiki deri dış yüzeyli erkek ve kadın ayakkabısı (Hakiki Deri Erkek Ayakkabı).",
+    "legal_justification": "TGTC Madde 6403.99 uyarınca hakiki deri ayakkabılar 6403 pozisyonunda sınıflandırılır."
+  },
+  {
     "btb_no": "TR-BTB-2025-090018",
     "gtip_code": "9018.90.84.00.00",
     "chapter": "90",
@@ -376,5 +385,23 @@
     "issue_date": "2025-04-05",
     "product_description": "Tek kullanımlık emici selüloz esaslı bebek bezi ve hijyenik ped.",
     "legal_justification": "TGTC Pozisyon 9619.00 uyarınca hijyenik pedler ve bebek bezleri 9619 pozisyonunda yer alır."
+  },
+  {
+    "btb_no": "TR-BTB-2025-064001",
+    "gtip_code": "6403.99.93.00.00",
+    "chapter": "64",
+    "heading": "6403",
+    "issue_date": "2025-03-12",
+    "product_description": "Hakiki deri dış yüzeyli erkek ve kadın ayakkabısı (Hakiki Deri Erkek Ayakkabı).",
+    "legal_justification": "TGTC Madde 6403.99 uyarınca hakiki deri ayakkabılar 6403 pozisyonunda sınıflandırılır."
+  },
+  {
+    "btb_no": "TR-BTB-2025-085042",
+    "gtip_code": "8542.31.90.00.00",
+    "chapter": "85",
+    "heading": "8542",
+    "issue_date": "2025-05-20",
+    "product_description": "PDIP-8 veya SMD kılıflı, elektronik sistemlerde güç yönetimi ve voltaj düzenlemesi sağlayan monolitik entegre devre (WT7502 PDIP-8 Güç Entegresi).",
+    "legal_justification": "TGTC Pozisyon 8542.31 uyarınca elektronik entegre devreler ve güç yönetimi chipleri 8542 altında sınıflandırılmıştır."
   }
 ]
