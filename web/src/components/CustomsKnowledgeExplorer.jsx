@@ -28,13 +28,23 @@ export const CustomsKnowledgeExplorer = () => {
     loadData();
   }, []);
 
-  const filteredBtbs = btbs.filter(b => 
-    !searchTerm || 
-    (b.btb_no && b.btb_no.toLowerCase().includes(searchTerm.toLowerCase())) ||
-    (b.gtip_code && b.gtip_code.includes(searchTerm)) ||
-    (b.product_description && b.product_description.toLowerCase().includes(searchTerm.toLowerCase())) ||
-    (b.legal_justification && b.legal_justification.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
+  const [selectedChapter, setSelectedChapter] = useState('ALL');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 20;
+
+  const filteredBtbs = btbs.filter(b => {
+    const matchesSearch = !searchTerm || 
+      (b.btb_no && b.btb_no.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (b.gtip_code && b.gtip_code.includes(searchTerm)) ||
+      (b.product_description && b.product_description.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (b.legal_justification && b.legal_justification.toLowerCase().includes(searchTerm.toLowerCase()));
+
+    const matchesChap = selectedChapter === 'ALL' || b.chapter === selectedChapter;
+    return matchesSearch && matchesChap;
+  });
+
+  const totalPages = Math.ceil(filteredBtbs.length / itemsPerPage) || 1;
+  const paginatedBtbs = filteredBtbs.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const filteredChapters = chapters.filter(c => 
     !searchTerm || 
@@ -53,14 +63,14 @@ export const CustomsKnowledgeExplorer = () => {
             <span>Resmi Gümrük Tarife Cetveli & BTB Veri Kütüphanesi</span>
           </h2>
           <p style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            Ticaret Bakanlığı ve Resmi Gazete'den dinamik çekilen 99 Fasıl TGTC Cetveli ve 50.000+ Emsal BTB Kararları
+            Ticaret Bakanlığı ve Resmi Gazete'den canlı senkronize edilen 99 Fasıl TGTC Cetveli ve 50.000+ Emsal BTB Karar Havuzu
           </p>
         </div>
 
         {/* Tab Butonları */}
         <div style={{ display: 'flex', gap: '6px', background: 'var(--bg-surface-subtle)', padding: '4px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
           <button
-            onClick={() => setActiveTab('btbs')}
+            onClick={() => { setActiveTab('btbs'); setCurrentPage(1); }}
             style={{
               background: activeTab === 'btbs' ? 'var(--bg-surface)' : 'transparent',
               color: activeTab === 'btbs' ? 'var(--text-primary)' : 'var(--text-secondary)',
@@ -76,11 +86,11 @@ export const CustomsKnowledgeExplorer = () => {
             }}
           >
             <Award size={15} />
-            <span>BTB Kararları ({btbs.length})</span>
+            <span>BTB Emsal Havuzu ({btbs.length})</span>
           </button>
 
           <button
-            onClick={() => setActiveTab('chapters')}
+            onClick={() => { setActiveTab('chapters'); setCurrentPage(1); }}
             style={{
               background: activeTab === 'chapters' ? 'var(--bg-surface)' : 'transparent',
               color: activeTab === 'chapters' ? 'var(--text-primary)' : 'var(--text-secondary)',
@@ -96,7 +106,7 @@ export const CustomsKnowledgeExplorer = () => {
             }}
           >
             <Layers size={15} />
-            <span>TGTC 99 Fasıl ({chapters.length})</span>
+            <span>TGTC 99 Fasıl & Pozisyonlar ({chapters.length})</span>
           </button>
 
           <button
@@ -121,26 +131,53 @@ export const CustomsKnowledgeExplorer = () => {
         </div>
       </div>
 
-      {/* Arama Barı */}
+      {/* Arama ve Filtreleme Barı */}
       {activeTab !== 'sync' && (
-        <div style={{ marginBottom: '16px', position: 'relative' }}>
-          <Search size={16} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder={activeTab === 'btbs' ? "BTB No, GTİP Kodu veya ürün tanımı ile canlı ara..." : "Fasıl No veya Fasıl tanımı ara (Örn: 85, Mobilya, Plastik)..."}
-            style={{
-              width: '100%',
-              padding: '10px 12px 10px 36px',
-              borderRadius: '6px',
-              border: '1px solid var(--border-subtle)',
-              background: 'var(--bg-primary)',
-              color: 'var(--text-primary)',
-              fontSize: '0.86rem',
-              outline: 'none'
-            }}
-          />
+        <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: '240px', position: 'relative' }}>
+            <Search size={16} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+              placeholder={activeTab === 'btbs' ? "BTB No, GTİP Kodu veya ürün tanımı ile canlı ara..." : "Fasıl No veya Fasıl tanımı ara (Örn: 84, Mobilya, Plastik)..."}
+              style={{
+                width: '100%',
+                padding: '10px 12px 10px 36px',
+                borderRadius: '6px',
+                border: '1px solid var(--border-subtle)',
+                background: 'var(--bg-primary)',
+                color: 'var(--text-primary)',
+                fontSize: '0.86rem',
+                outline: 'none'
+              }}
+            />
+          </div>
+
+          {activeTab === 'btbs' && (
+            <select
+              value={selectedChapter}
+              onChange={(e) => { setSelectedChapter(e.target.value); setCurrentPage(1); }}
+              style={{
+                padding: '10px 14px',
+                borderRadius: '6px',
+                border: '1px solid var(--border-subtle)',
+                background: 'var(--bg-primary)',
+                color: 'var(--text-primary)',
+                fontSize: '0.84rem',
+                fontWeight: 600,
+                outline: 'none',
+                cursor: 'pointer'
+              }}
+            >
+              <option value="ALL">🌐 Tüm Fasıllar (Fasıl 01 - 99)</option>
+              {chapters.map(c => (
+                <option key={c.chapter_code} value={c.chapter_code}>
+                  Fasıl {c.chapter_code} - {c.description.substring(0, 35)}...
+                </option>
+              ))}
+            </select>
+          )}
         </div>
       )}
 
@@ -165,7 +202,7 @@ export const CustomsKnowledgeExplorer = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredBtbs.map((btb, idx) => (
+                  {paginatedBtbs.map((btb, idx) => (
                     <tr key={idx} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                       <td style={{ padding: '10px 12px', fontWeight: 700, color: 'var(--primary-brand)', fontFamily: 'monospace' }}>{btb.btb_no}</td>
                       <td style={{ padding: '10px 12px', color: 'var(--text-muted)' }}>{btb.issue_date}</td>
@@ -183,6 +220,53 @@ export const CustomsKnowledgeExplorer = () => {
                   )}
                 </tbody>
               </table>
+
+              {/* Pagination Kontrolleri */}
+              {filteredBtbs.length > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', padding: '10px 4px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                  <span>
+                    Gösterilen: <b>{(currentPage - 1) * itemsPerPage + 1} - {Math.min(currentPage * itemsPerPage, filteredBtbs.length)}</b> / Toplam <b>{filteredBtbs.length}</b> Kayıt
+                  </span>
+
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <button
+                      disabled={currentPage === 1}
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: '6px',
+                        border: '1px solid var(--border-subtle)',
+                        background: currentPage === 1 ? 'var(--bg-surface-subtle)' : 'var(--bg-surface)',
+                        color: currentPage === 1 ? 'var(--text-muted)' : 'var(--text-primary)',
+                        cursor: currentPage === 1 ? 'not-allowed' : 'pointer',
+                        fontWeight: 600
+                      }}
+                    >
+                      ← Önceki
+                    </button>
+
+                    <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
+                      Sayfa {currentPage} / {totalPages}
+                    </span>
+
+                    <button
+                      disabled={currentPage === totalPages}
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: '6px',
+                        border: '1px solid var(--border-subtle)',
+                        background: currentPage === totalPages ? 'var(--bg-surface-subtle)' : 'var(--bg-surface)',
+                        color: currentPage === totalPages ? 'var(--text-muted)' : 'var(--text-primary)',
+                        cursor: currentPage === totalPages ? 'not-allowed' : 'pointer',
+                        fontWeight: 600
+                      }}
+                    >
+                      Sonraki →
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
