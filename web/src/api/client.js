@@ -2,12 +2,9 @@ import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://gtip-backend-230333256951.europe-west3.run.app/api/v1';
 
-export const analyzeProduct = async (productDescription, file = null) => {
+export const analyzeProduct = async (productDescription) => {
   const formData = new FormData();
   formData.append('product_description', productDescription);
-  if (file) {
-    formData.append('image', file);
-  }
 
   const response = await axios.post(`${API_BASE_URL}/analyze`, formData, {
     headers: {
@@ -39,6 +36,16 @@ export const getCustomsBTBs = async () => {
 
 export const getTGTCChapters = async () => {
   const response = await axios.get(`${API_BASE_URL}/customs-data/chapters`);
+  return response.data;
+};
+
+export const getETLSyncStatus = async () => {
+  const response = await axios.get(`${API_BASE_URL}/customs-data/sync-status`);
+  return response.data;
+};
+
+export const triggerETLSync = async () => {
+  const response = await axios.post(`${API_BASE_URL}/customs-data/trigger-sync`);
   return response.data;
 };
 

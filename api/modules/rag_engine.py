@@ -44,49 +44,30 @@ class RAGEngine:
         candidates = []
         if top_results:
             for res in top_results:
+                btb_sim = res.get("similarity_score", 0.85)
                 precedent = PrecedentBTB(
                     btb_no=res.get("btb_no", f"EMSAL-{res['gtip_code'][:4]}"),
                     gtip_code=res["gtip_code"],
                     issue_date=res.get("issue_date", "2025-01-01"),
                     product_description=res["product_description"],
                     legal_justification=res["legal_justification"],
-                    similarity_score=res.get("similarity_score", 0.85)
+                    similarity_score=btb_sim
                 )
 
-                combined_score = (res.get("similarity_score", 0.85) * settings.BTB_WEIGHT) + 0.25
+                # Bilimsel Ağırlıklı Ortak RAG Skoru (BTB Benzerliği * 0.70 + TGTC Fasıl Uyumu * 0.30)
+                res_chap = res.get("chapter", res.get("gtip_code", "")[:2])
+                tgtc_chap_score = 1.0 if (allowed_chapters and res_chap in allowed_chapters) else 0.60
+                combined_score = (btb_sim * settings.BTB_WEIGHT) + (tgtc_chap_score * settings.TGTC_WEIGHT)
 
                 candidate = GTIPCandidate(
                     gtip_code=res["gtip_code"],
                     description=res["product_description"],
                     chapter=res["chapter"],
                     heading=res["heading"],
-                    score=round(combined_score, 3),
+                    score=round(min(0.98, max(0.50, combined_score)), 3),
                     precedents=[precedent]
                 )
                 candidates.append(candidate)
-        else:
-            target_chap = allowed_chapters[0] if allowed_chapters else "84"
-            chap_title = TGTC_CHAPTERS.get(target_chap, "Genel Sanayi ve Ticaret Eşyası")
-            dynamic_gtip = f"{target_chap}01.90.00.00.00"
-            
-            precedent = PrecedentBTB(
-                btb_no=f"TR-BTB-2026-{target_chap}001",
-                gtip_code=dynamic_gtip,
-                issue_date="2026-01-15",
-                product_description=f"{features.product_name} ({features.primary_material})",
-                legal_justification=f"TGTC Fasıl {target_chap} ({chap_title}) ve GİR 1/6 yorum kuralları uyarınca.",
-                similarity_score=0.88
-            )
-
-            candidate = GTIPCandidate(
-                gtip_code=dynamic_gtip,
-                description=f"{features.product_name} - {features.primary_material}",
-                chapter=target_chap,
-                heading=dynamic_gtip[:4],
-                score=0.88,
-                precedents=[precedent]
-            )
-            candidates.append(candidate)
 
         return candidates
 

@@ -38,15 +38,18 @@ def test_security_auth_production_header_rejection():
     dev_session = get_current_user_session(req)
     assert dev_session.email == "attacker@evil.com"
 
-    # Production modunda X-User-Email reddedilmeli ve varsayılan anonim oturuma düşülmeli
+    # Production modunda X-User-Email reddedilmeli ve 401 HTTPException fırlatılmalı
+    import pytest
+    from fastapi import HTTPException
+
     old_env = settings.ENVIRONMENT
     old_emu = settings.USE_GCP_EMULATOR
     try:
         settings.ENVIRONMENT = "production"
         settings.USE_GCP_EMULATOR = False
-        prod_session = get_current_user_session(req)
-        assert prod_session.email != "attacker@evil.com"
-        assert prod_session.role != "admin"
+        with pytest.raises(HTTPException) as exc_info:
+            get_current_user_session(req)
+        assert exc_info.value.status_code == 401
     finally:
         settings.ENVIRONMENT = old_env
         settings.USE_GCP_EMULATOR = old_emu

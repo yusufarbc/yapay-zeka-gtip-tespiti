@@ -18,22 +18,22 @@ class FirestoreAuditLogger:
     def __init__(self):
         self._firestore_client = None
         self._collection_name = "gtip_audit_logs"
-        self._sqlite_fallback: Optional["_SQLiteAuditLogger"] = None
+        self._sqlalchemy_fallback: Optional["_SQLAlchemyAuditLogger"] = None
         self._init_backend()
 
     def _init_backend(self):
         from api.config import settings
         if settings.USE_GCP_EMULATOR:
-            logger.info("[AuditLogger] Emülatör modu: SQLite backend kullanılıyor.")
-            self._sqlite_fallback = _SQLiteAuditLogger()
+            logger.info("[AuditLogger] SQLAlchemy ORM backend kullanılıyor.")
+            self._sqlalchemy_fallback = _SQLAlchemyAuditLogger()
             return
         try:
             from google.cloud import firestore
             self._firestore_client = firestore.Client(project=settings.GCP_PROJECT_ID)
             logger.info(f"[AuditLogger] Cloud Firestore bağlandı: proje={settings.GCP_PROJECT_ID}")
         except Exception as e:
-            logger.warning(f"[AuditLogger] Firestore bağlantısı kurulamadı ({e}). SQLite'a düşülüyor.")
-            self._sqlite_fallback = _SQLiteAuditLogger()
+            logger.warning(f"[AuditLogger] Firestore bağlantısı kurulamadı ({e}). GCP Cloud SQL (SQLAlchemy ORM)'e düşülüyor.")
+            self._sqlalchemy_fallback = _SQLAlchemyAuditLogger()
 
     def log_decision(self, entry: AuditLogEntry):
         if self._firestore_client:
@@ -58,11 +58,11 @@ class FirestoreAuditLogger:
                 logger.debug(f"[AuditLogger] Firestore'a kaydedildi: {entry.session_id}")
                 return
             except Exception as e:
-                logger.warning(f"[AuditLogger] Firestore yazma hatası ({e}). SQLite fallback'e düşülüyor.")
-                if not self._sqlite_fallback:
-                    self._sqlite_fallback = _SQLiteAuditLogger()
-        if self._sqlite_fallback:
-            self._sqlite_fallback.log_decision(entry)
+                logger.warning(f"[AuditLogger] Firestore yazma hatası ({e}). SQLAlchemy ORM fallback'e düşülüyor.")
+                if not self._sqlalchemy_fallback:
+                    self._sqlalchemy_fallback = _SQLAlchemyAuditLogger()
+        if self._sqlalchemy_fallback:
+            self._sqlalchemy_fallback.log_decision(entry)
 
     def get_all_logs(self, limit: int = 50) -> List[AuditLogEntry]:
         if self._firestore_client:
@@ -91,11 +91,11 @@ class FirestoreAuditLogger:
                     ))
                 return entries
             except Exception as e:
-                logger.warning(f"[AuditLogger] Firestore okuma hatası ({e}). SQLite fallback kullanılıyor.")
-                if not self._sqlite_fallback:
-                    self._sqlite_fallback = _SQLiteAuditLogger()
-        if self._sqlite_fallback:
-            return self._sqlite_fallback.get_all_logs(limit)
+                logger.warning(f"[AuditLogger] Firestore okuma hatası ({e}). SQLAlchemy ORM fallback kullanılıyor.")
+                if not self._sqlalchemy_fallback:
+                    self._sqlalchemy_fallback = _SQLAlchemyAuditLogger()
+        if self._sqlalchemy_fallback:
+            return self._sqlalchemy_fallback.get_all_logs(limit)
         return []
 
     def export_bigquery_payloads(self, limit: int = 100) -> List[dict]:
@@ -123,70 +123,77 @@ class FirestoreAuditLogger:
         ]
 
 
-class _SQLiteAuditLogger:
-    """SQLite yedek backend — geliştirme ve Firestore erişimi yoksa kullanılır."""
+from api.db.database import SessionLocal, AuditLogModel, engine, Base
 
-    def __init__(self, db_path: str = None):
-        import sqlite3 as _sqlite3
-        self._sqlite3 = _sqlite3
-        if db_path is None:
-            if os.getenv("K_SERVICE") or not os.access(".", os.W_OK):
-                db_path = "/tmp/audit_logs.db"
-            else:
-                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                db_path = os.path.join(base_dir, "data", "audit_logs.db")
-        self.db_path = db_path
-        self._init_db()
+class _SQLAlchemyAuditLogger:
+    """GCP Cloud SQL PostgreSQL SQLAlchemy ORM Audit Logger."""
 
-    def _init_db(self):
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        with self._sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS audit_logs (
-                    session_id TEXT PRIMARY KEY,
-                    timestamp TEXT,
-                    user_email TEXT,
-                    user_role TEXT,
-                    product_name TEXT,
-                    initial_gtip_proposed TEXT,
-                    final_gtip_approved TEXT,
-                    confidence_score REAL,
-                    is_hitl_triggered INTEGER,
-                    user_feedback TEXT,
-                    execution_time_ms REAL
-                )
-            """)
-            conn.commit()
+    def __init__(self):
+        try:
+            Base.metadata.create_all(bind=engine)
+        except Exception as e:
+            logger.warning(f"[AuditLogger] ORM Tablo init uyarısı: {e}")
 
     def log_decision(self, entry: AuditLogEntry):
-        with self._sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                INSERT OR REPLACE INTO audit_logs (
-                    session_id, timestamp, user_email, user_role, product_name,
-                    initial_gtip_proposed, final_gtip_approved, confidence_score,
-                    is_hitl_triggered, user_feedback, execution_time_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                entry.session_id, entry.timestamp, entry.user_email, entry.user_role,
-                entry.product_name, entry.initial_gtip_proposed, entry.final_gtip_approved,
-                entry.confidence_score, 1 if entry.is_hitl_triggered else 0,
-                entry.user_feedback, entry.execution_time_ms
-            ))
-            conn.commit()
+        session = SessionLocal()
+        try:
+            record = session.query(AuditLogModel).filter_by(session_id=entry.session_id).first()
+            if record:
+                record.timestamp = entry.timestamp
+                record.user_email = entry.user_email
+                record.user_role = entry.user_role
+                record.product_name = entry.product_name
+                record.initial_gtip_proposed = entry.initial_gtip_proposed
+                record.final_gtip_approved = entry.final_gtip_approved
+                record.confidence_score = entry.confidence_score
+                record.is_hitl_triggered = entry.is_hitl_triggered
+                record.user_feedback = entry.user_feedback
+                record.execution_time_ms = entry.execution_time_ms
+            else:
+                record = AuditLogModel(
+                    session_id=entry.session_id,
+                    timestamp=entry.timestamp,
+                    user_email=entry.user_email,
+                    user_role=entry.user_role,
+                    product_name=entry.product_name,
+                    initial_gtip_proposed=entry.initial_gtip_proposed,
+                    final_gtip_approved=entry.final_gtip_approved,
+                    confidence_score=entry.confidence_score,
+                    is_hitl_triggered=entry.is_hitl_triggered,
+                    user_feedback=entry.user_feedback,
+                    execution_time_ms=entry.execution_time_ms
+                )
+                session.add(record)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[AuditLogger] SQLAlchemy log_decision hatası: {e}")
+        finally:
+            session.close()
 
     def get_all_logs(self, limit: int = 50) -> List[AuditLogEntry]:
         results = []
-        with self._sqlite3.connect(self.db_path) as conn:
-            rows = conn.execute(
-                "SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT ?", (limit,)
-            ).fetchall()
-            for r in rows:
+        session = SessionLocal()
+        try:
+            records = session.query(AuditLogModel).order_by(AuditLogModel.created_at.desc()).limit(limit).all()
+            for r in records:
                 results.append(AuditLogEntry(
-                    session_id=r[0], timestamp=r[1], user_email=r[2], user_role=r[3],
-                    product_name=r[4], initial_gtip_proposed=r[5], final_gtip_approved=r[6],
-                    confidence_score=r[7], is_hitl_triggered=bool(r[8]),
-                    user_feedback=r[9], execution_time_ms=r[10]
+                    session_id=r.session_id,
+                    timestamp=r.timestamp or "",
+                    user_email=r.user_email or "",
+                    user_role=r.user_role or "",
+                    product_name=r.product_name or "",
+                    initial_gtip_proposed=r.initial_gtip_proposed or "",
+                    final_gtip_approved=r.final_gtip_approved or "",
+                    confidence_score=r.confidence_score or 0.0,
+                    is_hitl_triggered=bool(r.is_hitl_triggered),
+                    user_feedback=r.user_feedback or "",
+                    execution_time_ms=r.execution_time_ms or 0.0
                 ))
+        except Exception as e:
+            logger.error(f"[AuditLogger] SQLAlchemy get_all_logs hatası: {e}")
+        finally:
+            session.close()
         return results
 
 

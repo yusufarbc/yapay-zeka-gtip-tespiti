@@ -18,3 +18,5 @@ python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
 requests>=2.31.0
 beautifulsoup4>=4.12.3
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.9

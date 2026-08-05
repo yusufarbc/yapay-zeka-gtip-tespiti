@@ -2,6 +2,9 @@
 Vertex AI Context Caching Yöneticisi (Google GenAI SDK).
 TGTC 99 Fasıl İzahnameleri ve Genel Yorum Kurallarını (GİR 1-6) 
 Vertex AI Context Cache üzerinde saklar, sıfır ek gecikme (0 ms) ve %80 maliyet tasarrufu sağlar.
+
+Cloud Run multi-worker uyumluluğu: Cache adı SQLite paylaşımlı durumda saklanır,
+böylece 4 worker da aynı cache'i kullanır (her worker ayrı cache oluşturmaz).
 """
 import os
 import logging
@@ -11,26 +14,59 @@ from api.config import settings
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ContextCacheManager")
 
+# Cache adı için SQLite anahtar sabiti
+_CACHE_STATE_KEY = "__global_vertex_ai_context_cache__"
+
 class ContextCacheManager:
     """
     Vertex AI Context Cache Yöneticisi.
+    Tüm Cloud Run worker'larının aynı cache'i kullanması için
+    cache adı SQLite paylaşımlı durumda (LocalStateStore) saklanır.
     """
     def __init__(self):
         self.cached_content_name: Optional[str] = None
         self.client: Optional[Any] = None
 
+    def _read_cache_from_store(self) -> Optional[str]:
+        """Paylaşımlı SQLite deposundan mevcut cache adını okur."""
+        try:
+            from api.db.gcp_emulator import local_state_store
+            stored = local_state_store.get_state(_CACHE_STATE_KEY)
+            if stored and stored.get("name"):
+                return stored["name"]
+        except Exception as e:
+            logger.debug(f"[ContextCacheManager] Cache adı okunamadı: {e}")
+        return None
+
+    def _save_cache_to_store(self, cache_name: str):
+        """Cache adını paylaşımlı SQLite deposuna yazar (tüm worker'lar okuyabilir)."""
+        try:
+            from api.db.gcp_emulator import local_state_store
+            local_state_store.save_state(_CACHE_STATE_KEY, {"name": cache_name})
+            logger.info(f"[ContextCacheManager] Cache adı paylaşımlı depoya yazıldı: {cache_name}")
+        except Exception as e:
+            logger.warning(f"[ContextCacheManager] Cache adı kaydedilemedi: {e}")
+
     def initialize_cache(self, model_name: str = None) -> Optional[str]:
         """
         TGTC 99 Fasıl ve GİR Mevzuat metinlerini Vertex AI Context Cache'e yükler.
+        Önce paylaşımlı SQLite deposunu kontrol eder — mevcutsa yeni cache oluşturmaz.
         """
         if not settings.USE_CONTEXT_CACHE:
             logger.info("Context Caching devredışı bırakıldı (USE_CONTEXT_CACHE=False).")
             return None
 
+        # 1. Paylaşımlı depodan mevcut cache adını oku (worker paylaşımı)
+        existing = self._read_cache_from_store()
+        if existing:
+            logger.info(f"[ContextCacheManager] Mevcut paylaşımlı cache kullanılıyor: {existing}")
+            self.cached_content_name = existing
+            return existing
+
         api_key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
         if not api_key:
             logger.info("[SIMULATION] Vertex AI Context Cache hazırlandı (Çevrimdışı Mod).")
-            return "cachedContents/simulated-tgtc-cache-2026"
+            return None  # Simüle edilen cache kaydetme — gerçek API olmadan işe yaramaz
 
         try:
             from google import genai
@@ -55,10 +91,12 @@ class ContextCacheManager:
                 model=target_model,
                 config=types.CreateCachedContentConfig(
                     contents=[full_context_text],
-                    ttl="86400s", # 24 Saatlik Önbellek
+                    ttl="86400s",  # 24 Saatlik Önbellek
                 )
             )
             self.cached_content_name = cache.name
+            # 2. Cache adını paylaşımlı depoya yaz (diğer worker'lar okuyabilir)
+            self._save_cache_to_store(cache.name)
             logger.info(f"[OK] Vertex AI Context Cache Başarıyla Oluşturuldu: {cache.name}")
             return cache.name
         except Exception as e:
@@ -66,16 +104,32 @@ class ContextCacheManager:
             return None
 
     def get_cache_name(self, model_name: str = None) -> Optional[str]:
+        # Önce in-memory cache'i kontrol et
         if not self.cached_content_name:
-            self.cached_content_name = self.initialize_cache(model_name)
+            # Paylaşımlı depodan oku (diğer worker oluşturmuş olabilir)
+            existing = self._read_cache_from_store()
+            if existing:
+                self.cached_content_name = existing
+            else:
+                self.cached_content_name = self.initialize_cache(model_name)
         return self.cached_content_name
+
+    def invalidate_cache(self):
+        """Cache'i geçersiz kılar (mevzuat güncellemesinde çağrılır)."""
+        self.cached_content_name = None
+        try:
+            from api.db.gcp_emulator import local_state_store
+            local_state_store.save_state(_CACHE_STATE_KEY, {"name": None})
+            logger.info("[ContextCacheManager] Cache geçersiz kılındı.")
+        except Exception:
+            pass
 
     def get_cached_config(self, model_name: str = None) -> Any:
         """
         Gemini API çağrıları için cached_content içeren GenerateContentConfig döndürür.
         """
         cache_name = self.get_cache_name(model_name)
-        if not cache_name or cache_name.startswith("cachedContents/simulated"):
+        if not cache_name:
             return None
         try:
             from google.genai import types

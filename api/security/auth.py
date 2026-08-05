@@ -5,6 +5,7 @@ import hashlib
 from datetime import datetime, timedelta
 from typing import Optional, Any
 from pydantic import BaseModel
+from fastapi import HTTPException
 from api.config import settings
 
 class UserSession(BaseModel):
@@ -87,7 +88,7 @@ def get_current_user_session(request: Any) -> UserSession:
     1. Google OAuth 2.0 / JWT Token (Authorization: Bearer <token>)
     2. GCP / Google Workspace Identity-Aware Proxy (x-goog-authenticated-user-email & x-goog-iap-jwt-assertion)
     3. Dinamik Kurumsal İstek Üstbilgileri (X-User-Email, X-User-Role)
-    4. Anonim Sistem Oturumu Fallback (Gerçekçi jenerik etki alanı)
+    4. Anonim Sistem Oturumu Fallback (Geliştirme Modu)
     """
     try:
         # 1. Bearer Token (Google OAuth 2.0 veya JWT)
@@ -118,8 +119,8 @@ def get_current_user_session(request: Any) -> UserSession:
                 domain=domain
             )
 
-        # 3. Özel HTTP Üstbilgileri (Sadece Geliştirme / Emülatör Modunda Kabul Edilir)
-        if settings.ENVIRONMENT != "production" or settings.USE_GCP_EMULATOR:
+        # 3. Özel HTTP Üstbilgileri (Yalnızca Geliştirme Modunda Kabul Edilir)
+        if settings.ENVIRONMENT != "production":
             custom_email = request.headers.get("X-User-Email")
             if custom_email:
                 role = request.headers.get("X-User-Role", "customs_broker")
@@ -134,12 +135,21 @@ def get_current_user_session(request: Any) -> UserSession:
     except Exception:
         pass
 
-    # 4. Fallback: Dinamik İstek Bağlamı (Uydurma şahıs ismi kullanılmaz)
+    # Üretim (Production) Modunda Geçerli Oturum Olmalıdır
+    # USE_GCP_EMULATOR bayrağından bağımsız olarak production'da anonim erişim YASAKTIR
+    if settings.ENVIRONMENT == "production":
+        raise HTTPException(
+            status_code=401,
+            detail="Geçerli bir kimlik doğrulama jetonu (Bearer Token / GCP IAP) gereklidir."
+        )
+
+    # Fallback: Yalnızca Geliştirme Ortamı (development)
     client_host = getattr(getattr(request, "client", None), "host", "127.0.0.1")
     return UserSession(
-        user_id=f"client_{client_host.replace('.', '_')}",
-        email=f"musavir@{settings.GCP_PROJECT_ID}.google",
-        full_name="Gümrük Müşaviri Oturumu",
+        user_id=f"dev_{client_host.replace('.', '_')}",
+        email=f"dev-musavir@localhost",
+        full_name="Geliştirici Oturumu (Development Only)",
         role="customs_broker",
-        domain=f"{settings.GCP_PROJECT_ID}.google"
+        domain="localhost"
     )
+

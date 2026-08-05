@@ -3,7 +3,7 @@ import os
 import json
 import asyncio
 import logging
-from fastapi import FastAPI, HTTPException, Depends, Response, Form, UploadFile, File, Request
+from fastapi import FastAPI, HTTPException, Depends, Response, Form, UploadFile, File, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from typing import Optional, List
@@ -15,7 +15,8 @@ from api.schemas.audit import AuditLogEntry, AuditLogQueryResponse
 from api.graph.workflow import workflow_engine
 from api.exporter import pdf_exporter
 from api.db.audit_logger import audit_logger
-from api.db.gcp_emulator import local_state_store
+from api.db.gcp_emulator import local_state_store, local_vector_store
+from api.db.database import init_orm_tables
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +26,18 @@ app = FastAPI(
     description="Gümrük Tarife İstatistik Pozisyonu (GTİP) Tespit ve Karar Destek Sistemi Serverless API"
 )
 
-# CORS: Production'da CORS_ALLOWED_ORIGINS env var'ı ile kısıtlayın.
-# Örnek: CORS_ALLOWED_ORIGINS="https://gtip.sirketiniz.com,https://app.sirketiniz.com"
+@app.on_event("startup")
+def startup_event():
+    init_orm_tables()
+
+# CORS Configuration: Production ortamında wildcard (*) kesinlikle engellenir.
 _cors_origins_raw = settings.CORS_ALLOWED_ORIGINS
-if _cors_origins_raw == "*":
+if settings.ENVIRONMENT == "production" and (_cors_origins_raw == "*" or not _cors_origins_raw):
+    _cors_origins = ["https://gtip-web-230333256951.europe-west3.run.app"]
+    _allow_credentials = True
+elif _cors_origins_raw == "*":
     _cors_origins = ["*"]
-    _allow_credentials = False  # allow_origins=["*"] ile credentials birlikte kullanılamaz
+    _allow_credentials = False
 else:
     _cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
     _allow_credentials = True
@@ -44,12 +51,37 @@ app.add_middleware(
                    "x-goog-iap-jwt-assertion", "x-goog-authenticated-user-email"],
 )
 
+import re
+from pydantic import BaseModel, Field
+
+ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/jpg", "application/pdf"}
+MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
+
 class AnalyzeJSONRequest(BaseModel):
-    product_description: str
-    image_uri: Optional[str] = None
+    product_description: str = Field(..., min_length=3, max_length=5000, description="Ürün tanımı veya fatura metni")
+    image_uri: Optional[str] = Field(default=None, max_length=1000)
 
 class BatchAnalyzeRequest(BaseModel):
-    product_descriptions: List[str]
+    product_descriptions: List[str] = Field(..., min_length=1, max_length=50)
+
+async def _validate_and_sanitize_upload(file: UploadFile) -> str:
+    """
+    Yüklenen dosyanın tipini, boyutunu denetler ve Path Traversal riski için ismini temizler.
+    """
+    if file.content_type and file.content_type.lower() not in ALLOWED_MIME_TYPES:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Desteklenmeyen dosya tipi ({file.content_type}). Sadece JPEG, PNG, WEBP ve PDF kabul edilir."
+        )
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail="Dosya boyutu 10 MB sınırını aşmaktadır.")
+    await file.seek(0)
+
+    # Path Traversal temizliği (sadece alfa nümerik, tire, alt çizgi ve nokta)
+    raw_name = os.path.basename(file.filename or "upload_file.bin")
+    safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', raw_name)
+    return safe_name
 
 async def _upload_file_to_gcs(file: UploadFile, destination_blob_name: str) -> str:
     """
@@ -59,11 +91,11 @@ async def _upload_file_to_gcs(file: UploadFile, destination_blob_name: str) -> s
     gcs_uri = f"gs://{settings.GCS_BUCKET_NAME}/{destination_blob_name}"
     if settings.USE_GCP_EMULATOR:
         # Geliştirme: /tmp dizinine kaydet
-        tmp_path = f"/tmp/{destination_blob_name.replace('/', '_')}"
+        safe_destination = destination_blob_name.replace('/', '_')
+        tmp_path = f"/tmp/{safe_destination}"
         content = await file.read()
         with open(tmp_path, "wb") as f:
             f.write(content)
-        # Dosyayı başa sar ki tekrar okunabilsin
         await file.seek(0)
         logger.info(f"[GCS EMULATOR] Dosya yerel tmp'ye kaydedildi: {tmp_path}")
         return gcs_uri
@@ -123,6 +155,10 @@ def append_continuous_learning_record(session_id: str, product_name: str, gtip_c
         os.makedirs(os.path.dirname(dataset_file), exist_ok=True)
         with open(dataset_file, "w", encoding="utf-8") as f:
             json.dump(records, f, ensure_ascii=False, indent=2)
+        # Vector store bellek önbelleğini geçersiz kıl: RAG bir sonraki sorguda yeni kaydı görecek
+        local_state_store.save_state("__btb_db_updated__", {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ")})
+        local_vector_store.invalidate_cache()
+        logger.info(f"[Continuous Learning] Yeni emsal kaydı BTB veritabanına eklendi: {gtip_code}")
     except Exception as e:
         logger.warning(f"Continuous Learning yerel kayıt uyarısı: {e}")
 
@@ -148,11 +184,11 @@ async def analyze_product(
     start_time = time.time()
     try:
         user_session = get_current_user_session(request)
-        # Gerçek GCS upload
         import uuid as _uuid
         _upload_session_id = _uuid.uuid4().hex[:8]
         if image and image.filename:
-            destination = f"uploads/{time.strftime('%Y/%m/%d')}/{_upload_session_id}_{image.filename}"
+            safe_name = await _validate_and_sanitize_upload(image)
+            destination = f"uploads/{time.strftime('%Y/%m/%d')}/{_upload_session_id}_{safe_name}"
             image_uri = await _upload_file_to_gcs(image, destination)
         else:
             image_uri = None
@@ -290,7 +326,8 @@ async def respond_hitl(response_data: HITLResponse, request: Request):
         raise HTTPException(status_code=500, detail=f"HITL Yanıtlama Hatası: {str(e)}")
 
 @app.get("/api/v1/report/pdf/{session_id}")
-async def get_pdf_report(session_id: str):
+async def get_pdf_report(session_id: str, request: Request):
+    user_session = get_current_user_session(request)
     state_dict = local_state_store.get_state(session_id)
     if not state_dict:
         logs = audit_logger.get_all_logs(limit=200)
@@ -326,10 +363,11 @@ async def get_pdf_report(session_id: str):
     )
 
 class BulkPDFRequest(BaseModel):
-    session_ids: list[str]
+    session_ids: list[str] = Field(..., min_length=1, max_length=50)
 
 @app.post("/api/v1/report/pdf/bulk")
-async def get_bulk_pdf_report(payload: BulkPDFRequest):
+async def get_bulk_pdf_report(payload: BulkPDFRequest, request: Request):
+    user_session = get_current_user_session(request)
     if not payload.session_ids:
         raise HTTPException(status_code=400, detail="En az bir adet oturum kimliği seçilmelidir.")
     
@@ -372,7 +410,8 @@ async def get_bulk_pdf_report(payload: BulkPDFRequest):
     )
 
 @app.get("/api/v1/audit/logs", response_model=AuditLogQueryResponse)
-async def get_audit_logs(limit: int = 50):
+async def get_audit_logs(request: Request, limit: int = Query(default=50, ge=1, le=200)):
+    user_session = get_current_user_session(request)
     logs = audit_logger.get_all_logs(limit=limit)
     return AuditLogQueryResponse(total_count=len(logs), entries=logs)
 
@@ -395,6 +434,26 @@ async def get_tgtc_chapters():
     """
     from api.db.tgtc_knowledge_base import TGTC_CHAPTERS
     return [{"chapter_code": code, "description": desc} for code, desc in TGTC_CHAPTERS.items()]
+
+@app.get("/api/v1/customs-data/sync-status")
+async def get_sync_status():
+    """
+    4 Adet Canlı Mevzuat & BTB Boru Hattının Sağlık ve Senkronizasyon Durumunu Döndürür.
+    """
+    from scripts.sync_customs_data import get_etl_sync_status
+    return get_etl_sync_status()
+
+@app.post("/api/v1/customs-data/trigger-sync")
+async def trigger_manual_sync():
+    """
+    Manuel Canlı Web Kazıma ve ETL Senkronizasyonu Tetikler.
+    """
+    try:
+        from scripts.sync_customs_data import run_sync
+        run_sync(dry_run=False)
+        return {"status": "SUCCESS", "message": "Canlı ETL senkronizasyon boru hattı başarıyla çalıştırıldı."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Senkronizasyon hatası: {str(e)}")
 
 
 if __name__ == "__main__":

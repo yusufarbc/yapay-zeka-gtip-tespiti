@@ -30,13 +30,17 @@ def _get_secret(secret_id: str, fallback: str = "") -> str:
 class Settings(BaseSettings):
     PROJECT_NAME: str = "GTİP Tespit ve Karar Destek Sistemi API"
     VERSION: str = "1.0.0"
-    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
-    USE_GCP_EMULATOR: bool = os.getenv("USE_GCP_EMULATOR", "true").lower() == "true"
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "production")
+    USE_GCP_EMULATOR: bool = os.getenv("USE_GCP_EMULATOR", "false").lower() == "true"
 
     # GCP Configurations
     GCP_PROJECT_ID: str = os.getenv("GCP_PROJECT_ID", "gtip-tespit-projesi")
     GCP_REGION: str = os.getenv("GCP_REGION", "europe-west3")  # Frankfurt primary low-latency region
     GCS_BUCKET_NAME: str = os.getenv("GCS_BUCKET_NAME", "gtip-evrak-bucket-gtip-tespit-projesi")
+    CLOUD_SQL_CONNECTION_NAME: str = os.getenv("CLOUD_SQL_CONNECTION_NAME", "gtip-tespit-projesi:europe-west3:gtip-db")
+    DB_USER: str = os.getenv("DB_USER", "postgres")
+    DB_PASS: str = os.getenv("DB_PASS", "")
+    DB_NAME: str = os.getenv("DB_NAME", "gtip_db")
 
     # AI Models
     DEFAULT_LLM_MODEL: str = os.getenv("DEFAULT_LLM_MODEL", "gemini-2.5-flash")

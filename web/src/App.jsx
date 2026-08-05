@@ -41,13 +41,13 @@ export function App() {
     fetchLogs();
   }, []);
 
-  const handleStartAnalysis = async (description, file) => {
+  const handleStartAnalysis = async (description) => {
     setIsAnalyzing(true);
     setDecision(null);
     setErrorMsg(null);
 
     try {
-      const result = await analyzeProduct(description, file);
+      const result = await analyzeProduct(description);
       setDecision(result);
     } catch (err) {
       console.error(err);

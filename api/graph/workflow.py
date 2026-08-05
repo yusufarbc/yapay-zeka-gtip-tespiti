@@ -183,16 +183,26 @@ class GTIPWorkflowEngine:
                     if "primary_material" in opt.get("impact_data", {}):
                         features.primary_material = opt["impact_data"]["primary_material"]
 
-        # Kural ve RAG motorunu güncellenmiş özelliklerle yeniden çalıştır
+        # Orijinal analizde belirlenen GTİP adayını state_dict'ten koru (HITL sonrası GTİP değişimi engellenir)
+        selected_gtip = state_dict.get("selected_gtip")
+        stored_candidates_data = state_dict.get("candidates", [])
+        stored_candidates = [GTIPCandidate(**c) for c in stored_candidates_data] if stored_candidates_data else []
+
+        top_candidate = next((c for c in stored_candidates if c.gtip_code == selected_gtip), None)
+        if not top_candidate and stored_candidates:
+            top_candidate = stored_candidates[0]
+
         allowed_chapters, gir_rules = rule_engine.apply_rules(features)
-        candidates = rag_engine.search_candidates(features, allowed_chapters)
-        if not candidates:
-            return GTIPDecision(
-                session_id=session_id,
-                status="MANUAL_REVIEW_REQUIRED",
-                audit_notes=["RAG uzayında uygun emsal karar bulunamadı. Kıdemli Müşavire yönlendirildi."]
-            )
-        top_candidate = candidates[0]
+
+        if not top_candidate:
+            candidates = rag_engine.search_candidates(features, allowed_chapters)
+            if not candidates:
+                return GTIPDecision(
+                    session_id=session_id,
+                    status="MANUAL_REVIEW_REQUIRED",
+                    audit_notes=["RAG uzayında uygun emsal karar bulunamadı. Kıdemli Müşavire yönlendirildi."]
+                )
+            top_candidate = candidates[0]
 
         is_yes = (selected_option_id == "OPT_YES" or "YES" in selected_option_id.upper() or "EVET" in selected_option_id.upper())
         base_score = top_candidate.score if hasattr(top_candidate, 'score') and top_candidate.score else 0.85

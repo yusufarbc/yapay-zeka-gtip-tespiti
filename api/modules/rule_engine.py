@@ -23,32 +23,10 @@ class RuleEngine:
                         allowed_chapters.append("55")
                         applied_rules.append("GİR 3b: %50+ Sentetik karışımı sebebiyle Fasıl 55 (Sentetik) önbellekten eşleştirildi.")
 
-        # 2. Ürün Kategori Metin Eşleşmesi (GİR 1 / Fasıl Tanımları)
+        # 2. Demonte / Sökülmüş veya Eksik Eşya Kuralı (GİR 2a)
         text_combo = f"{features.product_name} {features.primary_material} {features.intended_use}".lower()
-        if any(w in text_combo for w in ["ayakkabı", "bot", "çizme", "sandalet", "terlik"]):
-            if "64" not in allowed_chapters:
-                allowed_chapters.append("64")
-                applied_rules.append("GİR 1: Ayakkabı tanımı sebebiyle Fasıl 64 (Ayakkabılar) kural motoru tarafından eşleştirildi.")
-        elif any(w in text_combo for w in ["çanta", "cüzdan", "bavul", "valiz"]):
-            if "42" not in allowed_chapters:
-                allowed_chapters.append("42")
-                applied_rules.append("GİR 1: Çanta/Saraciye tanımı sebebiyle Fasıl 42 önbellekten eşleştirildi.")
-        elif any(w in text_combo for w in ["t-shirt", "tişört", "fanila", "kazak", "pantolon", "gömlek"]):
-            if "61" not in allowed_chapters:
-                allowed_chapters.append("61")
-                applied_rules.append("GİR 1: Örme giyim eşyası sebebiyle Fasıl 61 önbellekten eşleştirildi.")
-        elif any(w in text_combo for w in ["masası", "masa", "sandalye", "mobilya", "koltuk", "sehpa"]):
-            if "94" not in allowed_chapters:
-                allowed_chapters.append("94")
-                applied_rules.append("GİR 1: Mobilya tanımı sebebiyle Fasıl 94 (Mobilyalar) kural motoru tarafından eşleştirildi.")
-        elif any(w in text_combo for w in ["motor yağı", "motor yağ", "madeni yağ", "gres"]):
-            if "27" not in allowed_chapters:
-                allowed_chapters.append("27")
-                applied_rules.append("GİR 1: Yağlama müstahzarı sebebiyle Fasıl 27 (Mineral/Sentetik Yağlar) kural motoru tarafından eşleştirildi.")
-
-        # 3. Demonte / Sökülmüş veya Eksik Eşya Kuralı (GİR 2a)
-        if features.is_disassembled or "demonte" in features.product_name.lower() or "sökülmüş" in features.product_name.lower():
-            applied_rules.append("GİR 2a: Demonte/sökülmüş eşya kuralı uyarınca parçaların ayrı sınıflandırılması engellendi; komple monte ana eşyanın faslı esas alındı.")
+        if features.is_disassembled or "demonte" in text_combo or "sökülmüş" in text_combo:
+            applied_rules.append("GİR 2a: Demonte/sökülmüş eşya kuralı uyarınca komple monte eşyanın faslı esas alındı.")
             if any(w in text_combo for w in ["bisiklet", "oto", "araba", "taşıt", "araç"]):
                 if "87" not in allowed_chapters:
                     allowed_chapters.append("87")

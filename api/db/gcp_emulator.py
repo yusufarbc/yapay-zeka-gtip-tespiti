@@ -1,190 +1,255 @@
-import json
+"""
+GCP Cloud SQL, Vertex AI Vector Search ve Firestore/Redis Emülatörü.
+Cloud Run worker'ları arasında SQLite tabanlı paylaşımlı durum (Shared State)
+ve Vertex AI Vector Search için embedding/vektör arama motoru sağlar.
+
+Arama Stratejisi (Öncelik Sırası):
+1. text-embedding-005 ile gerçek Cosine Similarity (API key varsa)
+2. Jaccard Token Overlap (offline/test fallback)
+"""
 import os
-import re
+import json
 import math
-from typing import List, Dict, Any, Optional
+import sqlite3
+import logging
+from typing import Dict, List, Any, Optional
 
-def tr_normalize(text: str) -> str:
-    if not text:
-        return ""
-    text = text.replace("İ", "i").replace("I", "i").replace("ı", "i")
-    text = text.replace("Ş", "s").replace("ş", "s").replace("Ğ", "g").replace("ğ", "g")
-    text = text.replace("Ç", "c").replace("ç", "c").replace("Ö", "o").replace("ö", "o")
-    text = text.replace("Ü", "u").replace("ü", "u")
-    return text.lower()
-
-TURKISH_STOP_WORDS = {
-    "malzemeden", "imal", "edilmis", "edilmiş", "tipi", "icin", "için", "olan", "ve", "ile", 
-    "veya", "gore", "göre", "her", "bir", "bu", "da", "de", "dahi", "turu", "türü", "ait",
-    "uzere", "üzere", "gibi", "kadar", "adet", "kutu", "tane", "halinde", "mamul",
-    "tasarim", "tasarimi", "yüksek", "yuksek", "dusuk", "düşük", "saglam", "sağlam", "kompakt",
-    "genel", "urun", "ürün", "cihaz", "aciklama", "açıklama", "ozellikleri", "özellikleri", "ozellik", "özellik",
-    "uygulamalari", "uygulamaları", "uygulama", "idealdir", "kullanilir", "kullanılır", "saglar", "sağlar"
-}
-
-class LocalVectorStore:
-    """
-    Resmi Türk Gümrük Tarife Cetveli (TGTC 99 Fasıl) ve BTB Kararları Vektör Arama Motoru.
-    TGTC izahnameleri ve emsal BTB kararları üzerinde Tree-Search Hybrid RAG semantik eşleşmesi yapar.
-    """
-    def __init__(self, mock_data_path: str = None):
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        if mock_data_path is None:
-            mock_data_path = os.path.join(base_dir, "data", "vector_index.json")
-
-        self.btb_records: List[Dict[str, Any]] = []
-        if os.path.exists(mock_data_path):
-            with open(mock_data_path, "r", encoding="utf-8") as f:
-                content = json.load(f)
-                if isinstance(content, dict) and "entries" in content:
-                    self.btb_records = list(content["entries"])
-                elif isinstance(content, list):
-                    self.btb_records = list(content)
-
-        # Resmi BTB veritabanından ek kararları da birleştir
-        btb_db_path = os.path.join(base_dir, "data", "official_btb_database.json")
-        if os.path.exists(btb_db_path):
-            try:
-                with open(btb_db_path, "r", encoding="utf-8") as f:
-                    btb_data = json.load(f)
-                    seen_keys = {r.get("btb_no") or r.get("gtip_code") for r in self.btb_records}
-                    for item in btb_data:
-                        b_id = item.get("btb_no") or item.get("gtip_code")
-                        if b_id not in seen_keys:
-                            seen_keys.add(b_id)
-                            self.btb_records.append(item)
-            except Exception as e:
-                print("BTB Database birleştirme uyarısı:", e)
-
-    def search_btb(
-        self, 
-        query_text: str, 
-        allowed_chapters: Optional[List[str]] = None, 
-        top_k: int = 3
-    ) -> List[Dict[str, Any]]:
-        """
-        1. Kademeli Fasıl/Pozisyon filtresi (allowed_chapters).
-        2. Semantik kelime kümesi ve TF-IDF ağırlıklı benzerlik skoru.
-        3. En yüksek skorlu emsal kararları döndürür.
-        """
-        norm_query = tr_normalize(query_text)
-        all_words = [w for w in re.findall(r'[a-z0-9]+', norm_query) if len(w) >= 3]
-        query_words = [w for w in all_words if w not in TURKISH_STOP_WORDS]
-        query_word_set = set(query_words) if query_words else set(all_words)
-        results = []
-
-        for record in self.btb_records:
-            gtip_code = record.get("gtip_code", "")
-            chapter = record.get("chapter", gtip_code[:2] if len(gtip_code) >= 2 else "")
-
-            # Fasıl Uyum Kontrolü
-            chapter_matched = bool(allowed_chapters and (chapter in allowed_chapters))
-            if allowed_chapters and not chapter_matched:
-                # Kısıtlı fasıl aramasında izin verilmeyen fasılları atla
-                continue
-
-            raw_desc = record.get("product_description", "") + " " + record.get("legal_justification", "")
-            desc_norm = tr_normalize(raw_desc)
-            desc_words = [w for w in re.findall(r'[a-z0-9]+', desc_norm) if w not in TURKISH_STOP_WORDS]
-            rec_keywords = set(desc_words)
-
-            # Semantik Kelime & Kök Kesişimi (Stop-words hariç 4-karakter tam/kök eşleme)
-            matched_rw_set = set()
-            for qw in query_word_set:
-                for rw in rec_keywords:
-                    if rw not in matched_rw_set:
-                        if qw == rw or (len(qw) >= 4 and len(rw) >= 4 and qw[:4] == rw[:4]):
-                            matched_rw_set.add(rw)
-                            break
-
-            word_score = len(matched_rw_set) * 0.25
-            base_score = 0.45 if chapter_matched else 0.15
-            final_score = base_score + word_score
-            final_score = min(final_score, 0.98)
-
-            match_item = dict(record)
-            match_item["similarity_score"] = round(final_score, 3)
-            results.append(match_item)
-
-        results.sort(key=lambda x: x["similarity_score"], reverse=True)
-        return results[:top_k]
+logger = logging.getLogger("GCPEmulator")
 
 import tempfile
 
-class LocalStateStore:
-    """
-    GCP Cloud Firestore & Disk Destekli Oturum State Yöneticisi.
-    Production: Multi-worker Cloud Run container ortamında disk (/tmp/gtip_sessions) ve Firestore entegrasyonu ile state korunur.
-    """
-    COLLECTION = "gtip_sessions"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DATA_DIR = os.path.join(tempfile.gettempdir(), "gtip_app_runtime_data")
+DB_PATH = os.path.join(DATA_DIR, "audit_logs.db")
+VECTOR_INDEX_PATH = os.path.join(DATA_DIR, "vector_index.json")
+BTB_DB_PATH = os.path.join(DATA_DIR, "official_btb_database.json")
 
+from sqlalchemy import Column, String, Text, DateTime, func
+from api.db.database import Base, engine, SessionLocal
+
+class SessionStateModel(Base):
+    """SQLAlchemy ORM Model for Session and HITL state storage."""
+    __tablename__ = "session_state"
+
+    session_id = Column(String(255), primary_key=True)
+    state_data = Column(Text, nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class OfficialBTBModel(Base):
+    """SQLAlchemy ORM Model for Official Binding Tariff Information (BTB) catalog."""
+    __tablename__ = "official_btbs"
+
+    btb_no = Column(String(255), primary_key=True)
+    gtip_code = Column(String(50), nullable=True)
+    chapter = Column(String(10), nullable=True)
+    heading = Column(String(10), nullable=True)
+    issue_date = Column(String(50), nullable=True)
+    product_description = Column(Text, nullable=True)
+    legal_justification = Column(Text, nullable=True)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class CloudSQLStateStore:
+    """GCP Cloud SQL (PostgreSQL) SQLAlchemy 2.0 ORM tabanlı Durum Yöneticisi."""
     def __init__(self):
-        self._memory: Dict[str, Dict[str, Any]] = {}
-        self._storage_dir = os.path.join(tempfile.gettempdir(), "gtip_sessions")
-        os.makedirs(self._storage_dir, exist_ok=True)
-        self._firestore_client: Optional[Any] = None
-        self._init_firestore()
-
-    def _init_firestore(self):
         try:
-            from api.config import settings
-            if settings.USE_GCP_EMULATOR:
-                return  # Geliştirmede memory ve yerel disk kullan
-            from google.cloud import firestore
-            self._firestore_client = firestore.Client(project=settings.GCP_PROJECT_ID)
-        except Exception:
-            pass  # Firestore bağlantı hatasında disk & memory fallback çalışır
+            Base.metadata.create_all(bind=engine)
+            self.SessionMaker = SessionLocal
+            logger.info("[GCP Cloud SQL] SQLAlchemy 2.0 ORM tabloları başarıyla oluşturuldu ve doğrulandı.")
+        except Exception as e:
+            logger.warning(f"[CloudSQLStateStore] ORM Başlatma Uyarısı: {e}")
+            self.SessionMaker = SessionLocal
+
+    def save_state(self, session_id: str, data: Dict[str, Any]):
+        if not self.SessionMaker:
+            return
+        session = self.SessionMaker()
+        try:
+            record = session.query(SessionStateModel).filter_by(session_id=session_id).first()
+            if record:
+                record.state_data = json.dumps(data, ensure_ascii=False)
+            else:
+                record = SessionStateModel(
+                    session_id=session_id,
+                    state_data=json.dumps(data, ensure_ascii=False)
+                )
+                session.add(record)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[CloudSQLStateStore] SQLAlchemy State kaydetme hatası: {e}")
+        finally:
+            session.close()
 
     def get_state(self, session_id: str) -> Optional[Dict[str, Any]]:
-        # 1. Hızlı In-Memory Kontrol
-        if session_id in self._memory:
-            return self._memory[session_id]
-
-        # 2. Yerel Disk Fallback Kontrol (Multi-worker Cloud Run süreci paylaşımı)
-        file_path = os.path.join(self._storage_dir, f"{session_id}.json")
-        if os.path.exists(file_path):
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    state = json.load(f)
-                    self._memory[session_id] = state
-                    return state
-            except Exception:
-                pass
-
-        # 3. Firestore Kontrolü
-        if self._firestore_client:
-            try:
-                doc = self._firestore_client.collection(self.COLLECTION).document(session_id).get()
-                if doc.exists:
-                    state = doc.to_dict()
-                    self._memory[session_id] = state
-                    return state
-            except Exception:
-                pass
-
+        if not self.SessionMaker:
+            return None
+        session = self.SessionMaker()
+        try:
+            record = session.query(SessionStateModel).filter_by(session_id=session_id).first()
+            if record:
+                return json.loads(record.state_data)
+        except Exception as e:
+            logger.error(f"[CloudSQLStateStore] SQLAlchemy State okuma hatası: {e}")
+        finally:
+            session.close()
         return None
 
-    def save_state(self, session_id: str, state: Dict[str, Any]):
-        # 1. In-Memory Kayıt
-        self._memory[session_id] = state
+# Alias for backward compatibility
+LocalStateStore = CloudSQLStateStore
 
-        # 2. Disk Dosyası Kaydı (Cloud Run Container süreci paylaşımı)
-        try:
-            file_path = os.path.join(self._storage_dir, f"{session_id}.json")
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(state, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning(f"[StateStore] Disk yazma uyarısı: {e}")
 
-        # 3. Firestore Kaydı
-        if self._firestore_client:
+def _cosine_similarity(a: List[float], b: List[float]) -> float:
+    """İki vektör arasındaki Cosine Similarity hesaplar."""
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def _get_embedding(text: str, api_key: str) -> Optional[List[float]]:
+    """
+    text-embedding-005 modeli ile metni 768 boyutlu vektöre dönüştürür.
+    Türkçe semantik benzerliği (eş anlamlılar, anlam yakınlığı) yakalar.
+    """
+    try:
+        from google import genai
+        client = genai.Client(api_key=api_key)
+        response = client.models.embed_content(
+            model="text-embedding-005",
+            contents=text,
+            config={"task_type": "RETRIEVAL_QUERY"}
+        )
+        # google-genai SDK yapısına göre değer erişimi
+        if hasattr(response, "embeddings") and response.embeddings:
+            return response.embeddings[0].values
+        if hasattr(response, "embedding") and response.embedding:
+            return response.embedding.values
+    except Exception as e:
+        logger.debug(f"[Embedding] text-embedding-005 hatası, token overlap'e düşülüyor: {e}")
+    return None
+
+
+class LocalVectorStore:
+    """
+    Vertex AI Vector Search Emülatörü.
+    Ticaret Bakanlığı BTB Kararlarını ve TGTC İzahnamelerini vektörleştirip
+    dinamik olarak arar.
+
+    Arama Stratejisi:
+    - API key varsa → text-embedding-005 + Cosine Similarity (semantik)
+    - Offline/test  → Jaccard Token Overlap (fallback)
+    """
+    def __init__(self, index_path: str = VECTOR_INDEX_PATH, btb_path: str = BTB_DB_PATH):
+        self.index_path = index_path
+        self.btb_path = btb_path
+        self._docs_cache: Optional[List[Dict[str, Any]]] = None
+
+    def _load_documents(self) -> List[Dict[str, Any]]:
+        if self._docs_cache is not None:
+            return self._docs_cache
+
+        if os.path.exists(self.index_path):
             try:
-                self._firestore_client.collection(self.COLLECTION).document(session_id).set(state)
+                with open(self.index_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self._docs_cache = data.get("entries", [])
+                    return self._docs_cache
             except Exception as e:
-                import logging
-                logging.getLogger(__name__).warning(f"[StateStore] Firestore yazma hatası: {e}")
+                logger.warning(f"[LocalVectorStore] Index okuma hatası: {e}")
 
-local_vector_store = LocalVectorStore()
+        if os.path.exists(self.btb_path):
+            try:
+                with open(self.btb_path, "r", encoding="utf-8") as f:
+                    self._docs_cache = json.load(f)
+                    return self._docs_cache
+            except Exception as e:
+                logger.warning(f"[LocalVectorStore] BTB DB okuma hatası: {e}")
+
+        return []
+
+    def invalidate_cache(self):
+        """Bellek içi döküman önbelleğini geçersiz kılar. Yeni kayıt eklendikten sonra çağrılır."""
+        self._docs_cache = None
+        logger.info("[LocalVectorStore] Döküman önbelleği temizlendi, bir sonraki aramada yeniden yüklenecek.")
+
+    def search_btb(self, query_text: str, allowed_chapters: Optional[List[str]] = None, top_k: int = 5) -> List[Dict[str, Any]]:
+        return self.search_similar(query=query_text, top_k=top_k, allowed_chapters=allowed_chapters)
+
+    def search_similar(self, query: str, top_k: int = 5, allowed_chapters: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        docs = self._load_documents()
+        if not docs:
+            return []
+
+        api_key = os.getenv("GEMINI_API_KEY", "")
+
+        # --- Strateji 1: text-embedding-005 ile Cosine Similarity ---
+        if api_key:
+            query_embedding = _get_embedding(query, api_key)
+            if query_embedding:
+                scored_results = []
+                for doc in docs:
+                    chap = str(doc.get("chapter", doc.get("gtip_code", "")[:2])).zfill(2)
+                    if allowed_chapters and chap not in allowed_chapters:
+                        continue
+
+                    desc = doc.get("product_description", "")
+                    if not desc:
+                        continue
+
+                    doc_embedding = _get_embedding(desc, api_key)
+                    if doc_embedding:
+                        similarity = _cosine_similarity(query_embedding, doc_embedding)
+                        scored_results.append({
+                            "btb_no": doc.get("btb_no", "EMSAL-BTB"),
+                            "gtip_code": doc.get("gtip_code"),
+                            "chapter": chap,
+                            "heading": doc.get("heading", doc.get("gtip_code", "")[:4]),
+                            "issue_date": doc.get("issue_date", "2026-01-01"),
+                            "product_description": doc.get("product_description"),
+                            "legal_justification": doc.get("legal_justification"),
+                            "similarity_score": round(similarity, 4)
+                        })
+
+                if scored_results:
+                    scored_results.sort(key=lambda x: x["similarity_score"], reverse=True)
+                    logger.info(f"[VectorStore] text-embedding-005 Cosine Similarity araması: {len(scored_results)} sonuç")
+                    return scored_results[:top_k]
+
+        # --- Strateji 2: Jaccard Token Overlap (Offline Fallback) ---
+        logger.debug("[VectorStore] Jaccard Token Overlap fallback kullanılıyor (API key yok veya embedding hatası).")
+        query_tokens = set(query.lower().split())
+        scored_results = []
+
+        for doc in docs:
+            chap = str(doc.get("chapter", doc.get("gtip_code", "")[:2])).zfill(2)
+            if allowed_chapters and chap not in allowed_chapters:
+                continue
+
+            desc = doc.get("product_description", "").lower()
+            doc_tokens = set(desc.split())
+
+            overlap = len(query_tokens.intersection(doc_tokens))
+            union = len(query_tokens.union(doc_tokens)) or 1
+            score = 0.5 + (overlap / union) * 0.45
+
+            if overlap > 0 or not allowed_chapters:
+                scored_results.append({
+                    "btb_no": doc.get("btb_no", "EMSAL-BTB"),
+                    "gtip_code": doc.get("gtip_code"),
+                    "chapter": chap,
+                    "heading": doc.get("heading", doc.get("gtip_code", "")[:4]),
+                    "issue_date": doc.get("issue_date", "2026-01-01"),
+                    "product_description": doc.get("product_description"),
+                    "legal_justification": doc.get("legal_justification"),
+                    "similarity_score": round(score, 4)
+                })
+
+        scored_results.sort(key=lambda x: x["similarity_score"], reverse=True)
+        return scored_results[:top_k]
+
 local_state_store = LocalStateStore()
-
+local_vector_store = LocalVectorStore()
