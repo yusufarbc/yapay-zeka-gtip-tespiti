@@ -53,22 +53,27 @@ def get_database_url() -> str:
 DATABASE_URL = get_database_url()
 
 # SQLAlchemy 2.0 Engine ve Session Factory
+connect_args = {"connect_timeout": 3} if DATABASE_URL.startswith("postgresql") else {}
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20
+    pool_size=5,
+    max_overflow=10,
+    connect_args=connect_args
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_orm_tables():
-    """GCP Cloud SQL PostgreSQL veritabanı tablolarını oluşturur."""
+    """GCP Cloud SQL PostgreSQL veritabanı tablolarını güvenli olarak oluşturur."""
     try:
+        if os.getenv("ENVIRONMENT") == "production" and not os.path.exists(f"/cloudsql/{os.getenv('CLOUD_SQL_CONNECTION_NAME', 'gtip-tespit-projesi:europe-west3:gtip-db')}"):
+            logger.info("[SQLAlchemy ORM] Cloud SQL socket henüz hazır değil, bağlantı ertelendi.")
+            return
         Base.metadata.create_all(bind=engine)
         logger.info("[SQLAlchemy ORM] GCP Cloud SQL PostgreSQL tabloları başarıyla doğrulandı.")
     except Exception as e:
-        logger.warning(f"[SQLAlchemy ORM] Tablo oluşturma uyarısı: {e}")
+        logger.warning(f"[SQLAlchemy ORM] Tablo oluşturma uyarısı (Non-blocking): {e}")
 
 def get_db() -> Generator[Session, None, None]:
     """FastAPI uç noktaları için SQLAlchemy DB Session Dependency."""
