@@ -57,7 +57,7 @@ def load_tgtc_chapters() -> Dict[str, str]:
     return {}
 
 def load_btb_catalog() -> List[Dict[str, Any]]:
-    """Resmi BTB Emsal Kararlar Kataloğunu GCP Cloud SQL veya Cloud Storage (GCS) / /tmp üzerinden okur."""
+    """Resmi BTB Emsal Kararlar Kataloğunu GCP Cloud SQL, GCS Bucket veya /tmp üzerinden okur."""
     try:
         session = SessionLocal()
         records = session.query(OfficialBTBModel).all()
@@ -76,6 +76,22 @@ def load_btb_catalog() -> List[Dict[str, Any]]:
                 return cat
     except Exception as e:
         logger.warning(f"[TGTC Catalog] SQLAlchemy ORM BTB okuma uyarısı: {e}")
+
+    try:
+        from google.cloud import storage
+        project_id = os.getenv("GCP_PROJECT_ID", "gtip-tespit-projesi")
+        bucket_name = os.getenv("GCS_BUCKET_NAME", f"gtip-evrak-bucket-{project_id}")
+        client = storage.Client(project=project_id)
+        bucket = client.bucket(bucket_name)
+        blobs = list(client.list_blobs(bucket, prefix="official_btb/"))
+        if blobs:
+            latest_blob = max(blobs, key=lambda b: b.updated)
+            content = latest_blob.download_as_text()
+            data = json.loads(content)
+            if isinstance(data, list) and data:
+                return data
+    except Exception as e:
+        logger.warning(f"[TGTC Catalog] GCS Bucket canlı okuma uyarısı: {e}")
 
     try:
         import tempfile, glob
