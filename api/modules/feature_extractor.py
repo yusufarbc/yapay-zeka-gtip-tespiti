@@ -13,29 +13,17 @@ class FeatureExtractor:
     """
 
     def _extract_material_dynamically(self, text_lower: str) -> str:
-        materials = [
-            ("pamuk", "Pamuk / Tekstil"), ("polyester", "Sentetik / Polyester"), ("deri", "Hakiki / Suni Deri"),
-            ("ahşap", "Ahşap / Tahta"), ("plastik", "Plastik / Polimer"), ("cam", "Cam"),
-            ("çelik", "Paslanmaz Çelik"), ("demir", "Demir / Çelik"), ("alüminyum", "Alüminyum"),
-            ("kauçuk", "Kauçuk / Lastik"), ("bakır", "Bakır"), ("kağıt", "Kağıt / Selüloz"),
-            ("ipek", "İpek"), ("yün", "Yün"), ("altın", "Altın / Değerli Metal"),
-            ("gümüş", "Gümüş"), ("seramik", "Seramik / Porselen"), ("titanyum", "Titanyum"),
-            ("entegre", "Yarı İletken / Entegre Devre (IC)"), ("pdip", "Yarı İletken PDIP Kılıfı"),
-            ("çip", "Yarı İletken Çip"), ("cip", "Yarı İletken Çip"), ("yarı iletken", "Yarı İletken Silisyum"),
-            ("yari iletken", "Yarı İletken Silisyum"), ("transistör", "Yarı İletken Transistör"),
-            ("diyot", "Yarı İletken Diyot"), ("mikroişlemci", "Mikroişlemci / Entegre Devre"),
-            ("zeytinyağ", "Zeytinyağı"), ("kahve", "Kahve Çekirdeği"), ("parfüm", "Kozmetik / Parfüm"),
-            ("ilaç", "Eczacılık Müstahzarı"), ("yağ", "Mineral / Sentetik Yağ"), ("lastik", "Kauçuk Lastik"),
-            ("akıllı telefon", "Elektronik / Akıllı Telefon"), ("bilgisayar", "Elektronik / Bilgisayar"),
-            ("televizyon", "Elektronik / TV"), ("diş fırça", "Elektrikli Ev Aleti"), ("bisiklet", "Taşıt / Bisiklet")
-        ]
-        found = []
-        for kw, label in materials:
-            if kw in text_lower:
-                found.append(label)
-        if found:
-            return " / ".join(found[:2])
+        """
+        Sıfır Hardcoded Sözlük: Metindeki teknik nitelik ve hammadde isimlerini
+        NLP tokenizasyonu ile dinamik olarak çıkarır.
+        """
+        from api.db.tgtc_knowledge_base import TURKISH_STOP_WORDS
+        tokens = [w for w in re.findall(r'[a-zA-ZçğıöşüÇĞİÖŞÜ0-9]+', text_lower) if len(w) >= 3]
+        filtered = [t.title() for t in tokens if t.lower() not in TURKISH_STOP_WORDS]
+        if filtered:
+            return " / ".join(filtered[:2])
         return "Genel Sanayi ve Ticaret Eşyası"
+
 
     def extract_features(self, raw_text: str, image_uri: str = None) -> ProductFeatures:
         text_lower = raw_text.lower()

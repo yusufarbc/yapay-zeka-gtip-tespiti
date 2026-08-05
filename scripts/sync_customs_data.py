@@ -191,7 +191,8 @@ def check_resmi_gazete_and_btb() -> Tuple[bool, List[Dict[str, Any]]]:
     logger.info("======================================================================")
     
     rg_updates = scrape_resmi_gazete_rss()
-    btb_updates = scrape_ticaret_bakanligi_btb_portal()
+    btb_updates = scrape_ab_ebti_open_data()
+    statute_updates = scrape_ticaret_mevzuat_bankasi()
     
     all_updates = btb_updates
     

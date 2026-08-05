@@ -31,8 +31,8 @@ class PredicateRegistryEngine:
         resmi mevzuat ve BTB veritabanından dinamik olarak oluşturur.
         """
         clean_code = gtip_code.replace(".", "").strip()
-        chap2 = clean_code[:2] if len(clean_code) >= 2 else "84"
-        pos4 = clean_code[:4] if len(clean_code) >= 4 else f"{chap2}01"
+        chap2 = clean_code[:2] if len(clean_code) >= 2 else ""
+        pos4 = clean_code[:4] if len(clean_code) >= 4 else chap2
         hs6 = clean_code[:6] if len(clean_code) >= 6 else pos4
 
         # Dinamik Fasıl Başlığı

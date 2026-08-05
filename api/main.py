@@ -420,6 +420,10 @@ async def get_customs_btbs():
     """
     Resmi organlardan (Ticaret Bakanlığı BTB Arama Portalı) çekilen emsal BTB kararlarını döndürür.
     """
+    from api.db.tgtc_knowledge_base import load_btb_catalog
+    catalog = load_btb_catalog()
+    if catalog:
+        return catalog
     base_dir = os.path.dirname(os.path.abspath(__file__))
     dataset_file = os.path.join(base_dir, "data", "official_btb_database.json")
     if os.path.exists(dataset_file):
@@ -432,8 +436,9 @@ async def get_tgtc_chapters():
     """
     Türk Gümrük Tarife Cetveli (TGTC) 99 Fasıl tanım ve bölüm isimlerini döndürür.
     """
-    from api.db.tgtc_knowledge_base import TGTC_CHAPTERS
-    return [{"chapter_code": code, "description": desc} for code, desc in TGTC_CHAPTERS.items()]
+    from api.db.tgtc_knowledge_base import load_tgtc_chapters, TGTC_CHAPTERS
+    chaps = load_tgtc_chapters() or TGTC_CHAPTERS
+    return [{"chapter_code": code, "description": desc} for code, desc in chaps.items()]
 
 @app.get("/api/v1/customs-data/sync-status")
 async def get_sync_status():
