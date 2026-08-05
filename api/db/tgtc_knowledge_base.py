@@ -29,7 +29,7 @@ GIR_RULES = {
 }
 
 def load_tgtc_chapters() -> Dict[str, str]:
-    """Resmi 99 TGTC Fasıl Tanımlarını GCP Cloud SQL (SQLAlchemy ORM) üzerinden okur."""
+    """Resmi 99 TGTC Fasıl Tanımlarını GCP Cloud SQL veya canlı BTB kataloğu üzerinden dinamik türetir."""
     try:
         session = SessionLocal()
         records = session.query(OfficialBTBModel).all()
@@ -39,20 +39,31 @@ def load_tgtc_chapters() -> Dict[str, str]:
             for r in records:
                 if r.chapter and r.product_description:
                     chapters[r.chapter.zfill(2)] = r.product_description
-            return chapters
+            if chapters:
+                return chapters
     except Exception as e:
         logger.warning(f"[TGTC KnowledgeBase] SQLAlchemy ORM fasıl okuma uyarısı: {e}")
+
+    cat = load_btb_catalog()
+    if cat:
+        chaps = {}
+        for item in cat:
+            c = item.get("chapter") or (item.get("gtip_code") or "")[:2]
+            if c and c.isdigit():
+                chaps[c.zfill(2)] = item.get("product_description", "Canlı Mevzuat Fasılları")[:60]
+        if chaps:
+            return chaps
 
     return {}
 
 def load_btb_catalog() -> List[Dict[str, Any]]:
-    """Resmi BTB Emsal Kararlar Kataloğunu GCP Cloud SQL (SQLAlchemy ORM) üzerinden okur."""
+    """Resmi BTB Emsal Kararlar Kataloğunu GCP Cloud SQL veya Cloud Storage (GCS) / /tmp üzerinden okur."""
     try:
         session = SessionLocal()
         records = session.query(OfficialBTBModel).all()
         session.close()
         if records:
-            return [{
+            cat = [{
                 "btb_no": r.btb_no,
                 "gtip_code": r.gtip_code,
                 "chapter": r.chapter,
@@ -60,9 +71,25 @@ def load_btb_catalog() -> List[Dict[str, Any]]:
                 "issue_date": r.issue_date,
                 "product_description": r.product_description,
                 "legal_justification": r.legal_justification
-            } for r in records]
+            } for r in records if r.btb_no]
+            if cat:
+                return cat
     except Exception as e:
         logger.warning(f"[TGTC Catalog] SQLAlchemy ORM BTB okuma uyarısı: {e}")
+
+    try:
+        import tempfile, glob
+        date_str = datetime.date.today().strftime("%Y_%m_%d")
+        local_path = os.path.join(tempfile.gettempdir(), f"btb_scraped_{date_str}.json")
+        if os.path.exists(local_path):
+            with open(local_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        tmp_files = glob.glob(os.path.join(tempfile.gettempdir(), "btb_scraped_*.json"))
+        if tmp_files:
+            with open(tmp_files[-1], "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.warning(f"[TGTC Catalog] Fallback okuma uyarısı: {e}")
 
     return []
 
