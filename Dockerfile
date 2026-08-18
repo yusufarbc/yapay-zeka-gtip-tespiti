@@ -40,6 +40,7 @@ ENV PATH="/venv/bin:$PATH"
 # Uygulama kodunu kopyala (tests/, .venv/, archieve/ dışarıda kalır → .dockerignore)
 COPY api/ /app/api/
 COPY scripts/ /app/scripts/
+COPY ["2026 TGTC/", "/app/2026 TGTC/"]
 
 ENV PORT=8080
 ENV PYTHONUNBUFFERED=1

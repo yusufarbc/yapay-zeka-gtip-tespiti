@@ -48,3 +48,8 @@ scripts/evaluate_accuracy.py
 scripts/build_vector_index.py
 scripts/fetch_official_btb.py
 scripts/import_official_customs_excel.py
+
+# Large PDF files
+**/*.pdf
+
+

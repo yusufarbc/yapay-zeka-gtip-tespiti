@@ -1,0 +1,55 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# C extensions & Executables
+*.so
+*.exe
+*.dll
+*.dylib
+cloud-sql-proxy.exe
+csq.exe
+proxy.exe
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Large Raw PDFs and temporary data dumps
+*.pdf
+2026 TGTC/*.pdf
+curl_output*.json
+curl_output_*.json
+
+# Environment variables and secrets
+.env
+.env.local
+.env.*.local
+
+# Logs and databases
+*.log
+*.sqlite
+*.sqlite3
+cloud_sql_fallback.db
+
+# IDE & Editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+Thumbs.db

@@ -5,7 +5,11 @@ import { HITLQuestionModal } from './components/HITLQuestionModal';
 import { GTIPResultCard } from './components/GTIPResultCard';
 import { AuditHistoryTable } from './components/AuditHistoryTable';
 import { CustomsKnowledgeExplorer } from './components/CustomsKnowledgeExplorer';
+import ErrorBoundary from './components/ErrorBoundary';
+import { SkeletonLoader } from './components/SkeletonLoader';
+import { PipelineStatus } from './components/PipelineStatus';
 import { analyzeProduct, respondHITL, getAuditLogs } from './api/client';
+import { useToast } from './components/ToastContext';
 
 export function App() {
   const [theme, setTheme] = useState(() => {
@@ -17,7 +21,7 @@ export function App() {
   const [isSubmittingHITL, setIsSubmittingHITL] = useState(false);
   const [decision, setDecision] = useState(null);
   const [auditLogs, setAuditLogs] = useState([]);
-  const [errorMsg, setErrorMsg] = useState(null);
+  const { addToast } = useToast();
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -44,14 +48,13 @@ export function App() {
   const handleStartAnalysis = async (description) => {
     setIsAnalyzing(true);
     setDecision(null);
-    setErrorMsg(null);
 
     try {
       const result = await analyzeProduct(description);
       setDecision(result);
     } catch (err) {
       console.error(err);
-      setErrorMsg(err.response?.data?.detail || err.message || "GTİP analizi sırasında beklenmeyen bir hata oluştu.");
+      addToast(err.response?.data?.detail || err.message || "GTİP analizi sırasında beklenmeyen bir hata oluştu.", "error");
     } finally {
       setIsAnalyzing(false);
       fetchLogs();
@@ -61,14 +64,13 @@ export function App() {
   const handleHITLRespond = async (questionId, selectedOptionId) => {
     if (!decision) return;
     setIsSubmittingHITL(true);
-    setErrorMsg(null);
 
     try {
       const result = await respondHITL(decision.session_id, questionId, selectedOptionId);
       setDecision(result);
     } catch (err) {
       console.error(err);
-      setErrorMsg(err.response?.data?.detail || err.message || "Müşavir teyit yanıtı iletilirken hata oluştu.");
+      addToast(err.response?.data?.detail || err.message || "Müşavir teyit yanıtı iletilirken hata oluştu.", "error");
     } finally {
       setIsSubmittingHITL(false);
       fetchLogs();
@@ -76,57 +78,50 @@ export function App() {
   };
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <Header theme={theme} onToggleTheme={toggleTheme} activeNav={activeNav} onSelectNav={setActiveNav} />
+    <ErrorBoundary>
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+        <Header theme={theme} onToggleTheme={toggleTheme} activeNav={activeNav} onSelectNav={setActiveNav} />
 
-      <main style={{ maxWidth: '1100px', margin: '0 auto', padding: '0 20px 40px', width: '100%', flex: 1 }}>
-        
-        {errorMsg && (
-          <div style={{
-            background: 'var(--status-amber-bg)',
-            border: '1px solid var(--status-amber-border)',
-            padding: '14px 18px',
-            borderRadius: '10px',
-            color: 'var(--status-amber)',
-            marginBottom: '20px',
-            fontSize: '0.9rem',
-            fontWeight: 600,
-            boxShadow: 'var(--shadow-sm)'
-          }}>
-            ⚠️ {errorMsg}
-          </div>
-        )}
+        <main style={{ maxWidth: activeNav === 'explorer' ? '1540px' : '1100px', margin: '0 auto', padding: '0 24px 40px', width: '100%', flex: 1, transition: 'max-width 0.3s ease' }}>
 
-        {activeNav === 'analysis' ? (
-          <>
-            <FileUploader onStartAnalysis={handleStartAnalysis} isLoading={isAnalyzing} />
+          {activeNav === 'analysis' ? (
+            <>
+              <FileUploader onStartAnalysis={handleStartAnalysis} isLoading={isAnalyzing} />
 
-            {/* Müşavir Teyidi Bekleyen Durumda Sadece Soru Kartı Gösterilir */}
-            {decision && decision.status === 'WAITING_FOR_USER' && (
-              <HITLQuestionModal
-                question={decision.hitl_question}
-                onRespond={handleHITLRespond}
-                isSubmitting={isSubmittingHITL}
-              />
-            )}
+              {isAnalyzing && (
+                <>
+                  <PipelineStatus isAnalyzing={isAnalyzing} />
+                  <SkeletonLoader />
+                </>
+              )}
 
-            {/* Karar Kesinleştiğinde Sonuç Kartı Gösterilir */}
-            {decision && decision.status === 'COMPLETED' && (
-              <GTIPResultCard decision={decision} />
-            )}
+              {/* Müşavir Teyidi Bekleyen Durumda Sadece Soru Kartı Gösterilir */}
+              {decision && decision.status === 'WAITING_FOR_USER' && (
+                <HITLQuestionModal
+                  question={decision.hitl_question}
+                  onRespond={handleHITLRespond}
+                  isSubmitting={isSubmittingHITL}
+                />
+              )}
 
-            <AuditHistoryTable logs={auditLogs} />
-          </>
-        ) : (
-          <CustomsKnowledgeExplorer />
-        )}
+              {/* Karar Kesinleştiğinde Sonuç Kartı Gösterilir */}
+              {decision && decision.status === 'COMPLETED' && (
+                <GTIPResultCard decision={decision} />
+              )}
 
-      </main>
+              <AuditHistoryTable logs={auditLogs} />
+            </>
+          ) : (
+            <CustomsKnowledgeExplorer />
+          )}
 
-      <footer style={{ textAlign: 'center', padding: '20px', fontSize: '0.82rem', color: 'var(--text-muted)', borderTop: '1px solid var(--border-subtle)' }}>
-        Türk Gümrük Tarife Cetveli (TGTC) Karar Destek Portalı • Kurumsal Müşavir Sürümü
-      </footer>
-    </div>
+        </main>
+
+        <footer style={{ textAlign: 'center', padding: '20px', fontSize: '0.82rem', color: 'var(--text-muted)', borderTop: '1px solid var(--border-subtle)' }}>
+          Türk Gümrük Tarife Cetveli (TGTC) Karar Destek Portalı • Kurumsal Müşavir Sürümü
+        </footer>
+      </div>
+    </ErrorBoundary>
   );
 }
 

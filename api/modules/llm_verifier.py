@@ -20,10 +20,11 @@ class LLMFactVerifier:
     def verify_predicates(
         self, 
         raw_text: str, 
-        predicates: List[LegalPredicate]
+        predicates: List[LegalPredicate],
+        allowed_chapters: List[str] = None
     ) -> List[PredicateVerificationResult]:
         """
-        Kullanıcı metnini yasal kural ağacı (predicates) karşısında doğrular.
+        Kullanıcı metnini yasal kural ağacı (predicates) ve Dinamik Fasıl Önbelleği karşısında doğrular.
         """
         api_key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
         
@@ -39,9 +40,12 @@ class LLMFactVerifier:
                     for p in predicates
                 ]
                 
+                scoped_context = context_cache_manager.get_scoped_context_text(allowed_chapters)
+
                 prompt = (
                     "Sen Türk Gümrük Mevzuatı Hakem ve Doğrulama Ajanısın (Legal Fact Verifier).\n"
                     "GÖREVİN: Aşağıda verilen ürün metnini dikkatle incele ve Yasal Koşul Listesindeki her soruyu değerlendir.\n\n"
+                    f"DİNAMİK YASAL FASIL BAĞLAMI:\n{scoped_context}\n\n"
                     f"ÜRÜN METNİ:\n\"\"\"{raw_text}\"\"\"\n\n"
                     f"DOĞRULANACAK YASAL KOŞULLAR:\n{json.dumps(predicates_payload, ensure_ascii=False, indent=2)}\n\n"
                     "ÇOK KATI KURALLAR:\n"

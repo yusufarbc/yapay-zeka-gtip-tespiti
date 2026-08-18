@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Award, Download, Scale, CheckCircle2, Bot, Layers, Copy, Check } from 'lucide-react';
 import { getPDFReportUrl } from '../api/client';
+import { useToast } from './ToastContext';
 
 export const GTIPResultCard = ({ decision }) => {
-  const [copied, setCopied] = useState(false);
+  const { addToast } = useToast();
 
   if (!decision || (!decision.gtip_code && decision.status !== 'COMPLETED' && decision.status !== 'WAITING_FOR_USER')) return null;
 
@@ -23,8 +24,7 @@ export const GTIPResultCard = ({ decision }) => {
   const handleCopy = () => {
     if (decision.gtip_code) {
       navigator.clipboard.writeText(decision.gtip_code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      addToast('GTİP Kodu panoya kopyalandı.', 'success');
     }
   };
 
@@ -90,8 +90,8 @@ export const GTIPResultCard = ({ decision }) => {
               style={{ padding: '6px 12px', fontSize: '0.78rem', gap: '5px' }}
               title="GTİP Kodunu Kopyala"
             >
-              {copied ? <Check size={14} color="var(--status-emerald)" /> : <Copy size={14} />}
-              <span>{copied ? 'Kopyalandı!' : 'Kopyala'}</span>
+              <Copy size={14} />
+              <span>Kopyala</span>
             </button>
 
             <a

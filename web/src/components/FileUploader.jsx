@@ -39,6 +39,7 @@ export const ProductInputForm = ({ onStartAnalysis, isLoading }) => {
           />
         </div>
 
+
         {/* Buton */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', borderTop: '1px solid var(--border-subtle)', paddingTop: '16px' }}>
           <button type="submit" className="btn-primary" disabled={isLoading || !description.trim()}>

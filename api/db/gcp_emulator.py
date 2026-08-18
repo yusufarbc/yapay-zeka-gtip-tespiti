@@ -24,7 +24,7 @@ DB_PATH = os.path.join(DATA_DIR, "audit_logs.db")
 VECTOR_INDEX_PATH = os.path.join(DATA_DIR, "vector_index.json")
 BTB_DB_PATH = os.path.join(DATA_DIR, "official_btb_database.json")
 
-from sqlalchemy import Column, String, Text, DateTime, func
+from sqlalchemy import Column, String, Text, DateTime, Boolean, func
 from api.db.database import Base, engine, SessionLocal
 
 class SessionStateModel(Base):
@@ -36,18 +36,7 @@ class SessionStateModel(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
-class OfficialBTBModel(Base):
-    """SQLAlchemy ORM Model for Official Binding Tariff Information (BTB) catalog."""
-    __tablename__ = "official_btbs"
 
-    btb_no = Column(String(255), primary_key=True)
-    gtip_code = Column(String(50), nullable=True)
-    chapter = Column(String(10), nullable=True)
-    heading = Column(String(10), nullable=True)
-    issue_date = Column(String(50), nullable=True)
-    product_description = Column(Text, nullable=True)
-    legal_justification = Column(Text, nullable=True)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
 class CloudSQLStateStore:
@@ -110,11 +99,20 @@ def _cosine_similarity(a: List[float], b: List[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
+_EMBEDDING_MEM_CACHE: Dict[str, List[float]] = {}
+
 def _get_embedding(text: str, api_key: str) -> Optional[List[float]]:
     """
     text-embedding-005 modeli ile metni 768 boyutlu vektöre dönüştürür.
     Türkçe semantik benzerliği (eş anlamlılar, anlam yakınlığı) yakalar.
+    Mükerrer ağ isteklerini önlemek adına bellek içi önbelleği (in-memory dictionary cache) kullanır.
     """
+    cache_key = text.strip().lower()
+    if not cache_key:
+        return None
+    if cache_key in _EMBEDDING_MEM_CACHE:
+        return _EMBEDDING_MEM_CACHE[cache_key]
+
     try:
         from google import genai
         client = genai.Client(api_key=api_key)
@@ -125,9 +123,13 @@ def _get_embedding(text: str, api_key: str) -> Optional[List[float]]:
         )
         # google-genai SDK yapısına göre değer erişimi
         if hasattr(response, "embeddings") and response.embeddings:
-            return response.embeddings[0].values
+            val = response.embeddings[0].values
+            _EMBEDDING_MEM_CACHE[cache_key] = val
+            return val
         if hasattr(response, "embedding") and response.embedding:
-            return response.embedding.values
+            val = response.embedding.values
+            _EMBEDDING_MEM_CACHE[cache_key] = val
+            return val
     except Exception as e:
         logger.debug(f"[Embedding] text-embedding-005 hatası, token overlap'e düşülüyor: {e}")
     return None
@@ -151,6 +153,17 @@ class LocalVectorStore:
     def _load_documents(self) -> List[Dict[str, Any]]:
         if self._docs_cache is not None:
             return self._docs_cache
+
+        # Öncelik: Zenginleştirilmiş Hiyerarşik Tarife Ağacı Kataloğu
+        try:
+            from api.db.tgtc_knowledge_base import load_btb_catalog
+            catalog = load_btb_catalog()
+            if catalog:
+                self._docs_cache = catalog
+                logger.debug(f"[LocalVectorStore] Ana TGTC kütüphanesi başarıyla vektör deposuna yüklendi ({len(catalog)} kayıt).")
+                return self._docs_cache
+        except Exception as e:
+            logger.warning(f"[LocalVectorStore] Ana TGTC kütüphanesi yükleme hatası: {e}")
 
         if os.path.exists(self.index_path):
             try:
@@ -192,6 +205,9 @@ class LocalVectorStore:
             if query_embedding:
                 scored_results = []
                 for doc in docs:
+                    valid_until = str(doc.get("valid_until") or "")
+                    if valid_until and valid_until != "9999-12-31" and valid_until < "2026-01-01":
+                        continue  # Versiyonlanmış eski mevzuat zırhı: Süresi biten kayıtlar atlanır
                     chap = str(doc.get("chapter", doc.get("gtip_code", "")[:2])).zfill(2)
                     if allowed_chapters and chap not in allowed_chapters:
                         continue
@@ -225,6 +241,9 @@ class LocalVectorStore:
         scored_results = []
 
         for doc in docs:
+            valid_until = str(doc.get("valid_until") or "")
+            if valid_until and valid_until != "9999-12-31" and valid_until < "2026-01-01":
+                continue  # Versiyonlanmış eski mevzuat zırhı
             chap = str(doc.get("chapter", doc.get("gtip_code", "")[:2])).zfill(2)
             if allowed_chapters and chap not in allowed_chapters:
                 continue

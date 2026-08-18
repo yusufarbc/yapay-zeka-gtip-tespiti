@@ -15,9 +15,11 @@ class RAGEngine:
     def search_candidates(
         self, 
         features: ProductFeatures, 
-        allowed_chapters: List[str]
+        allowed_chapters: List[str],
+        applied_gir_rules: List[str] = None
     ) -> List[GTIPCandidate]:
         query_text = f"{features.product_name} {features.primary_material} {features.intended_use}"
+        is_hard_locked = any("[HARD LOCK]" in r for r in (applied_gir_rules or []))
         
         # 1. Kısıtlı Fasıl Araması (Tree-Search)
         constrained_results = []
@@ -25,13 +27,16 @@ class RAGEngine:
             constrained_results = local_vector_store.search_btb(
                 query_text=query_text,
                 allowed_chapters=allowed_chapters,
-                top_k=3
+                top_k=5
             )
 
-        # 2. Top-K Aday Eşleştirme (Açık Fasıl Kısıtı Varsa Öncelikli Kullan)
+        # 2. Top-K Aday Eşleştirme (Katı Fasıl Kilit Varsa Asla Global Fallback Yapılamaz)
         if constrained_results:
             constrained_results.sort(key=lambda x: x.get("similarity_score", 0), reverse=True)
             top_results = constrained_results[:3]
+        elif is_hard_locked:
+            # Sıfır Halüsinasyon Prensibi: Katı kural fasıl zırhı dışından emsal uydurulmaz
+            top_results = []
         else:
             global_results = local_vector_store.search_btb(
                 query_text=query_text,
@@ -43,14 +48,25 @@ class RAGEngine:
 
         candidates = []
         if top_results:
+            from api.db.tgtc_knowledge_base import load_tgtc_rules_and_notes
+            rules_db = load_tgtc_rules_and_notes()
+            chapter_notes = rules_db.get("fasil_notlari", {})
+
             for res in top_results:
                 btb_sim = res.get("similarity_score", 0.85)
+                res_chap = str(res.get("chapter", res.get("gtip_code", "")[:2])).zfill(2)
+                
+                base_legal = res.get("legal_justification", "TGTC 2026 Mevzuatı")
+                chap_note = chapter_notes.get(res_chap, "")
+                if chap_note and "[2026 Fasıl" not in base_legal:
+                    base_legal += f" [2026 Fasıl {res_chap} Resmi Hukuki İzahname & GİR Uyumu: {chap_note}]"
+
                 precedent = PrecedentBTB(
                     btb_no=res.get("btb_no", f"EMSAL-{res['gtip_code'][:4]}"),
                     gtip_code=res["gtip_code"],
-                    issue_date=res.get("issue_date", "2025-01-01"),
+                    issue_date=res.get("issue_date", "2026-01-01"),
                     product_description=res["product_description"],
-                    legal_justification=res["legal_justification"],
+                    legal_justification=base_legal,
                     similarity_score=btb_sim
                 )
 

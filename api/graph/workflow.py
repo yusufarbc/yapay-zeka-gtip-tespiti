@@ -29,7 +29,7 @@ class GTIPWorkflowEngine:
         allowed_chapters, gir_rules = rule_engine.apply_rules(features)
 
         # 3. Candidate Generation (Modül 3 - RAG ile Aday Eleme)
-        candidates = rag_engine.search_candidates(features, allowed_chapters)
+        candidates = rag_engine.search_candidates(features, allowed_chapters, applied_gir_rules=gir_rules)
 
         if not candidates:
             return GTIPDecision(
@@ -43,11 +43,11 @@ class GTIPWorkflowEngine:
         # 4. Yasal Predikat Ağacı Çekimi (TGTC Predicate Registry)
         predicates = predicate_registry.get_predicates_for_gtip(top_candidate.gtip_code)
 
-        # 5. LLM Predicate Fact Verifier (Gemini 2.5 Pro TRUE/FALSE/UNKNOWN Doğrulama)
-        verification_results = llm_verifier.verify_predicates(raw_text, predicates)
+        # 5. LLM Predicate Fact Verifier (Gemini 2.5 Pro TRUE/FALSE/UNKNOWN Doğrulama & Scoped Cache)
+        verification_results = llm_verifier.verify_predicates(raw_text, predicates, allowed_chapters=allowed_chapters)
 
-        # 6. Deterministik Sembolik Karar Motoru (Python Logic Gate)
-        decision = deterministic_engine.evaluate_decision(session_id, top_candidate, verification_results)
+        # 6. Deterministik Sembolik Karar Motoru (%5 Eşik Kuralı & No-AI Output Binding)
+        decision = deterministic_engine.evaluate_decision(session_id, top_candidate, verification_results, candidates=candidates)
 
         # State kaydet
         state_dict: Dict[str, Any] = {
@@ -109,7 +109,7 @@ class GTIPWorkflowEngine:
             "session_id": session_id
         }
         await asyncio.sleep(0.05)
-        candidates = await asyncio.to_thread(rag_engine.search_candidates, features, allowed_chapters)
+        candidates = await asyncio.to_thread(rag_engine.search_candidates, features, allowed_chapters, gir_rules)
 
         if not candidates:
             decision = GTIPDecision(
@@ -135,8 +135,8 @@ class GTIPWorkflowEngine:
         }
         await asyncio.sleep(0.05)
         predicates = await asyncio.to_thread(predicate_registry.get_predicates_for_gtip, top_candidate.gtip_code)
-        verification_results = await asyncio.to_thread(llm_verifier.verify_predicates, raw_text, predicates)
-        decision = await asyncio.to_thread(deterministic_engine.evaluate_decision, session_id, top_candidate, verification_results)
+        verification_results = await asyncio.to_thread(llm_verifier.verify_predicates, raw_text, predicates, allowed_chapters)
+        decision = await asyncio.to_thread(deterministic_engine.evaluate_decision, session_id, top_candidate, verification_results, candidates)
 
         state_dict: Dict[str, Any] = {
             "session_id": session_id,
@@ -175,16 +175,21 @@ class GTIPWorkflowEngine:
         features = ProductFeatures(**features_data)
 
         # Seçilen yanıt verisini teknik özelliklere ekle
+        # Seçilen yanıt verisini teknik özelliklere ekle veya %5 Aday Teyidini algıla
         hitl_q = state_dict.get("hitl_question")
+        selected_gtip_choice = None
         if hitl_q and "options" in hitl_q:
             for opt in hitl_q["options"]:
                 if opt["option_id"] == selected_option_id:
-                    features.technical_specifications.update(opt.get("impact_data", {}))
-                    if "primary_material" in opt.get("impact_data", {}):
-                        features.primary_material = opt["impact_data"]["primary_material"]
+                    imp = opt.get("impact_data", {})
+                    if "selected_gtip" in imp:
+                        selected_gtip_choice = imp["selected_gtip"]
+                    features.technical_specifications.update(imp)
+                    if "primary_material" in imp:
+                        features.primary_material = imp["primary_material"]
 
-        # Orijinal analizde belirlenen GTİP adayını state_dict'ten koru (HITL sonrası GTİP değişimi engellenir)
-        selected_gtip = state_dict.get("selected_gtip")
+        # Orijinal analizde belirlenen GTİP adayını state_dict'ten koru veya %5 teyidindeki adaya geç
+        selected_gtip = selected_gtip_choice or state_dict.get("selected_gtip")
         stored_candidates_data = state_dict.get("candidates", [])
         stored_candidates = [GTIPCandidate(**c) for c in stored_candidates_data] if stored_candidates_data else []
 
@@ -195,7 +200,7 @@ class GTIPWorkflowEngine:
         allowed_chapters, gir_rules = rule_engine.apply_rules(features)
 
         if not top_candidate:
-            candidates = rag_engine.search_candidates(features, allowed_chapters)
+            candidates = rag_engine.search_candidates(features, allowed_chapters, applied_gir_rules=gir_rules)
             if not candidates:
                 return GTIPDecision(
                     session_id=session_id,
@@ -204,10 +209,17 @@ class GTIPWorkflowEngine:
                 )
             top_candidate = candidates[0]
 
-        is_yes = (selected_option_id == "OPT_YES" or "YES" in selected_option_id.upper() or "EVET" in selected_option_id.upper())
+        is_yes = (selected_option_id == "OPT_YES" or "YES" in selected_option_id.upper() or "EVET" in selected_option_id.upper() or selected_gtip_choice is not None)
         base_score = top_candidate.score if hasattr(top_candidate, 'score') and top_candidate.score else 0.85
 
-        if is_yes:
+        if selected_gtip_choice:
+            confidence = round(min(0.96, max(0.85, base_score * 1.05)), 2)
+            audit_note_msg = f"Gümrük Müşaviri %5 yakınlık eşiğindeki soruda {selected_gtip_choice} pozisyonunu kesinleştirdi."
+            llm_commentary = (
+                f"Yapay Zeka Mantıksal Doğrulama (Müşaviri Karar Tayini): %5 eşik kuralı sorusunda Gümrük Müşavirimiz "
+                f"{selected_gtip_choice} tarife pozisyonunu seçtiğinden, pozisyon %{int(confidence*100)} güvenle kesinleştirildi."
+            )
+        elif is_yes:
             confidence = round(min(0.96, max(0.80, base_score * 1.05)), 2)
             audit_note_msg = "Gümrük Müşaviri 'EVET' yanıtı verdi. Teknik şart doğrulandı."
             llm_commentary = (

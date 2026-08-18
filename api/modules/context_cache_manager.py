@@ -74,17 +74,40 @@ class ContextCacheManager:
 
             target_model = model_name or settings.REASONING_LLM_MODEL
             self.client = genai.Client(api_key=api_key)
+            # TGTC Mevzuat İzahnamelerini, Yorum Kurallarını ve Fasıl Notlarını Yükle
+            # TGTC Mevzuat İzahnamelerini, Yorum Kurallarını ve Fasıl Notlarını Yükle
+            from api.db.tgtc_knowledge_base import GIR_RULES, TGTC_CHAPTERS, load_tgtc_rules_and_notes, get_local_tgtc_headings
             
-            # TGTC Mevzuat İzahnamelerini Yükle
-            from api.db.tgtc_knowledge_base import GIR_RULES, TGTC_CHAPTERS
+            rules_db = load_tgtc_rules_and_notes()
             
-            rules_text = "\n".join([f"{k}: {v}" for k, v in GIR_RULES.items()])
-            chapters_text = "\n".join([f"Fasıl {k}: {v}" for k, v in TGTC_CHAPTERS.items()])
+            # Resmi Bakanlık Yorum Kuralları
+            official_rules = "\n".join(rules_db.get("yorum_kurallari", []))
+            if not official_rules:
+                official_rules = "\n".join([f"{k}: {v}" for k, v in GIR_RULES.items()])
+                
+            # Fasıl Notları ve İzahnameleri
+            chapter_notes_dict = rules_db.get("fasil_notlari", {})
+            chapters_lines = []
+            for k, v in TGTC_CHAPTERS.items():
+                c_code = str(k).zfill(2)
+                note = chapter_notes_dict.get(c_code, "")
+                line = f"Fasıl {c_code}: {v}"
+                if note:
+                    line += f"\n  [Resmi Bakanlık Fasıl {c_code} Yasal Hukuki Notları: {note}]"
+                chapters_lines.append(line)
+                
+            chapters_text = "\n\n".join(chapters_lines)
+            
+            # 4-Haneli Pozisyon Başlıkları (HS Headings - Minimum 32K token garantisi ve milisaniyelik erişim)
+            headings_dict = get_local_tgtc_headings()
+            headings_lines = [f"Pozisyon {code}: {title}" for code, title in sorted(headings_dict.items(), key=lambda x: str(x[0])) if len(str(code).strip()) == 4]
+            headings_text = "\n".join(headings_lines)
             
             full_context_text = (
-                f"TÜRK GÜMRÜK TARİFE CETVELİ (TGTC) VE GENEL YORUM KURALLARI (GİR 1-6)\n\n"
-                f"=== GENEL YORUM KURALLARI ===\n{rules_text}\n\n"
-                f"=== 99 FASIL METİNLERİ VE İZAHNAMELERİ ===\n{chapters_text}"
+                f"TÜRK GÜMRÜK TARİFE CETVELİ (TGTC) 2026 VE GENEL YORUM KURALLARI (GİR 1-6 & FASIL NOTLARI & POZİSYONLAR)\n\n"
+                f"=== 2026 RESMİ GENEL YORUM KURALLARI ===\n{official_rules}\n\n"
+                f"=== 99 FASIL TANIMLARI VE BAKANLIK HUKUKİ İZAHNAME NOTLARI ===\n{chapters_text}\n\n"
+                f"=== 2026 RESMİ 4-HANELİ TARİFE POZİSYON KÜTÜPHANESİ ===\n{headings_text}"
             )
 
             cache = self.client.caches.create(
@@ -136,5 +159,48 @@ class ContextCacheManager:
             return types.GenerateContentConfig(cached_content=cache_name)
         except Exception:
             return None
+
+    def get_scoped_context_text(self, allowed_chapters: Optional[list] = None) -> str:
+        """
+        Dinamik Fasıl Bazlı Önbellek & Kapsam Daraltma (Scoped Prompting):
+        Tüm 97 faslı tek bir devasa blokta gönderip 'lost in the middle' halüsinasyonu yaşamak yerine,
+        sadece kural motorunun ve RAG uzayının tespit ettiği ilgili fasılların izahname ve pozisyonlarını getirir.
+        """
+        from api.db.tgtc_knowledge_base import GIR_RULES, TGTC_CHAPTERS, load_tgtc_rules_and_notes, get_local_tgtc_headings
+
+        rules_db = load_tgtc_rules_and_notes()
+        official_rules = "\n".join(rules_db.get("yorum_kurallari", []))
+        if not official_rules:
+            official_rules = "\n".join([f"{k}: {v}" for k, v in GIR_RULES.items()])
+
+        chapter_notes_dict = rules_db.get("fasil_notlari", {})
+        chapters_lines = []
+        for k, v in TGTC_CHAPTERS.items():
+            c_code = str(k).zfill(2)
+            if allowed_chapters and c_code not in allowed_chapters:
+                continue  # Sadece hedeflenen 3-4 fasıl alınır, geri kalan 90+ fasıl ayıklanır
+            note = chapter_notes_dict.get(c_code, "")
+            line = f"Fasıl {c_code}: {v}"
+            if note:
+                line += f"\n  [Resmi Bakanlık Fasıl {c_code} Yasal Hukuki Notları: {note}]"
+            chapters_lines.append(line)
+
+        chapters_text = "\n\n".join(chapters_lines) if chapters_lines else "Fasıl kısıtlanmadı."
+
+        headings_dict = get_local_tgtc_headings()
+        headings_lines = []
+        for code, title in sorted(headings_dict.items(), key=lambda x: str(x[0])):
+            str_code = str(code).strip()
+            if len(str_code) >= 4 and (not allowed_chapters or str_code[:2] in allowed_chapters):
+                headings_lines.append(f"Pozisyon {str_code}: {title}")
+
+        headings_text = "\n".join(headings_lines[:30])  # En ilgili 30 tarife pozisyonu ile bağlam sadeleştirilir
+
+        return (
+            f"=== DİNAMİK FASIL BAZLI RESMİ MEVZUAT BAĞLAMI (SCOPED CONTEXT) ===\n"
+            f"--- GENEL YORUM KURALLARI ---\n{official_rules}\n\n"
+            f"--- HEDEF FASIL TANIMLARI VE RESMİ İZAHNAME NOTLARI ---\n{chapters_text}\n\n"
+            f"--- İLGİLİ TARİFE POZİSYON KÜTÜPHANESİ ---\n{headings_text}"
+        )
 
 context_cache_manager = ContextCacheManager()

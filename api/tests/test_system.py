@@ -42,13 +42,42 @@ def test_security_auth_production_header_rejection():
         dev_session = get_current_user_session(req)
         assert dev_session.email == "attacker@evil.com"
 
-        # 2. Production modunda X-User-Email reddedilmeli ve 401 HTTPException fırlatılmalı
+        # 2. Production modunda X-User-Email reddedilmeli ve 401 HTTPException fırlatılmalı (Demo Modu kapalıyken)
         settings.ENVIRONMENT = "production"
         settings.USE_GCP_EMULATOR = False
+        settings.ALLOW_PUBLIC_DEMO_ACCESS = False
         with pytest.raises(HTTPException) as exc_info:
             get_current_user_session(req)
         assert exc_info.value.status_code == 401
     finally:
         settings.ENVIRONMENT = old_env
         settings.USE_GCP_EMULATOR = old_emu
+
+def test_hard_rules_matrix_lock():
+    features = ProductFeatures(
+        product_name="Hakiki Deri Erkek Ayakkabısı",
+        primary_material="Deri",
+        intended_use="Ayakkabı"
+    )
+    allowed_chapters, rules = rule_engine.apply_rules(features)
+    assert "64" in allowed_chapters
+    assert any("HARD LOCK" in r or "katı kural kilidi" in r.lower() for r in rules)
+
+def test_hitl_5_percent_score_rule():
+    from api.modules.deterministic_engine import deterministic_engine
+    from api.schemas.product import GTIPCandidate
+    from api.schemas.predicate import PredicateVerificationResult, PredicateStatus
+
+    cand1 = GTIPCandidate(gtip_code="6403.51.05.00.00", chapter="64", heading="6403", description="Deri ayakkabı bilekleri örten", score=0.86)
+    cand2 = GTIPCandidate(gtip_code="6403.59.05.00.00", chapter="64", heading="6403", description="Deri ayakkabı diğer", score=0.84)
+    pred_results = [
+        PredicateVerificationResult(predicate_id="P1", description="Deri mi?", status=PredicateStatus.TRUE, statute_reference="TGTC 6403")
+    ]
+
+    decision = deterministic_engine.evaluate_decision("test_sess", cand1, pred_results, candidates=[cand1, cand2])
+    assert decision.status == "WAITING_FOR_USER"
+    assert decision.hitl_question is not None
+    assert len(decision.hitl_question.options) == 2
+    assert "[A]" in decision.hitl_question.options[0].text
+    assert "[B]" in decision.hitl_question.options[1].text
 

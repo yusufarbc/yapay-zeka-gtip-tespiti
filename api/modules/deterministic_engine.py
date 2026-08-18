@@ -1,28 +1,27 @@
 """
 Modül 5: Deterministic Symbolic Decision Engine & HITL Manager.
-Karar verme ve güven skoru hesaplama yetkisini LLM'den tamamen alıp Python sembolik mantığına devreder.
+Karar verme, gerekçelendirme ve güven skoru hesaplama yetkisini LLM'den tamamen alıp Python sembolik mantığına devreder.
 
-Güven Skoru Formülü (Matematiksel / Deterministik):
-Confidence Score = (Doğrulanmış Predikatlar: TRUE veya FALSE) / (GTİP İçin Gereken Toplam Yasal Şart Sayısı)
-
-- EĞER Güven Skoru == 1.0 (%100) ise -> Karar Kesinleşir (COMPLETED). Halüsinasyon riski %0'dır.
-- EĞER Herhangi bir Yasal Koşul 'UNKNOWN' ise -> Sistem Durur (WAITING_FOR_USER).
-  Müşavire serbest soru değil, OLMASI GEREKEN NOKTA ATIŞI YASAL SORU sorulur (HITL).
+Halüsinasyon Sıfırlama (No-AI Output Binding):
+- Resmi mevzuat ve izahname metinleri kesinlikle AI üretimi değildir; canlı SQL/Mevzuat veritabanından STATİK JOIN edilerek basılır.
+- RAG adayları arası benzerlik skoru farkı <%5 ise otomatik karar verilmeyip Müşavire [A]/[B] çoktan seçmeli sorusu sorulur.
 """
 
 from typing import List, Dict, Any, Tuple, Optional
 from api.schemas.product import GTIPCandidate, GTIPDecision, HITLQuestion, HITLOption
 from api.schemas.predicate import PredicateVerificationResult, PredicateStatus
+from api.db.tgtc_knowledge_base import get_local_tgtc_headings, load_tgtc_rules_and_notes, TGTC_CHAPTERS
 
 class DeterministicDecisionEngine:
     def evaluate_decision(
         self,
         session_id: str,
         top_candidate: GTIPCandidate,
-        verification_results: List[PredicateVerificationResult]
+        verification_results: List[PredicateVerificationResult],
+        candidates: Optional[List[GTIPCandidate]] = None
     ) -> GTIPDecision:
         """
-        Predikat doğrulama sonuçlarını değerlendirerek deterministik GTİP kararını üretir.
+        Predikat doğrulama sonuçlarını ve RAG aday skoru dağılımını değerlendirerek deterministik GTİP kararını üretir.
         """
         if not verification_results:
             return GTIPDecision(
@@ -35,7 +34,6 @@ class DeterministicDecisionEngine:
         verified_count = sum(1 for r in verification_results if r.status in [PredicateStatus.TRUE, PredicateStatus.FALSE])
         unknown_predicates = [r for r in verification_results if r.status == PredicateStatus.UNKNOWN]
 
-        # Dinamik Güven Skoru Hesabı: RAG Taban Skoru * Predikat Doğrulama Oranı
         base_score = top_candidate.score if hasattr(top_candidate, 'score') and top_candidate.score else 0.80
         calc_ratio = (verified_count / total_count) if total_count > 0 else 0.5
 
@@ -44,23 +42,76 @@ class DeterministicDecisionEngine:
         else:
             final_confidence = round(max(0.58, min(0.78, base_score * (0.5 + 0.5 * calc_ratio))), 2)
 
-        # Uygulanan yasal mevzuat metni
+        # STRICT OUTPUT BINDING: Statik Veritabanı ve Mevzuat Eşleştirme (No-AI Output)
+        headings_map = get_local_tgtc_headings()
+        rules_db = load_tgtc_rules_and_notes()
+        chap_code = str(top_candidate.gtip_code)[:2].zfill(2)
+        head_code = str(top_candidate.gtip_code)[:4].zfill(4)
+
+        head_title = headings_map.get(head_code) or headings_map.get(top_candidate.gtip_code) or top_candidate.description
+        chap_title = TGTC_CHAPTERS.get(chap_code, "Genel Gümrük Tarife Pozisyonu")
+        chap_note = rules_db.get("fasil_notlari", {}).get(chap_code, "")
+
         official_statute = (
-            f"Türk Gümrük Tarife Cetveli (TGTC) Madde {top_candidate.gtip_code[:4]} ve GİR Kuralları: "
-            f"{top_candidate.description}. (Resmi Mevzuat Veritabanı Kaydı)"
+            f"Türk Gümrük Tarife Cetveli (TGTC) 2026 Resmi Mevzuatı - Pozisyon {head_code}: {head_title}.\n"
+            f"Bağlı Olduğu Fasıl {chap_code}: {chap_title}. (Statik Mevzuat Kütüphanesi Kaydı)"
         )
+        if chap_note:
+            official_statute += f"\nResmî Bakanlık İzahname ve Hukuki Uygulama Notu: {chap_note}"
 
         applied_rules = [
             f"GİR 1 & GİR 6: TGTC Yasal Predikat Doğrulaması ({verified_count}/{total_count} kural deterministik olarak doğrulandı).",
             f"Mevzuat Referansı: {verification_results[0].statute_reference}"
         ]
 
-        # 1. DURUM A: Tüm Yasal Şartlar Deterministik Olarak Doğrulandı (%100 Kesin Karar)
+        # 1. ÖNCELİKLİ DURUM: %5 Benzerlik Skoru HITL Kuralı (İki Aday Arası Çok Yakın Mesafe)
+        if candidates and len(candidates) >= 2:
+            cand1, cand2 = candidates[0], candidates[1]
+            score_diff = abs((cand1.score or 0.8) - (cand2.score or 0.75))
+            if score_diff < 0.05 and cand1.gtip_code != cand2.gtip_code:
+                question_id = "Q_HITL_SCORE_CLOSE_5_PCT"
+                hitl_q = HITLQuestion(
+                    question_id=question_id,
+                    question_text=f"En iyi 2 GTİP adayı ({cand1.gtip_code} ve {cand2.gtip_code}) arasındaki benzeşme skoru farkı (<%5) çok yakın olduğu için Gümrük Müşavirinin yasal teyidi zorunlu kulınmıştır.",
+                    missing_parameter="gtip_disambiguation_choice",
+                    options=[
+                        HITLOption(
+                            option_id="OPT_CAND1",
+                            text=f"[A] {cand1.gtip_code} - {cand1.description[:55]}... (Skor: {cand1.score})",
+                            impact_data={"selected_gtip": cand1.gtip_code}
+                        ),
+                        HITLOption(
+                            option_id="OPT_CAND2",
+                            text=f"[B] {cand2.gtip_code} - {cand2.description[:55]}... (Skor: {cand2.score})",
+                            impact_data={"selected_gtip": cand2.gtip_code}
+                        )
+                    ]
+                )
+                llm_commentary = (
+                    f"Yapay Zeka Mantıksal Doğrulama (%5 Benzerlik Eşik Kuralı): RAG sorgusundaki ilk iki emsal karar "
+                    f"({cand1.gtip_code}: {cand1.score} vs {cand2.gtip_code}: {cand2.score}) arasındaki skor farkı %5'ten az olduğundan, "
+                    f"halüsinasyonu engellemek adına otomatik karar üretilmeyip Gümrük Müşavirine (A / B seçenekli) teyit sorusu yöneltilmiştir."
+                )
+                return GTIPDecision(
+                    session_id=session_id,
+                    status="WAITING_FOR_USER",
+                    gtip_code=cand1.gtip_code,
+                    confidence_score=round(min(cand1.score or 0.75, 0.79), 2),
+                    official_statute_text=official_statute,
+                    llm_reasoning_commentary=llm_commentary,
+                    legal_justification=official_statute,
+                    applied_gir_rules=applied_rules + [f"GİR 3a / GİR 3b: %5 Eşik Kuralı (Skor farkı: {round(score_diff, 3)}) nedeniyle HITL tetiklendi."],
+                    precedent_btbs=cand1.precedents,
+                    hitl_question=hitl_q,
+                    audit_notes=[f"İlk 2 aday skor farkı ({round(score_diff, 3)}) < %5 olduğu için çoktan seçmeli HITL soruldu."]
+                )
+
+        # 2. DURUM A: Tüm Yasal Şartlar Deterministik Olarak Doğrulandı (%100 Kesin Karar)
         if not unknown_predicates and calc_ratio == 1.0:
             llm_commentary = (
                 f"Yapay Zeka Mantıksal Doğrulama (Predicate Logic): Ürünün teknik özellikleri ve yasal predikat ağacı "
-                f"({verified_count}/{total_count} kural) %100 deterministik olarak doğrulanmış, halüsinasyon riski %0 tutularak "
-                f"{top_candidate.gtip_code} tarife pozisyonu kesinleştirilmiştir."
+                f"({verified_count}/{total_count} kural) %100 deterministik olarak doğrulanmış, halüsinasyon riski %0 tutulup "
+                f"statik veritabanı eşleştirmesi yapılarak {top_candidate.gtip_code} tarife pozisyonu kesinleştirilmiştir."
             )
             return GTIPDecision(
                 session_id=session_id,
@@ -75,7 +126,7 @@ class DeterministicDecisionEngine:
                 audit_notes=[f"Tüm {total_count} yasal predikat katı mantık motorunda doğrulandı. Halüsinasyon Riski: %0."]
             )
 
-        # 2. DURUM B: Eksik Bilgi Var (UNKNOWN Predikat) -> HITL İnsan Onayı Başlat
+        # 3. DURUM B: Eksik Bilgi Var (UNKNOWN Predikat) -> HITL İnsan Onayı Başlat
         missing_p = unknown_predicates[0]
         question_id = f"Q_HITL_{missing_p.predicate_id}"
 

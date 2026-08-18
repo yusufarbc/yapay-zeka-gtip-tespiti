@@ -135,21 +135,21 @@ def get_current_user_session(request: Any) -> UserSession:
     except Exception:
         pass
 
-    # Üretim (Production) Modunda Geçerli Oturum Olmalıdır
-    # USE_GCP_EMULATOR bayrağından bağımsız olarak production'da anonim erişim YASAKTIR
-    if settings.ENVIRONMENT == "production":
+    # Üretim (Production) Modunda Geçerli Oturum Kontrolü
+    # Eğer ALLOW_PUBLIC_DEMO_ACCESS devre dışı bırakılmışsa anonim erişim 401 fırlatır.
+    if settings.ENVIRONMENT == "production" and not getattr(settings, "ALLOW_PUBLIC_DEMO_ACCESS", True):
         raise HTTPException(
             status_code=401,
             detail="Geçerli bir kimlik doğrulama jetonu (Bearer Token / GCP IAP) gereklidir."
         )
 
-    # Fallback: Yalnızca Geliştirme Ortamı (development)
+    # Fallback: Canlı / Geliştirme Ortamı Otomatik Demo Oturumu (Public Web Portal)
     client_host = getattr(getattr(request, "client", None), "host", "127.0.0.1")
     return UserSession(
-        user_id=f"dev_{client_host.replace('.', '_')}",
-        email=f"dev-musavir@localhost",
-        full_name="Geliştirici Oturumu (Development Only)",
+        user_id=f"demo_{client_host.replace('.', '_')}",
+        email="demo-musavir@gtip.gov.tr",
+        full_name="Gümrük Müşaviri (Canlı Demo)",
         role="customs_broker",
-        domain="localhost"
+        domain="gtip.gov.tr"
     )
 
