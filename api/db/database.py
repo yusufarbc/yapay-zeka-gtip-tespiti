@@ -239,6 +239,8 @@ def init_orm_tables():
                     # tgtc_notes
                     try:
                         cols_notes = [r[1] for r in conn.execute(text("PRAGMA table_info(tgtc_notes)")).fetchall()]
+                        if "title" not in cols_notes and cols_notes:
+                            conn.execute(text("ALTER TABLE tgtc_notes ADD COLUMN title VARCHAR(255)"))
                         if "note_type" not in cols_notes and cols_notes:
                             conn.execute(text("ALTER TABLE tgtc_notes ADD COLUMN note_type VARCHAR(50) DEFAULT 'GENERAL'"))
                         if "embedding" not in cols_notes and cols_notes:
@@ -416,29 +418,65 @@ def hybrid_search_headings_and_gtip(
     """
     clean_query = query_text.strip().lower()
     query_tokens = [w for w in clean_query.split() if len(w) > 2]
-    clean_chaps = [str(c).zfill(2) for c in allowed_chapters] if allowed_chapters else None
+    # 1. SQL Aday Kümesi ve TGTC 4-Haneli Pozisyonlar
+    candidate_records = []
+    seen_codes = set()
 
-    # 1. SQL Aday Kümesi Çekimi
-    query = session.query(TgtcGtipModel).filter(TgtcGtipModel.is_active == True)
-    if clean_chaps:
-        query = query.filter(TgtcGtipModel.chapter_code.in_(clean_chaps))
+    try:
+        query = session.query(TgtcGtipModel).filter(TgtcGtipModel.is_active == True)
+        if clean_chaps:
+            query = query.filter(TgtcGtipModel.chapter_code.in_(clean_chaps))
+        db_items = query.all()
+        for it in db_items:
+            if it.gtip_code not in seen_codes:
+                seen_codes.add(it.gtip_code)
+                candidate_records.append({
+                    "gtip_code": it.gtip_code,
+                    "description": it.description or "",
+                    "chapter_code": it.chapter_code or it.gtip_code[:2],
+                    "level": it.level,
+                    "embedding": it.embedding
+                })
+    except Exception as ex_db:
+        logger.debug(f"[Hybrid DB Query] {ex_db}")
 
-    all_records = query.all()
-    if not all_records:
+    # TGTC 4-Haneli Pozisyonlar sözlüğü ile zenginleştir (01-97 Fasıllar)
+    try:
+        from api.db.tgtc_knowledge_base import get_local_tgtc_headings
+        headings_dict = get_local_tgtc_headings()
+        for code, desc in headings_dict.items():
+            chap = str(code)[:2].zfill(2)
+            if clean_chaps and chap not in clean_chaps:
+                continue
+            if code not in seen_codes:
+                seen_codes.add(code)
+                candidate_records.append({
+                    "gtip_code": code,
+                    "description": desc,
+                    "chapter_code": chap,
+                    "level": "HEADING",
+                    "embedding": None
+                })
+    except Exception as ex_head:
+        logger.debug(f"[Hybrid Headings Load] {ex_head}")
+
+    if not candidate_records:
         return []
 
-    # 2. Sparse (BM25 / Token Overlap) Sıralaması
+    # 2. Sparse (BM25 / Token Overlap & GIR 3a Specificity) Sıralaması
     sparse_scores: List[Tuple[float, Any]] = []
-    for item in all_records:
-        desc_lower = (item.description or "").lower()
-        # Jaccard / Token Overlap
-        match_count = sum(1 for token in query_tokens if token in desc_lower)
+    for item in candidate_records:
+        desc_lower = (item["description"] or "").lower()
+        match_count = sum(2.0 for token in query_tokens if token in desc_lower)
         if match_count > 0:
-            score = match_count / (len(query_tokens) + len(desc_lower.split()) * 0.1)
+            # GİR 3(a) Özellik İlkesi: "Diğer ..." genel artık pozisyonlar özel pozisyonların gerisinde kalmalıdır
+            is_residual = desc_lower.startswith("diğer") or desc_lower.startswith("diger")
+            specificity_factor = 0.5 if is_residual else 1.0
+            score = (match_count * specificity_factor) / (len(query_tokens) + 1.0)
             sparse_scores.append((score, item))
 
     sparse_scores.sort(key=lambda x: x[0], reverse=True)
-    sparse_ranks = {item.gtip_code: rank + 1 for rank, (_, item) in enumerate(sparse_scores)}
+    sparse_ranks = {item["gtip_code"]: rank + 1 for rank, (_, item) in enumerate(sparse_scores)}
 
     # 3. Dense (Vektör Kosinüs Benzerliği) Sıralaması
     dense_scores: List[Tuple[float, Any]] = []
@@ -448,29 +486,29 @@ def hybrid_search_headings_and_gtip(
                 return 0.0
             dot = sum(a * b for a, b in zip(v1, v2))
             norm_a = math.sqrt(sum(a * a for a in v1))
-            norm_b = math.sqrt(sum(b * b for b in v2))
+            norm_b = math.sqrt(sum(b * b for a, b in zip(v2, v2))) # Placeholder fix
             if norm_a == 0 or norm_b == 0:
                 return 0.0
             return dot / (norm_a * norm_b)
 
-        for item in all_records:
-            emb = item.embedding
+        for item in candidate_records:
+            emb = item.get("embedding")
             if isinstance(emb, list) and emb:
                 sim = _cosine_sim(query_vector, emb)
                 dense_scores.append((sim, item))
 
         dense_scores.sort(key=lambda x: x[0], reverse=True)
-    dense_ranks = {item.gtip_code: rank + 1 for rank, (_, item) in enumerate(dense_scores)}
+    dense_ranks = {item["gtip_code"]: rank + 1 for rank, (_, item) in enumerate(dense_scores)}
 
     # 4. Reciprocal Rank Fusion (RRF) Birleştirme
     rrf_candidates: Dict[str, Dict[str, Any]] = {}
-    candidate_items = {item.gtip_code: item for item in all_records}
+    candidate_items = {item["gtip_code"]: item for item in candidate_records}
 
     # Tüm adayların Sparse & Dense Rank'lerini birleştir
     all_gtips = set(sparse_ranks.keys()).union(set(dense_ranks.keys()))
     if not all_gtips:
         # Fallback: ilk kayıtlar
-        all_gtips = set(item.gtip_code for item in all_records[:top_k])
+        all_gtips = set(item["gtip_code"] for item in candidate_records[:top_k])
 
     for gtip in all_gtips:
         item = candidate_items.get(gtip)
@@ -489,20 +527,21 @@ def hybrid_search_headings_and_gtip(
         rrf = compute_rrf_score(ranks_to_fuse, k=rrf_k)
         
         # Dense ve Sparse ham benzerlikleri
-        dense_sim = next((score for score, it in dense_scores if it.gtip_code == gtip), 0.70)
-        sparse_sim = next((score for score, it in sparse_scores if it.gtip_code == gtip), 0.50)
+        dense_sim = next((score for score, it in dense_scores if it["gtip_code"] == gtip), 0.70)
+        sparse_sim = next((score for score, it in sparse_scores if it["gtip_code"] == gtip), 0.50)
         
-        # Kombine Benzerlik Skoru (Normalize)
-        normalized_sim = round(min(0.98, max(0.50, dense_sim * 0.7 + (0.3 if s_rank else 0.1))), 3)
+        # Ağırlıklı nihai benzerlik (Sparse + Dense)
+        combined_sim = (dense_sim * 0.6) + (sparse_sim * 0.4)
+        normalized_sim = round(min(0.98, max(0.50, combined_sim + rrf * 5.0)), 4)
 
         rrf_candidates[gtip] = {
-            "gtip_code": item.gtip_code,
-            "description": item.description,
-            "chapter": item.chapter_code or (item.gtip_code[:2] if item.gtip_code else "01"),
-            "heading": item.gtip_code[:4] if item.gtip_code else "0101",
-            "level": item.level,
-            "tax_rate": item.tax_rate,
-            "unit": item.unit,
+            "gtip_code": gtip,
+            "description": item.get("description", ""),
+            "chapter": item.get("chapter_code") or gtip[:2],
+            "heading": gtip[:4],
+            "level": item.get("level", "HEADING"),
+            "tax_rate": item.get("tax_rate"),
+            "unit": item.get("unit"),
             "rrf_score": rrf,
             "similarity_score": normalized_sim,
             "sparse_rank": s_rank,
