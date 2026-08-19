@@ -134,6 +134,13 @@ def _get_embedding(text: str, api_key: str) -> Optional[List[float]]:
         logger.debug(f"[Embedding] text-embedding-005 hatası, token overlap'e düşülüyor: {e}")
     return None
 
+def get_text_embedding(text: str) -> Optional[List[float]]:
+    """Genel text-embedding-005 vektörleştirme çağrısı."""
+    api_key = os.getenv("GEMINI_API_KEY", "")
+    if not api_key:
+        return None
+    return _get_embedding(text, api_key)
+
 
 class LocalVectorStore:
     """

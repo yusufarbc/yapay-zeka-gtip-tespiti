@@ -47,6 +47,20 @@ async def trigger_deep_crawler(background_tasks: BackgroundTasks):
     background_tasks.add_task(run_spider_2020_to_2026)
     return {"message": "Dijital PDF Arşiv Crawler'ı arka planda başlatıldı! Veritabanı dolmaya başlayacak."}
 
+@app.get("/api/v1/admin/sync-gcp-official-gazette-status")
+def sync_gcp_official_gazette_status(db: Session = Depends(get_db)):
+    """GET /api/v1/admin/sync-gcp-official-gazette-status endpointi."""
+    try:
+        from api.db.database import GumrukSiniflandirmaKarariModel
+        count = db.query(GumrukSiniflandirmaKarariModel).count()
+    except Exception:
+        count = 0
+    return {
+        "status": "HEALTHY",
+        "active_model": settings.DEFAULT_LLM_MODEL,
+        "cloud_sql_siniflandirma_kararlari_count": count
+    }
+
 @app.on_event("startup")
 def startup_event():
     init_orm_tables()
