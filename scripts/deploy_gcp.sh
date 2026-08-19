@@ -6,18 +6,18 @@
 set -e
 
 PROJECT_ID=${1:-${GCP_PROJECT_ID:-"gtip-tespit-projesi"}}
-REGION=${2:-"europe-west3"}
+REGION=${2:-"europe-west4"}
 REPO_NAME="gtip-repo"
 SERVICE_NAME="gtip-backend"
 SYNC_JOB_NAME="gtip-btb-sync-job"
 SERVICE_ACCOUNT="gtip-backend-sa@${PROJECT_ID}.iam.gserviceaccount.com"
-CLOUD_SQL_INSTANCE="${PROJECT_ID}:${REGION}:gtip-db"
+CLOUD_SQL_INSTANCE="${PROJECT_ID}:europe-west3:gtip-db"
 GCS_BUCKET="gtip-evrak-bucket-${PROJECT_ID}"
 
 echo "======================================================================"
 echo "🚀 GTİP GCP CLOUD RUN CANLIYA ALIM v2 BAŞLATILIYOR"
 echo "Project ID : $PROJECT_ID"
-echo "Bölge      : $REGION (Frankfurt)"
+echo "Bölge      : $REGION (Hollanda / Eemshaven)"
 echo "======================================================================"
 
 # 1. GCP Yetkilendirme ve Service Account Kontrolü

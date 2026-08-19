@@ -29,28 +29,34 @@ def _get_secret(secret_id: str, fallback: str = "") -> str:
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "GTİP Tespit ve Karar Destek Sistemi API"
-    VERSION: str = "1.0.0"
+    VERSION: str = "1.1.0"
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "production")
     USE_GCP_EMULATOR: bool = os.getenv("USE_GCP_EMULATOR", "false").lower() == "true"
     ALLOW_PUBLIC_DEMO_ACCESS: bool = os.getenv("ALLOW_PUBLIC_DEMO_ACCESS", "true").lower() == "true"
 
-    # GCP Configurations
+    # GCP Configurations - Europe-west4 (Hollanda / Eemshaven) Standartlaştırması
     GCP_PROJECT_ID: str = os.getenv("GCP_PROJECT_ID", "gtip-tespit-projesi")
-    GCP_REGION: str = os.getenv("GCP_REGION", "europe-west3")  # Frankfurt primary low-latency region
+    GCP_REGION: str = os.getenv("GCP_REGION", "europe-west4")  # Eemshaven primary Gemini 3.x region
     GCS_BUCKET_NAME: str = os.getenv("GCS_BUCKET_NAME", "gtip-evrak-bucket-gtip-tespit-projesi")
     CLOUD_SQL_CONNECTION_NAME: str = os.getenv("CLOUD_SQL_CONNECTION_NAME", "gtip-tespit-projesi:europe-west3:gtip-db")
     DB_USER: str = os.getenv("DB_USER", "postgres")
     DB_PASS: str = os.getenv("DB_PASS", "")
     DB_NAME: str = os.getenv("DB_NAME", "gtip_db")
 
-    # AI Models
-    DEFAULT_LLM_MODEL: str = os.getenv("DEFAULT_LLM_MODEL", "gemini-3.6-flash")
-    FAST_LLM_MODEL: str = os.getenv("FAST_LLM_MODEL", "gemini-2.5-flash")
-    EXTRACTOR_LLM_MODEL: str = os.getenv("EXTRACTOR_LLM_MODEL", "gemini-2.5-flash")
-    REASONING_LLM_MODEL: str = os.getenv("REASONING_LLM_MODEL", "gemini-2.5-pro")
-    AUDITOR_LLM_MODEL: str = os.getenv("AUDITOR_LLM_MODEL", "gemini-2.5-pro")
+    # Vertex AI Model Mimarisi ve Rol Dağılımı
+    PRIMARY_AI_MODEL: str = os.getenv("PRIMARY_AI_MODEL", "gemini-3.7-flash")
+    BULK_EXTRACTOR_MODEL: str = os.getenv("BULK_EXTRACTOR_MODEL", "gemini-3.5-flash-lite")
+    DEFAULT_LLM_MODEL: str = os.getenv("DEFAULT_LLM_MODEL", "gemini-3.7-flash")
+    FAST_LLM_MODEL: str = os.getenv("FAST_LLM_MODEL", "gemini-3.7-flash")
+    EXTRACTOR_LLM_MODEL: str = os.getenv("EXTRACTOR_LLM_MODEL", "gemini-3.7-flash")
+    REASONING_LLM_MODEL: str = os.getenv("REASONING_LLM_MODEL", "gemini-3.7-flash")
+    AUDITOR_LLM_MODEL: str = os.getenv("AUDITOR_LLM_MODEL", "gemini-3.7-flash")
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-005")
     VECTOR_DIM: int = 768
+
+    # Gemini 3.7 Flash Thinking Parametreleri
+    THINKING_BUDGET_EXTRACTOR: int = 0      # Ultra hızlı özellik çıkarımı
+    THINKING_BUDGET_VERIFIER: int = 2048   # Derin yasal gerekçelendirme ve dışlama analizi
 
     USE_CONTEXT_CACHE: bool = os.getenv("USE_CONTEXT_CACHE", "true").lower() == "true"
 
@@ -68,7 +74,6 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 saat
 
     # CORS — production'da virgülle ayrılmış domain listesi
-    # Örnek: "https://gtip.sirketiniz.com,https://app.sirketiniz.com"
     CORS_ALLOWED_ORIGINS: str = os.getenv("CORS_ALLOWED_ORIGINS", "*")
 
     # RAG & Decision Settings

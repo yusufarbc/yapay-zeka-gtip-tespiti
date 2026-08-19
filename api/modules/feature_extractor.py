@@ -1,21 +1,23 @@
 import json
 import re
 import os
+import logging
 from typing import Dict, Any
 from api.schemas.product import ProductFeatures
 from api.config import settings
 
+logger = logging.getLogger("FeatureExtractor")
+
 class FeatureExtractor:
     """
-    Modül 1: Multimodal & Dynamic Feature Extractor (LLM-Driven & Dynamic Material Extraction).
+    Modül 1: Multimodal & Dynamic Feature Extractor (Gemini 3.7 Flash - Thinking Budget: 0).
     Her türlü ürün metninden veya faturadan sıfır hardcoded şablon bağımlılığı ile 
-    tüm teknik parametreleri ve hammadde niteliklerini dinamik olarak çıkarır.
+    tüm teknik parametreleri ve hammadde niteliklerini ultra düşük gecikmeyle dinamik olarak çıkarır.
     """
 
     def _extract_material_dynamically(self, text_lower: str) -> str:
         """
-        Sıfır Hardcoded Sözlük: Metindeki teknik nitelik ve hammadde isimlerini
-        NLP tokenizasyonu ile dinamik olarak çıkarır.
+        Metindeki teknik nitelik ve hammadde isimlerini NLP tokenizasyonu ile dinamik olarak çıkarır.
         """
         from api.db.tgtc_knowledge_base import TURKISH_STOP_WORDS
         tokens = [w for w in re.findall(r'[a-zA-ZçğıöşüÇĞİÖŞÜ0-9]+', text_lower) if len(w) >= 3]
@@ -23,7 +25,6 @@ class FeatureExtractor:
         if filtered:
             return " / ".join(filtered[:2])
         return "Genel Sanayi ve Ticaret Eşyası"
-
 
     def extract_features(self, raw_text: str, image_uri: str = None) -> ProductFeatures:
         text_lower = raw_text.lower()
@@ -50,7 +51,9 @@ class FeatureExtractor:
         if api_key:
             try:
                 from google import genai
+                from google.genai import types
                 from api.modules.context_cache_manager import context_cache_manager
+
                 client = genai.Client(api_key=api_key)
                 prompt = (
                     f"Aşağıdaki gümrük ürün açıklamasını veya fatura metnini analiz et.\n"
@@ -65,18 +68,31 @@ class FeatureExtractor:
                     f'  "technical_specifications": {{"özellik": "değer"}}\n'
                     f"}}\n"
                 )
+
+                try:
+                    thinking_config = types.ThinkingConfig(thinking_budget=settings.THINKING_BUDGET_EXTRACTOR)
+                    config = types.GenerateContentConfig(
+                        thinking_config=thinking_config,
+                        temperature=0.1
+                    )
+                except Exception:
+                    config = None
+
                 cached_config = context_cache_manager.get_cached_config(settings.EXTRACTOR_LLM_MODEL)
-                if cached_config:
+                active_config = cached_config or config
+
+                if active_config:
                     response = client.models.generate_content(
                         model=settings.EXTRACTOR_LLM_MODEL,
                         contents=prompt,
-                        config=cached_config
+                        config=active_config
                     )
                 else:
                     response = client.models.generate_content(
                         model=settings.EXTRACTOR_LLM_MODEL,
                         contents=prompt
                     )
+
                 if response.text:
                     match = re.search(r'\{.*\}', response.text, re.DOTALL)
                     clean_json = match.group(0) if match else re.sub(r'```json\s*|\s*```', '', response.text).strip()
@@ -93,8 +109,7 @@ class FeatureExtractor:
                         technical_specifications=llm_specs
                     )
             except Exception as e:
-                import logging
-                logging.getLogger("FeatureExtractor").warning(f"LLM Feature extraction uyarısı: {e}")
+                logger.warning(f"LLM Feature extraction uyarısı: {e}")
 
         lines = [l.strip() for l in raw_text.split('\n') if l.strip()]
         product_name = lines[0][:80] if lines else "Analiz Edilen Ürün"

@@ -1,8 +1,8 @@
 """
-Modül 4: LLM Predicate & Tariff Fact Verifier (Gemini 2.5 Pro / Gemini 3.6 Flash + Context Cache).
+Modül 4: LLM Predicate & Tariff Fact Verifier (Gemini 3.7 Flash + Reasoning/Thinking Budget: 2048).
 Yapay zekaya asla serbest GTİP tahmini veya özgüven skoru uydurtmaz.
 Temel Görevleri:
-1. Fasıl Dışlama Notu Kontrolü (Chapter Exclusion Check - Adım 2)
+1. Fasıl Dışlama Notu Kontrolü (Chapter Exclusion Check - Adım 2 - Reasoning Mode)
 2. Yapılandırılmış Yasal GTİP Doğrulaması (Structured TariffVerification Output)
 3. Yasal Kural Ağacı Yüklem Kontrolü (TRUE / FALSE / UNKNOWN Predicates)
 """
@@ -22,8 +22,20 @@ logger = logging.getLogger("LLMFactVerifier")
 
 class LLMFactVerifier:
     """
-    Çok Modlu ve Yapılandırılmış Yasal Yüklem Doğrulayıcısı.
+    Çok Modlu ve Yapılandırılmış Yasal Yüklem Doğrulayıcısı (Gemini 3.7 Flash Deep Reasoning).
     """
+
+    def _get_reasoning_config(self) -> Optional[Any]:
+        """Gemini 3.7 Flash için 2048 token akıl yürütme (thinking) yapılandırmasını üretir."""
+        try:
+            from google.genai import types
+            thinking_cfg = types.ThinkingConfig(thinking_budget=settings.THINKING_BUDGET_VERIFIER)
+            return types.GenerateContentConfig(
+                thinking_config=thinking_cfg,
+                temperature=0.2
+            )
+        except Exception:
+            return None
 
     def verify_chapter_exclusions(
         self,
@@ -34,6 +46,7 @@ class LLMFactVerifier:
         """
         Adım 2: Belirli bir faslın dışlama notlarını ('Bu fasıl şunları kapsamaz...') inceleyerek
         ürünün bu fasıldan yasal olarak dışlanıp dışlanmadığını (is_excluded) doğrular.
+        Gemini 3.7 Flash derin akıl yürütme (thinking_budget=2048) ile çalışır.
         """
         chap_2d = str(chapter_code).zfill(2)
         if not exclusion_notes:
@@ -49,12 +62,12 @@ class LLMFactVerifier:
                 client = genai.Client(api_key=api_key)
 
                 prompt = (
-                    f"Sen Türk Gümrük Mevzuatı İzahname Denetçisisin.\n"
+                    f"Sen Türk Gümrük Mevzuatı İzahname Denetçisisin (Tariff Statutory Arbiter).\n"
                     f"Fasıl {chap_2d} için yürürlükteki DIŞLAMA NOTLARI aşağıdadır:\n"
                     f"{json.dumps(exclusion_notes, ensure_ascii=False, indent=2)}\n\n"
                     f"ÜRÜN METNİ:\n\"\"\"{raw_text}\"\"\"\n\n"
                     f"GÖREVİN: Ürün bu faslın dışlama hükümlerinden birine giriyor mu? (Örn: Deri ayakkabı ise Fasıl 42'den dışlanır Fasıl 64'e gider).\n"
-                    f"Cevabını SADECE geçerli bir JSON objesi olarak ver:\n"
+                    f"Adım adım muhakeme et ve cevabını SADECE geçerli bir JSON objesi olarak ver:\n"
                     f"{{\n"
                     f"  \"chapter_code\": \"{chap_2d}\",\n"
                     f"  \"is_excluded\": true/false,\n"
@@ -63,10 +76,18 @@ class LLMFactVerifier:
                     f"}}"
                 )
 
-                response = client.models.generate_content(
-                    model=settings.REASONING_LLM_MODEL,
-                    contents=prompt
-                )
+                config = self._get_reasoning_config()
+                if config:
+                    response = client.models.generate_content(
+                        model=settings.REASONING_LLM_MODEL,
+                        contents=prompt,
+                        config=config
+                    )
+                else:
+                    response = client.models.generate_content(
+                        model=settings.REASONING_LLM_MODEL,
+                        contents=prompt
+                    )
 
                 if response.text:
                     match = re.search(r'\{.*\}', response.text, re.DOTALL)
@@ -85,7 +106,6 @@ class LLMFactVerifier:
         text_lower = raw_text.lower()
         for note in exclusion_notes:
             note_lower = note.lower()
-            # Örn: Fasıl 42'de ayakkabı dışlama notu
             if "ayakkabı" in text_lower and ("ayakkabı" in note_lower or "fasıl 64" in note_lower):
                 if chap_2d == "42":
                     return ChapterExclusionCheck(
@@ -94,7 +114,6 @@ class LLMFactVerifier:
                         violated_exclusion_note=note,
                         recommended_alternative_chapter="64"
                     )
-            # Örn: Oyuncak kontrolü
             if "oyuncak" in text_lower and ("oyuncak" in note_lower or "fasıl 95" in note_lower):
                 if chap_2d not in ["95"]:
                     return ChapterExclusionCheck(
@@ -116,6 +135,7 @@ class LLMFactVerifier:
     ) -> TariffVerification:
         """
         Adım 4: Aday GTİP'i Pydantic TariffVerification Structured Output formatında doğrular.
+        Gemini 3.7 Flash akıl yürütme (Reasoning) ile malzeme ve fonksiyonel uyumu denetler.
         """
         api_key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
         if api_key:
@@ -143,10 +163,18 @@ class LLMFactVerifier:
                     f"}}"
                 )
 
-                response = client.models.generate_content(
-                    model=settings.REASONING_LLM_MODEL,
-                    contents=prompt
-                )
+                config = self._get_reasoning_config()
+                if config:
+                    response = client.models.generate_content(
+                        model=settings.REASONING_LLM_MODEL,
+                        contents=prompt,
+                        config=config
+                    )
+                else:
+                    response = client.models.generate_content(
+                        model=settings.REASONING_LLM_MODEL,
+                        contents=prompt
+                    )
 
                 if response.text:
                     match = re.search(r'\{.*\}', response.text, re.DOTALL)
@@ -186,7 +214,6 @@ class LLMFactVerifier:
         """
         api_key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
         
-        # 1. Vertex AI / Gemini 2.5 Pro Entegrasyonu (Aktif İse)
         if api_key:
             try:
                 from google import genai
@@ -221,11 +248,14 @@ class LLMFactVerifier:
                 )
 
                 cached_config = context_cache_manager.get_cached_config(settings.AUDITOR_LLM_MODEL)
-                if cached_config:
+                reasoning_config = self._get_reasoning_config()
+                active_config = cached_config or reasoning_config
+
+                if active_config:
                     response = client.models.generate_content(
                         model=settings.AUDITOR_LLM_MODEL,
                         contents=prompt,
-                        config=cached_config
+                        config=active_config
                     )
                 else:
                     response = client.models.generate_content(
@@ -261,7 +291,7 @@ class LLMFactVerifier:
             except Exception as e:
                 logger.warning(f"LLM Predicate Verifier uyarısı: {e}")
 
-        # 2. Deterministik Yerel Kural Doğrulayıcı (Offline / Fallback Mode)
+        # Deterministik Yerel Kural Doğrulayıcı (Offline / Fallback Mode)
         results = []
         text_lower = raw_text.lower()
         
@@ -269,7 +299,6 @@ class LLMFactVerifier:
             status = PredicateStatus.UNKNOWN
             quote = None
 
-            # Entegre devre / Yarı iletken kontrolü
             if "entegre" in p.description.lower() or "monolitik" in p.description.lower():
                 if any(w in text_lower for w in ["entegre", "pdip", "smd", "çip", "cip", "yarı iletken", "yari iletken", "ic"]):
                     status = PredicateStatus.TRUE
@@ -277,7 +306,6 @@ class LLMFactVerifier:
                 else:
                     status = PredicateStatus.FALSE
 
-            # Akıllı telefon kontrolü
             elif "hücresel" in p.description.lower() or "akıllı cep" in p.description.lower():
                 if any(w in text_lower for w in ["iphone", "akıllı telefon", "5g", "lte", "cep telefonu", "hücresel"]):
                     status = PredicateStatus.TRUE
@@ -285,7 +313,6 @@ class LLMFactVerifier:
                 else:
                     status = PredicateStatus.FALSE
 
-            # Diş fırçası / Şarjlı motorlu cihaz kontrolü
             elif "motorlu ev aleti" in p.description.lower() or "diş fırça" in p.description.lower():
                 if any(w in text_lower for w in ["diş fırça", "şarj", "motor", "batarya", "8509"]):
                     status = PredicateStatus.TRUE
@@ -293,7 +320,6 @@ class LLMFactVerifier:
                 else:
                     status = PredicateStatus.FALSE
 
-            # Hakiki deri kontrolü
             elif "hakiki deri" in p.description.lower() or "yüz malzemesi" in p.description.lower():
                 if "hakiki deri" in text_lower or "deri" in text_lower:
                     status = PredicateStatus.TRUE
@@ -303,7 +329,6 @@ class LLMFactVerifier:
                 else:
                     status = PredicateStatus.UNKNOWN
 
-            # Pamuklu örme kumaş kontrolü
             elif "pamuk" in p.description.lower() or "örme" in p.description.lower():
                 if "pamuk" in text_lower:
                     status = PredicateStatus.TRUE
@@ -311,7 +336,6 @@ class LLMFactVerifier:
                 else:
                     status = PredicateStatus.UNKNOWN
 
-            # Ağırlık / Genel kısıt kontrolü
             elif "ağırlık" in p.description.lower() or "20 kg" in p.description.lower() or "10 kg" in p.description.lower():
                 if any(w in text_lower for w in ["kg", "gram", "ağırlık"]):
                     status = PredicateStatus.TRUE
