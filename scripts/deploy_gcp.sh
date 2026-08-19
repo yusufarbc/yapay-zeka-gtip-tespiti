@@ -12,7 +12,7 @@ SERVICE_NAME="gtip-backend"
 SYNC_JOB_NAME="gtip-btb-sync-job"
 SERVICE_ACCOUNT="gtip-backend-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 CLOUD_SQL_INSTANCE="${PROJECT_ID}:europe-west4:gtip-db-west4"
-GCS_BUCKET="gtip-evrak-bucket-${PROJECT_ID}"
+GCS_BUCKET="gtip-storage-west4"
 
 echo "======================================================================"
 echo "🚀 GTİP GCP CLOUD RUN CANLIYA ALIM v2 BAŞLATILIYOR"

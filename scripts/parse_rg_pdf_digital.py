@@ -177,9 +177,28 @@ def extract_gtip_records_from_digital_pdf(pdf_bytes: bytes) -> List[Dict[str, An
 
     return records
 
-def save_to_database_orm(parsed_records: List[Dict[str, Any]], kaynak_url: str, yayin_tarihi: str):
+def upload_pdf_to_gcs(pdf_bytes: bytes, filename: str, gcs_folder: str = "resmi_gazete_raw_pdfs") -> Optional[str]:
     """
-    Parse edilen kayıtları SQLAlchemy ORM (OfficialBTBModel) vasıtasıyla veritabanına aktarır.
+    Sınıflandırma kararı içeren Resmî Gazete PDF'ini GCP Cloud Storage'a yükler ve gs:// URI döndürür.
+    """
+    bucket_name = os.getenv("GCS_BUCKET_NAME", "gtip-storage-west4")
+    blob_name = f"{gcs_folder}/{filename}"
+    try:
+        from google.cloud import storage
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        blob.upload_from_string(pdf_bytes, content_type="application/pdf")
+        gcs_uri = f"gs://{bucket_name}/{blob_name}"
+        logger.info(f"💾 Resmî Gazete PDF'i Cloud Storage'a arşivlendi: {gcs_uri}")
+        return gcs_uri
+    except Exception as e:
+        logger.warning(f"GCS PDF yükleme hatası ({blob_name}): {e}")
+        return None
+
+def save_to_database_orm(parsed_records: List[Dict[str, Any]], kaynak_url: str, yayin_tarihi: str, gcs_pdf_uri: Optional[str] = None):
+    """
+    Parse edilen kayıtları SQLAlchemy ORM vasıtasıyla Cloud SQL veritabanına aktarır.
     """
     if not parsed_records:
         return 0
@@ -218,7 +237,7 @@ def save_to_database_orm(parsed_records: List[Dict[str, Any]], kaynak_url: str, 
                     heading=heading,
                     issue_date=yayin_tarihi,
                     product_description=rec["esyain_tanimi"][:500] if rec["esyain_tanimi"] else "Gümrük Sınıflandırma Kararı",
-                    legal_justification=f"Resmî Gazete PDF ({kaynak_url}) | Gerekçe: {rec['hukuki_gerekce'][:1500]}",
+                    legal_justification=f"Resmî Gazete PDF ({kaynak_url}) | GCS: {gcs_pdf_uri or '-'} | Gerekçe: {rec['hukuki_gerekce'][:1500]}",
                     source="RG_PDF_DIGITAL",
                     is_active=True
                 )
@@ -236,7 +255,7 @@ def save_to_database_orm(parsed_records: List[Dict[str, Any]], kaynak_url: str, 
                     gtip_kodu=gtip,
                     esya_tanimi=rec["esyain_tanimi"][:500] if rec["esyain_tanimi"] else "Gümrük Sınıflandırma Kararı",
                     hukuki_gerekce=rec['hukuki_gerekce'][:1500] if rec.get('hukuki_gerekce') else "",
-                    kaynak_url=kaynak_url
+                    kaynak_url=gcs_pdf_uri or kaynak_url
                 )
                 session.add(emsal_obj)
 

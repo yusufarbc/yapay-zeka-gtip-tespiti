@@ -16,7 +16,7 @@ urllib3.disable_warnings()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("RGPDFSpider")
 
-from scripts.parse_rg_pdf_digital import extract_gtip_records_from_digital_pdf, save_to_database_orm
+from scripts.parse_rg_pdf_digital import extract_gtip_records_from_digital_pdf, save_to_database_orm, upload_pdf_to_gcs
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -27,7 +27,9 @@ RG_BASE = "https://www.resmigazete.gov.tr"
 def scan_and_parse_day(year: int, month: int, day: int) -> int:
     """
     Belirtilen tarih için Resmî Gazete fihristini ve bağlantılı PDF eklerini tarar,
-    içindeki GTİP sınıflandırma kararlarını veritabanına kaydeder.
+    içinde GTİP sınıflandırma kararları bulursa:
+    1. Ham PDF'i GCP Cloud Storage'a (gs://gtip-storage-west4/resmi_gazete_raw_pdfs/) arşivler.
+    2. Çıkarılan yapılandırılmış verileri Cloud SQL veritabanına kaydeder.
     """
     date_str = f"{year}{month:02d}{day:02d}"
     pub_date = f"{year}-{month:02d}-{day:02d}"
@@ -81,7 +83,13 @@ def scan_and_parse_day(year: int, month: int, day: int) -> int:
                     records = extract_gtip_records_from_digital_pdf(pdf_resp.content)
                     if records:
                         logger.info(f"  [BULUNDU] {pub_date} - {pdf_url}: {len(records)} kayıt çıkarıldı!")
-                        saved = save_to_database_orm(records, pdf_url, pub_date)
+                        
+                        # 1. Ham PDF'i GCP Cloud Storage'a yükle (Yalnızca karar bulunan PDF'ler)
+                        pdf_filename = pdf_url.split("/")[-1] or f"karar_{pub_date}.pdf"
+                        gcs_pdf_uri = upload_pdf_to_gcs(pdf_resp.content, f"{pub_date}_{pdf_filename}")
+                        
+                        # 2. Cloud SQL PostgreSQL'e kaydet
+                        saved = save_to_database_orm(records, pdf_url, pub_date, gcs_pdf_uri=gcs_pdf_uri)
                         total_saved += saved
             except Exception as e:
                 logger.debug(f"PDF indirme/parse hatası [{pdf_url}]: {e}")
