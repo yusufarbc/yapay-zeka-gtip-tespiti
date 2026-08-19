@@ -222,6 +222,28 @@ def init_orm_tables():
         # 2. Tabloları oluştur
         Base.metadata.create_all(bind=engine)
 
+        # 2a. PostgreSQL Şema Otomatik Güncellemesi (Eski tablolara eksik kolonları ekle)
+        if engine.dialect.name == "postgresql":
+            try:
+                with engine.connect() as conn:
+                    # tgtc_gtip
+                    conn.execute(text("ALTER TABLE tgtc_gtip ADD COLUMN IF NOT EXISTS chapter_code VARCHAR(10);"))
+                    conn.execute(text("ALTER TABLE tgtc_gtip ADD COLUMN IF NOT EXISTS embedding vector(768);"))
+                    
+                    # tgtc_notes
+                    conn.execute(text("ALTER TABLE tgtc_notes ADD COLUMN IF NOT EXISTS note_type VARCHAR(50) DEFAULT 'GENERAL';"))
+                    conn.execute(text("ALTER TABLE tgtc_notes ADD COLUMN IF NOT EXISTS title VARCHAR(255);"))
+                    conn.execute(text("ALTER TABLE tgtc_notes ADD COLUMN IF NOT EXISTS embedding vector(768);"))
+                    
+                    # gumruk_emsal_kararlar
+                    conn.execute(text("ALTER TABLE gumruk_emsal_kararlar ADD COLUMN IF NOT EXISTS chapter_code VARCHAR(10);"))
+                    conn.execute(text("ALTER TABLE gumruk_emsal_kararlar ADD COLUMN IF NOT EXISTS valid_until VARCHAR(20) DEFAULT '9999-12-31';"))
+                    conn.execute(text("ALTER TABLE gumruk_emsal_kararlar ADD COLUMN IF NOT EXISTS embedding vector(768);"))
+                    conn.commit()
+                    logger.info("[SQLAlchemy ORM] PostgreSQL şema kolonları (ALTER TABLE IF NOT EXISTS) doğrulandı.")
+            except Exception as ex_pg_mig:
+                logger.warning(f"[SQLAlchemy ORM] PostgreSQL auto-migration uyarısı: {ex_pg_mig}")
+
         # 2b. SQLite Şema Güncellemesi (Eski yerel db dosyalarında eksik kolon varsa dinamik ekle)
         if engine.dialect.name == "sqlite":
             try:
