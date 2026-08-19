@@ -208,15 +208,15 @@ Canlı ortamdaki güncel servis adresleri:
 
 ---
 
-## 10. 🔬 Otomatize Test Kılıcı (21 Adet Pytest Testi)
+## 10. 🔬 Otomatize Test Kılıcı (25 Adet Pytest Testi)
 
-Tüm iş mantığı, deterministik kurallar ve hiyerarşik RAG katmanı yerel ortamda otomatize edilmiştir:
+Tüm iş mantığı, deterministik kurallar, 2026 TGTC veri tohumlama (seed) ve hiyerarşik RAG katmanı yerel ortamda otomatize edilmiştir:
 
 ```powershell
 python -m pytest api/tests/ -v --tb=short
 ```
 
-**Test Sonuçları: 21 Passed in 7.28s (%100 Başarı)**
+**Test Sonuçları: 25 Passed in 9.01s (%100 Başarı)**
 
 1. `test_gtip_validation_hygiene` - PASSED
 2. `test_deterministic_string_slicing_exact` - PASSED
@@ -239,6 +239,10 @@ python -m pytest api/tests/ -v --tb=short
 19. `test_security_auth_production_header_rejection` - PASSED
 20. `test_hard_rules_matrix_lock` - PASSED
 21. `test_hitl_5_percent_score_rule` - PASSED
+22. `test_seed_gir_and_rules` - PASSED
+23. `test_seed_chapter_notes_and_exclusions` - PASSED
+24. `test_seed_gtip_tree_hierarchy` - PASSED
+25. `test_btb_extraction_pydantic_schema` - PASSED
 
 ---
 

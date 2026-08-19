@@ -47,9 +47,10 @@ async def trigger_deep_crawler(background_tasks: BackgroundTasks):
     background_tasks.add_task(run_spider_2020_to_2026)
     return {"message": "Dijital PDF Arşiv Crawler'ı arka planda başlatıldı! Veritabanı dolmaya başlayacak."}
 
+@app.get("/api/v1/admin/status")
 @app.get("/api/v1/admin/sync-gcp-official-gazette-status")
 def sync_gcp_official_gazette_status(db: Session = Depends(get_db)):
-    """GET /api/v1/admin/sync-gcp-official-gazette-status endpointi."""
+    """GET /api/v1/admin/status & /api/v1/admin/sync-gcp-official-gazette-status."""
     try:
         from api.db.database import GumrukSiniflandirmaKarariModel
         count = db.query(GumrukSiniflandirmaKarariModel).count()
@@ -57,6 +58,7 @@ def sync_gcp_official_gazette_status(db: Session = Depends(get_db)):
         count = 0
     return {
         "status": "HEALTHY",
+        "region": settings.GCP_REGION,
         "active_model": settings.DEFAULT_LLM_MODEL,
         "cloud_sql_siniflandirma_kararlari_count": count
     }
@@ -68,7 +70,10 @@ def startup_event():
 # CORS Configuration: Production ortamında wildcard (*) kesinlikle engellenir.
 _cors_origins_raw = settings.CORS_ALLOWED_ORIGINS
 if settings.ENVIRONMENT == "production" and (_cors_origins_raw == "*" or not _cors_origins_raw):
-    _cors_origins = ["https://gtip-web-230333256951.europe-west3.run.app"]
+    _cors_origins = [
+        "https://gtip-web-230333256951.europe-west4.run.app",
+        "https://gtip-web-230333256951.europe-west3.run.app"
+    ]
     _allow_credentials = True
 elif _cors_origins_raw == "*":
     _cors_origins = ["*"]

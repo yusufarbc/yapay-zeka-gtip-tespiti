@@ -38,7 +38,8 @@ class Settings(BaseSettings):
     GCP_PROJECT_ID: str = os.getenv("GCP_PROJECT_ID", "gtip-tespit-projesi")
     GCP_REGION: str = os.getenv("GCP_REGION", "europe-west4")  # Eemshaven primary Gemini 3.x region
     GCS_BUCKET_NAME: str = os.getenv("GCS_BUCKET_NAME", "gtip-evrak-bucket-gtip-tespit-projesi")
-    CLOUD_SQL_CONNECTION_NAME: str = os.getenv("CLOUD_SQL_CONNECTION_NAME", "gtip-tespit-projesi:europe-west3:gtip-db")
+    CLOUD_SQL_CONNECTION_NAME: str = os.getenv("CLOUD_SQL_CONNECTION_NAME", "gtip-tespit-projesi:europe-west4:gtip-db-west4")
+    INSTANCE_CONNECTION_NAME: str = os.getenv("INSTANCE_CONNECTION_NAME", "gtip-tespit-projesi:europe-west4:gtip-db-west4")
     DB_USER: str = os.getenv("DB_USER", "postgres")
     DB_PASS: str = os.getenv("DB_PASS", "")
     DB_NAME: str = os.getenv("DB_NAME", "gtip_db")

@@ -3,7 +3,7 @@ $REGION = 'europe-west4'
 $REPO_NAME = 'gtip-repo'
 $IMAGE_URI = "$REGION-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/backend:latest"
 $WEB_IMAGE_URI = "$REGION-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/web:latest"
-$CLOUD_SQL_INSTANCE = 'gtip-tespit-projesi:europe-west3:gtip-db'
+$CLOUD_SQL_INSTANCE = 'gtip-tespit-projesi:europe-west4:gtip-db-west4'
 $GCS_BUCKET = 'gtip-evrak-bucket-gtip-tespit-projesi'
 $SERVICE_ACCOUNT = 'gtip-ai-sa@gtip-tespit-projesi.iam.gserviceaccount.com'
 

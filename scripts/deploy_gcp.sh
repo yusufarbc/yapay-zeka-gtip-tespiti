@@ -11,7 +11,7 @@ REPO_NAME="gtip-repo"
 SERVICE_NAME="gtip-backend"
 SYNC_JOB_NAME="gtip-btb-sync-job"
 SERVICE_ACCOUNT="gtip-backend-sa@${PROJECT_ID}.iam.gserviceaccount.com"
-CLOUD_SQL_INSTANCE="${PROJECT_ID}:europe-west3:gtip-db"
+CLOUD_SQL_INSTANCE="${PROJECT_ID}:europe-west4:gtip-db-west4"
 GCS_BUCKET="gtip-evrak-bucket-${PROJECT_ID}"
 
 echo "======================================================================"

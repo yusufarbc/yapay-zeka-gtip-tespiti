@@ -175,7 +175,11 @@ def get_database_url() -> str:
     if env_db_url and env_db_url.strip():
         return env_db_url.strip()
 
-    cloud_sql_conn = os.getenv("CLOUD_SQL_CONNECTION_NAME", "gtip-tespit-projesi:europe-west3:gtip-db")
+    cloud_sql_conn = (
+        os.getenv("CLOUD_SQL_CONNECTION_NAME") 
+        or os.getenv("INSTANCE_CONNECTION_NAME") 
+        or "gtip-tespit-projesi:europe-west4:gtip-db-west4"
+    )
     db_user = os.getenv("DB_USER", "postgres")
     db_pass = os.getenv("DB_PASS", "")
     db_name = os.getenv("DB_NAME", "gtip_db")
