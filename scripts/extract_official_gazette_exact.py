@@ -21,13 +21,31 @@ if root_dir not in sys.path:
 from api.config import settings
 from api.db.database import SessionLocal, GumrukSiniflandirmaKarariModel, GumrukEmsalKararModel
 
+try:
+    from google import genai
+    from google.genai import types
+except ImportError:
+    genai = None
+    types = None
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("ExtractOfficialGazetteExact")
 
 
 # ==============================================================================
-# ADIM 1: Pydantic Şemaları (LLM Çıktı Zırhı)
+# ADIM 1: Pydantic Şemaları (Multimodal ve LLM Çıktı Zırhı)
 # ==============================================================================
+
+class CustomsDecisionItem(BaseModel):
+    karar_no: str = Field(default="", description="Tebliğ Sıra No veya Karar No")
+    gtip_kodu: str = Field(description="12 haneli veya 8 haneli tam GTİP kodu (Örn: 4411.13.90.00.11)")
+    esya_tanimi: str = Field(description="Eşyanın ebat, yoğunluk, hammadde, kullanım yeri vb. tablodaki tüm teknik detaylarını içeren eksiksiz tam tanımı")
+    hukuki_gerekce: str = Field(description="Tablonun gerekçe sütunundaki GİR 1, GİR 6, Fasıl İzahnamesi vb. yasal sınıflandırma gerekçesi (Tebliğ giriş maddeleri hariç)")
+    resmi_gazete_sayisi: str = Field(default="", description="Resmî Gazete Sayısı")
+    yayin_tarihi: str = Field(default="", description="Resmî Gazete Yayın Tarihi YYYY-MM-DD")
+
+class GazetteExtractionResult(BaseModel):
+    items: List[CustomsDecisionItem] = Field(default_factory=list, description="Çıkarılan gümrük sınıflandırma kararları listesi")
 
 class DecisionBoundary(BaseModel):
     gtip_code: str = Field(description="Metinde geçen 8, 10 veya 12 haneli GTİP kodu.")
@@ -37,6 +55,104 @@ class DecisionBoundary(BaseModel):
 
 class BoundariesList(BaseModel):
     items: list[DecisionBoundary] = Field(description="Metinde tespit edilen tüm kararların konum sınırları.")
+
+
+# ==============================================================================
+# ADIM 1.5: Multimodal Tablo Ayrıştırıcı (Gemini 3.5 Flash Lite)
+# ==============================================================================
+
+def get_genai_client(project_id: str, location: str):
+    """Vertex AI GenAI Client nesnesi oluşturur."""
+    from google import genai
+    return genai.Client(vertexai=True, project=project_id, location=location)
+
+def extract_tables_from_gazette_pdf(pdf_bytes: bytes, pub_date: str, gazette_no: str) -> List[CustomsDecisionItem]:
+    """
+    Multimodal Gemini 3.5 Flash Lite kullanarak Resmî Gazete PDF tablolarındaki
+    Gümrük Sınıflandırma Kararlarını (GTİP, detaylı teknik eşya tanımı ve GİR hukuki gerekçesini)
+    görsel ve yapısal bütünlüğüyle ayıklar.
+    """
+    if not pdf_bytes or len(pdf_bytes) < 100:
+        return []
+
+    project_id = os.getenv("GCP_PROJECT_ID", "gtip-tespit-projesi")
+    location = os.getenv("GCP_REGION", "europe-west4")
+
+    prompt = f"""
+    Resmî Gazete Tarihi: {pub_date}, Sayı: {gazette_no}.
+    Ekli PDF'teki Gümrük Tarife Cetveli Sınıflandırma Kararları tablosunu satır satır ayrıştır.
+    
+    KURALLAR:
+    1. 'esya_tanimi': Tabloda yer alan ürünün tüm teknik özelliklerini (kalınlık, yoğunluk, kaplama, malzeme, ebat, kullanım amacı vb.) EKSİKSİZ aktar. Asla sadece genel ürün adı (örn: sadece 'laminat parke') yazma.
+    2. 'hukuki_gerekce': Tablonun 4. sütunundaki GİR kurallarını (GİR 1, GİR 6, GİR 3b vb.) ve izahname gerekçesini harfi harfine al. Tebliğin 'MADDE 1' gibi idari giriş metinlerini ASLA gerekçe yapma.
+    3. 'gtip_kodu': Standart noktalı formata normalize et (Örn: 4411.13.90.00.11 veya 8516.79.70.00.00).
+    4. 'resmi_gazete_sayisi': '{gazette_no}'.
+    5. 'yayin_tarihi': '{pub_date}'.
+    """
+
+    try:
+        client = get_genai_client(project_id=project_id, location=location)
+        
+        # Prepare contents
+        try:
+            from google.genai import types
+            contents = [
+                types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
+                prompt
+            ]
+            config = types.GenerateContentConfig(
+                temperature=0.0,
+                response_mime_type="application/json",
+                response_schema=GazetteExtractionResult
+            )
+        except Exception:
+            contents = [
+                {"inline_data": {"mime_type": "application/pdf", "data": pdf_bytes}},
+                prompt
+            ]
+            config = {
+                "temperature": 0.0,
+                "response_mime_type": "application/json",
+                "response_schema": GazetteExtractionResult
+            }
+
+        response = client.models.generate_content(
+            model="gemini-3.5-flash-lite",
+            contents=contents,
+            config=config
+        )
+        if response and hasattr(response, "parsed") and response.parsed:
+            items = response.parsed.items
+            for it in items:
+                if not it.yayin_tarihi:
+                    it.yayin_tarihi = pub_date
+                if not it.resmi_gazete_sayisi:
+                    it.resmi_gazete_sayisi = gazette_no
+            return items
+        elif response and response.text:
+            parsed = GazetteExtractionResult.model_validate_json(response.text)
+            return parsed.items
+        return []
+    except Exception as e:
+        logger.warning(f"Multimodal PDF çıkarma hatası (gemini-3.5-flash-lite): {e}")
+        # Fallback to digital pdf extraction if genai fails or offline
+        try:
+            from scripts.parse_rg_pdf_digital import extract_gtip_records_from_digital_pdf
+            digital_records = extract_gtip_records_from_digital_pdf(pdf_bytes)
+            items = []
+            for idx, dr in enumerate(digital_records, start=1):
+                items.append(CustomsDecisionItem(
+                    karar_no=str(idx),
+                    gtip_kodu=dr.get("gtip_kodu", ""),
+                    esya_tanimi=dr.get("esyain_tanimi", ""),
+                    hukuki_gerekce=dr.get("hukuki_gerekce", ""),
+                    resmi_gazete_sayisi=gazette_no,
+                    yayin_tarihi=pub_date
+                ))
+            return items
+        except Exception as fallback_e:
+            logger.error(f"Fallback extraction da başarısız: {fallback_e}")
+            return []
 
 
 # ==============================================================================

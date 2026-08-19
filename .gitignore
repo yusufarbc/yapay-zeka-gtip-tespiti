@@ -46,8 +46,11 @@ cloud_sql_fallback.db
 # IDE & Editor settings
 .vscode/
 .idea/
-*.swp
-*.swo
+# Scratch & Temporary JSON
+.etl_checkpoint.json
+*.checkpoint.json
+scratch_*.json
+temp_*.json
 *~
 
 # OS generated files

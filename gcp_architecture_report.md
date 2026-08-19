@@ -275,41 +275,45 @@ Canlı ortamdaki güncel servis adresleri (`europe-west4`):
 
 ---
 
-## 12. 🔬 Otomatize Test Kılıcı (25 Adet Pytest Testi)
+## 12. 🔬 Otomatize Test Kılıcı (29 Adet Pytest Testi)
 
-Tüm iş mantığı, deterministik kurallar, 2026 TGTC veri tohumlama (seed) ve hiyerarşik RAG katmanı yerel ortamda otomatize edilmiştir:
+Tüm iş mantığı, deterministik kurallar, 2026 TGTC veri tohumlama (seed), multimodal Resmî Gazete tablo ayrıştırma ve hiyerarşik RAG katmanı yerel ortamda otomatize edilmiştir:
 
 ```powershell
 python -m pytest api/tests/ -v --tb=short
 ```
 
-**Test Sonuçları: 25 Passed in 9.58s (%100 Başarı)**
+**Test Sonuçları: 29 Passed in 16.92s (%100 Başarı)**
 
 1. `test_gtip_validation_hygiene` - PASSED
 2. `test_deterministic_string_slicing_exact` - PASSED
 3. `test_deterministic_string_slicing_fallback` - PASSED
 4. `test_extract_and_save_official_gazette_end_to_end` - PASSED
-5. `test_model_configured_to_gemini_3_7_flash` - PASSED
-6. `test_fetch_official_gazette_day_text_structure` - PASSED
-7. `test_run_gcp_bulk_extraction_limit_days` - PASSED
-8. `test_gcp_sync_status_endpoint` - PASSED
-9. `test_rrf_scoring_formula` - PASSED
-10. `test_detect_candidate_chapters_with_hard_lock` - PASSED
-11. `test_detect_candidate_chapters_dynamic` - PASSED
-12. `test_filter_excluded_chapters` - PASSED
-13. `test_search_chapter_notes_and_exclusions_db` - PASSED
-14. `test_hybrid_search_headings_and_gtip_db` - PASSED
-15. `test_verify_tariff_candidate_structured_output` - PASSED
-16. `test_hierarchical_workflow_end_to_end` - PASSED
-17. `test_rule_engine_gir3b` - PASSED
-18. `test_workflow_end_to_end` - PASSED
-19. `test_security_auth_production_header_rejection` - PASSED
-20. `test_hard_rules_matrix_lock` - PASSED
-21. `test_hitl_5_percent_score_rule` - PASSED
-22. `test_seed_gir_and_rules` - PASSED
-23. `test_seed_chapter_notes_and_exclusions` - PASSED
-24. `test_seed_gtip_tree_hierarchy` - PASSED
-25. `test_btb_extraction_pydantic_schema` - PASSED
+5. `test_customs_decision_item_schema_validation` - PASSED
+6. `test_laminate_flooring_multimodal_table_extraction` - PASSED
+7. `test_electric_kettle_multimodal_table_extraction` - PASSED
+8. `test_etl_checkpoint_save_and_load` - PASSED
+9. `test_model_configured_to_gemini_3_7_flash` - PASSED
+10. `test_fetch_official_gazette_day_text_structure` - PASSED
+11. `test_run_gcp_bulk_extraction_limit_days` - PASSED
+12. `test_gcp_sync_status_endpoint` - PASSED
+13. `test_rrf_scoring_formula` - PASSED
+14. `test_detect_candidate_chapters_with_hard_lock` - PASSED
+15. `test_detect_candidate_chapters_dynamic` - PASSED
+16. `test_filter_excluded_chapters` - PASSED
+17. `test_search_chapter_notes_and_exclusions_db` - PASSED
+18. `test_hybrid_search_headings_and_gtip_db` - PASSED
+19. `test_verify_tariff_candidate_structured_output` - PASSED
+20. `test_hierarchical_workflow_end_to_end` - PASSED
+21. `test_rule_engine_gir3b` - PASSED
+22. `test_workflow_end_to_end` - PASSED
+23. `test_security_auth_production_header_rejection` - PASSED
+24. `test_hard_rules_matrix_lock` - PASSED
+25. `test_hitl_5_percent_score_rule` - PASSED
+26. `test_seed_gir_and_rules` - PASSED
+27. `test_seed_chapter_notes_and_exclusions` - PASSED
+28. `test_seed_gtip_tree_hierarchy` - PASSED
+29. `test_btb_extraction_pydantic_schema` - PASSED
 
 ---
 
