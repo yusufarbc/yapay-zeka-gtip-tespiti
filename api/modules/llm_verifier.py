@@ -160,17 +160,27 @@ class LLMFactVerifier:
             )
 
             config = self._get_reasoning_config()
-            if config:
-                response = client.models.generate_content(
-                    model=settings.REASONING_LLM_MODEL,
-                    contents=prompt,
-                    config=config
-                )
-            else:
-                response = client.models.generate_content(
-                    model=settings.REASONING_LLM_MODEL,
-                    contents=prompt
-                )
+            try:
+                if config:
+                    response = client.models.generate_content(
+                        model=settings.REASONING_LLM_MODEL,
+                        contents=prompt,
+                        config=config
+                    )
+                else:
+                    response = client.models.generate_content(
+                        model=settings.REASONING_LLM_MODEL,
+                        contents=prompt
+                    )
+            except Exception as e_model:
+                if "gemini-2.5-flash" not in settings.REASONING_LLM_MODEL:
+                    logger.warning(f"[LLM Tariff Verification] Model {settings.REASONING_LLM_MODEL} hatası ({e_model}), gemini-2.5-flash deneniyor.")
+                    response = client.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=prompt
+                    )
+                else:
+                    raise e_model
 
             if response.text:
                 match = re.search(r'\{.*\}', response.text, re.DOTALL)
@@ -186,17 +196,17 @@ class LLMFactVerifier:
                     confidence_score=float(data.get("confidence_score", 0.88))
                 )
         except Exception as e:
-                logger.warning(f"[LLM Tariff Verification] Hata, fallback kuralına geçiliyor: {e}")
+            logger.error(f"[LLM Tariff Verification] Yapay zeka doğrulama hatası (Fail-Closed): {e}")
 
-        # Deterministik Fallback
+        # Sıfır Halüsinasyon Güvencesi: Hata durumunda fail-open yerine fail-closed (manuel inceleme zorunlu)
         return TariffVerification(
             candidate_gtip=candidate_gtip,
-            is_material_compliant=True,
-            is_function_compliant=True,
+            is_material_compliant=False,
+            is_function_compliant=False,
             exclusion_notes_violated=False,
-            gir_rule_applied="GIR 1",
-            legal_reasoning_points=[f"TGTC Madde {candidate_gtip[:4]} ve GİR 1 hükümleriyle doğrudan uyumludur."],
-            confidence_score=0.88
+            gir_rule_applied="MANUAL_REVIEW_REQUIRED",
+            legal_reasoning_points=[f"Yapay zeka doğrulama servisi yanıt veremedi. Hukuki risk nedeniyle manuel müşavir incelemesi zorunludur."],
+            confidence_score=0.0
         )
 
     def verify_predicates(

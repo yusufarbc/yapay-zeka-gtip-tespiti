@@ -3,6 +3,7 @@ Unit & Integration Tests for Hierarchical Hybrid RAG, pgvector database function
 Chapter Exclusion Verification, and Structured Tariff Verification.
 """
 
+import json
 import pytest
 from api.schemas.product import ProductFeatures, GTIPCandidate
 from api.schemas.predicate import TariffVerification, ChapterExclusionCheck
@@ -96,18 +97,54 @@ def test_hybrid_search_headings_and_gtip_db():
 
 def test_verify_tariff_candidate_structured_output():
     """LLM verifier TariffVerification Pydantic structured output modelini doğrular."""
-    verif = llm_verifier.verify_tariff_candidate(
-        raw_text="Hakiki deri erkek ayakkabısı",
-        candidate_gtip="6403.59.99.00.11",
-        heading_desc="Deri dış tabanlı ayakkabılar",
-        chapter_notes="Fasıl 64 notları",
-        gir_rules=["GIR 1"]
-    )
-    assert isinstance(verif, TariffVerification)
-    assert verif.candidate_gtip == "6403.59.99.00.11"
-    assert verif.is_material_compliant == True
-    assert verif.exclusion_notes_violated == False
-    assert verif.confidence_score >= 0.80
+    from unittest.mock import MagicMock, patch
+
+    mock_resp = MagicMock()
+    mock_resp.text = json.dumps({
+        "candidate_gtip": "6403.59.99.00.11",
+        "is_material_compliant": True,
+        "is_function_compliant": True,
+        "exclusion_notes_violated": False,
+        "gir_rule_applied": "GIR 1",
+        "legal_reasoning_points": ["Doğal deri saya ve dış taban tespit edildi."],
+        "confidence_score": 0.92
+    })
+
+    with patch("api.modules.vertex_client.get_genai_client") as mock_get_client:
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = mock_resp
+        mock_get_client.return_value = mock_client
+
+        verif = llm_verifier.verify_tariff_candidate(
+            raw_text="Hakiki deri erkek ayakkabısı",
+            candidate_gtip="6403.59.99.00.11",
+            heading_desc="Deri dış tabanlı ayakkabılar",
+            chapter_notes="Fasıl 64 notları",
+            gir_rules=["GIR 1"]
+        )
+        assert isinstance(verif, TariffVerification)
+        assert verif.candidate_gtip == "6403.59.99.00.11"
+        assert verif.is_material_compliant is True
+        assert verif.exclusion_notes_violated is False
+        assert verif.confidence_score >= 0.80
+
+    # Fail-closed testi: Model hata verdiğinde confidence 0.0 ve MANUAL_REVIEW_REQUIRED dönmeli
+    with patch("api.modules.vertex_client.get_genai_client") as mock_get_client:
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = RuntimeError("Vertex AI Timeout")
+        mock_get_client.return_value = mock_client
+
+        fail_verif = llm_verifier.verify_tariff_candidate(
+            raw_text="Hakiki deri erkek ayakkabısı",
+            candidate_gtip="6403.59.99.00.11",
+            heading_desc="Deri dış tabanlı ayakkabılar",
+            chapter_notes="Fasıl 64 notları",
+            gir_rules=["GIR 1"]
+        )
+        assert isinstance(fail_verif, TariffVerification)
+        assert fail_verif.confidence_score == 0.0
+        assert fail_verif.is_material_compliant is False
+        assert fail_verif.gir_rule_applied == "MANUAL_REVIEW_REQUIRED"
 
 def test_hierarchical_workflow_end_to_end():
     """Uçtan uca hiyerarşik hibrit RAG ve karar motoru akışını doğrular."""

@@ -14,53 +14,59 @@ from api.config import settings
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ContextCacheManager")
 
-# Cache adı için SQLite anahtar sabiti
-_CACHE_STATE_KEY = "__global_vertex_ai_context_cache__"
+def _get_cache_state_key(model_name: Optional[str]) -> str:
+    clean = (model_name or getattr(settings, "REASONING_LLM_MODEL", "gemini-2.5-flash")).replace(".", "_").replace("-", "_")
+    return f"__global_vertex_ai_context_cache_{clean}__"
 
 class ContextCacheManager:
     """
     Vertex AI Context Cache Yöneticisi.
+    Her model için ayrı cache oluşturur ve saklar (model-specific context caching).
     Tüm Cloud Run worker'larının aynı cache'i kullanması için
     cache adı SQLite paylaşımlı durumda (LocalStateStore) saklanır.
     """
     def __init__(self):
-        self.cached_content_name: Optional[str] = None
+        self.cached_content_names: dict = {}
         self.client: Optional[Any] = None
 
-    def _read_cache_from_store(self) -> Optional[str]:
-        """Paylaşımlı SQLite deposundan mevcut cache adını okur."""
+    def _read_cache_from_store(self, model_name: Optional[str] = None) -> Optional[str]:
+        """Paylaşımlı depodan modele ait mevcut cache adını okur."""
         try:
             from api.db.gcp_emulator import local_state_store
-            stored = local_state_store.get_state(_CACHE_STATE_KEY)
+            key = _get_cache_state_key(model_name)
+            stored = local_state_store.get_state(key)
             if stored and stored.get("name"):
                 return stored["name"]
         except Exception as e:
             logger.debug(f"[ContextCacheManager] Cache adı okunamadı: {e}")
         return None
 
-    def _save_cache_to_store(self, cache_name: str):
-        """Cache adını paylaşımlı SQLite deposuna yazar (tüm worker'lar okuyabilir)."""
+    def _save_cache_to_store(self, cache_name: str, model_name: Optional[str] = None):
+        """Modele ait cache adını paylaşımlı depoya yazar."""
         try:
             from api.db.gcp_emulator import local_state_store
-            local_state_store.save_state(_CACHE_STATE_KEY, {"name": cache_name})
-            logger.info(f"[ContextCacheManager] Cache adı paylaşımlı depoya yazıldı: {cache_name}")
+            key = _get_cache_state_key(model_name)
+            local_state_store.save_state(key, {"name": cache_name})
+            logger.info(f"[ContextCacheManager] Cache adı ({model_name}) paylaşımlı depoya yazıldı: {cache_name}")
         except Exception as e:
             logger.warning(f"[ContextCacheManager] Cache adı kaydedilemedi: {e}")
 
     def initialize_cache(self, model_name: str = None) -> Optional[str]:
         """
         TGTC 99 Fasıl ve GİR Mevzuat metinlerini Vertex AI Context Cache'e yükler.
-        Önce paylaşımlı SQLite deposunu kontrol eder — mevcutsa yeni cache oluşturmaz.
+        Modele özel cache anahtarı kullanır.
         """
         if not settings.USE_CONTEXT_CACHE:
             logger.info("Context Caching devredışı bırakıldı (USE_CONTEXT_CACHE=False).")
             return None
 
-        # 1. Paylaşımlı depodan mevcut cache adını oku (worker paylaşımı)
-        existing = self._read_cache_from_store()
+        target_model = model_name or settings.REASONING_LLM_MODEL
+
+        # 1. Paylaşımlı depodan mevcut cache adını oku
+        existing = self._read_cache_from_store(target_model)
         if existing:
-            logger.info(f"[ContextCacheManager] Mevcut paylaşımlı cache kullanılıyor: {existing}")
-            self.cached_content_name = existing
+            logger.info(f"[ContextCacheManager] Mevcut paylaşımlı cache kullanılıyor ({target_model}): {existing}")
+            self.cached_content_names[target_model] = existing
             return existing
 
         try:
@@ -112,31 +118,38 @@ class ContextCacheManager:
                     ttl="86400s",  # 24 Saatlik Önbellek
                 )
             )
-            self.cached_content_name = cache.name
+            self.cached_content_names[target_model] = cache.name
             # 2. Cache adını paylaşımlı depoya yaz (diğer worker'lar okuyabilir)
-            self._save_cache_to_store(cache.name)
-            logger.info(f"[OK] Vertex AI Context Cache Başarıyla Oluşturuldu: {cache.name}")
+            self._save_cache_to_store(cache.name, target_model)
+            logger.info(f"[OK] Vertex AI Context Cache Başarıyla Oluşturuldu ({target_model}): {cache.name}")
             return cache.name
         except Exception as e:
             logger.warning(f"Vertex AI Context Cache oluşturma uyarısı: {e}")
             return None
 
     def get_cache_name(self, model_name: str = None) -> Optional[str]:
+        target_model = model_name or settings.REASONING_LLM_MODEL
         # Önce in-memory cache'i kontrol et
-        if not self.cached_content_name:
+        if target_model not in self.cached_content_names or not self.cached_content_names[target_model]:
             # Paylaşımlı depodan oku (diğer worker oluşturmuş olabilir)
-            existing = self._read_cache_from_store()
+            existing = self._read_cache_from_store(target_model)
             if existing:
-                self.cached_content_name = existing
+                self.cached_content_names[target_model] = existing
             else:
-                self.cached_content_name = self.initialize_cache(model_name)
-        return self.cached_content_name
+                self.cached_content_names[target_model] = self.initialize_cache(target_model)
+        return self.cached_content_names.get(target_model)
 
-    def invalidate_cache(self):
+    def invalidate_cache(self, model_name: str = None):
         """Cache'i geçersiz kılar (mevzuat güncellemesinde çağrılır)."""
-        self.cached_content_name = None
+        target_model = model_name or settings.REASONING_LLM_MODEL
+        self.cached_content_names.pop(target_model, None)
         try:
             from api.db.gcp_emulator import local_state_store
+            key = _get_cache_state_key(target_model)
+            local_state_store.save_state(key, {"name": None})
+            logger.info(f"[ContextCacheManager] Cache geçersiz kılındı ({target_model}).")
+        except Exception:
+            pass
             local_state_store.save_state(_CACHE_STATE_KEY, {"name": None})
             logger.info("[ContextCacheManager] Cache geçersiz kılındı.")
         except Exception:

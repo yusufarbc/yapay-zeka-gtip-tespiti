@@ -124,11 +124,8 @@ def _get_embedding(text: str, api_key: str) -> Optional[List[float]]:
     return None
 
 def get_text_embedding(text: str) -> Optional[List[float]]:
-    """Genel text-embedding-005 vektörleştirme çağrısı."""
-    api_key = os.getenv("GEMINI_API_KEY", "")
-    if not api_key:
-        return None
-    return _get_embedding(text, api_key)
+    """Genel text-embedding-005 vektörleştirme çağrısı (Vertex AI ADC veya API Key)."""
+    return _get_embedding(text, "")
 
 
 class LocalVectorStore:
@@ -193,43 +190,40 @@ class LocalVectorStore:
         if not docs:
             return []
 
-        api_key = os.getenv("GEMINI_API_KEY", "")
+        # --- Strateji 1: text-embedding-005 ile Cosine Similarity (Vertex AI ADC veya Key) ---
+        query_embedding = _get_embedding(query, "")
+        if query_embedding and any(query_embedding):
+            scored_results = []
+            for doc in docs:
+                valid_until = str(doc.get("valid_until") or "")
+                if valid_until and valid_until != "9999-12-31" and valid_until < "2026-01-01":
+                    continue  # Versiyonlanmış eski mevzuat zırhı: Süresi biten kayıtlar atlanır
+                chap = str(doc.get("chapter", doc.get("gtip_code", "")[:2])).zfill(2)
+                if allowed_chapters and chap not in allowed_chapters:
+                    continue
 
-        # --- Strateji 1: text-embedding-005 ile Cosine Similarity ---
-        if api_key:
-            query_embedding = _get_embedding(query, api_key)
-            if query_embedding:
-                scored_results = []
-                for doc in docs:
-                    valid_until = str(doc.get("valid_until") or "")
-                    if valid_until and valid_until != "9999-12-31" and valid_until < "2026-01-01":
-                        continue  # Versiyonlanmış eski mevzuat zırhı: Süresi biten kayıtlar atlanır
-                    chap = str(doc.get("chapter", doc.get("gtip_code", "")[:2])).zfill(2)
-                    if allowed_chapters and chap not in allowed_chapters:
-                        continue
+                desc = doc.get("product_description", "")
+                if not desc:
+                    continue
 
-                    desc = doc.get("product_description", "")
-                    if not desc:
-                        continue
+                doc_embedding = _get_embedding(desc, "")
+                if doc_embedding:
+                    similarity = _cosine_similarity(query_embedding, doc_embedding)
+                    scored_results.append({
+                        "btb_no": doc.get("btb_no", "EMSAL-BTB"),
+                        "gtip_code": doc.get("gtip_code"),
+                        "chapter": chap,
+                        "heading": doc.get("heading", doc.get("gtip_code", "")[:4]),
+                        "issue_date": doc.get("issue_date", "2026-01-01"),
+                        "product_description": doc.get("product_description"),
+                        "legal_justification": doc.get("legal_justification"),
+                        "similarity_score": round(similarity, 4)
+                    })
 
-                    doc_embedding = _get_embedding(desc, api_key)
-                    if doc_embedding:
-                        similarity = _cosine_similarity(query_embedding, doc_embedding)
-                        scored_results.append({
-                            "btb_no": doc.get("btb_no", "EMSAL-BTB"),
-                            "gtip_code": doc.get("gtip_code"),
-                            "chapter": chap,
-                            "heading": doc.get("heading", doc.get("gtip_code", "")[:4]),
-                            "issue_date": doc.get("issue_date", "2026-01-01"),
-                            "product_description": doc.get("product_description"),
-                            "legal_justification": doc.get("legal_justification"),
-                            "similarity_score": round(similarity, 4)
-                        })
-
-                if scored_results:
-                    scored_results.sort(key=lambda x: x["similarity_score"], reverse=True)
-                    logger.info(f"[VectorStore] text-embedding-005 Cosine Similarity araması: {len(scored_results)} sonuç")
-                    return scored_results[:top_k]
+            if scored_results:
+                scored_results.sort(key=lambda x: x["similarity_score"], reverse=True)
+                logger.info(f"[VectorStore] text-embedding-005 Cosine Similarity araması: {len(scored_results)} sonuç")
+                return scored_results[:top_k]
 
         # --- Strateji 2: Jaccard Token Overlap (Offline Fallback) ---
         logger.debug("[VectorStore] Jaccard Token Overlap fallback kullanılıyor (API key yok veya embedding hatası).")

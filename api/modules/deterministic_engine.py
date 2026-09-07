@@ -100,18 +100,19 @@ class DeterministicDecisionEngine:
 
         # 2. TariffVerification ile Doğrulama Değerlendirmesi
         if tariff_verif:
-            if tariff_verif.exclusion_notes_violated:
+            if tariff_verif.exclusion_notes_violated or not tariff_verif.is_material_compliant or not tariff_verif.is_function_compliant or tariff_verif.confidence_score < 0.60:
+                reason = "Dışlama notu ihlali" if tariff_verif.exclusion_notes_violated else "Malzeme/fonksiyon kriteri veya yapay zeka doğrulama yetersizliği"
                 return GTIPDecision(
                     session_id=session_id,
                     status="MANUAL_REVIEW_REQUIRED",
                     gtip_code=top_candidate.gtip_code,
-                    confidence_score=0.45,
+                    confidence_score=round(tariff_verif.confidence_score or 0.45, 2),
                     official_statute_text=official_statute,
-                    llm_reasoning_commentary="Ürün ilgili fasıl veya pozisyonun yasal dışlama notlarına takıldığından manuel inceleme gerekmektedir.",
+                    llm_reasoning_commentary=f"Yasal Doğrulama Uyarısı ({reason}): {'; '.join(tariff_verif.legal_reasoning_points or ['Manuel inceleme gereklidir.'])}",
                     legal_justification=official_statute,
-                    applied_gir_rules=applied_rules + ["Dışlama Notu İhlali"],
+                    applied_gir_rules=applied_rules + [f"İnceleme Gerekçesi: {tariff_verif.gir_rule_applied}"],
                     precedent_btbs=top_candidate.precedents,
-                    audit_notes=["Dışlama notu ihlali nedeniyle otomatik onay reddedildi."]
+                    audit_notes=[f"{reason} nedeniyle otomatik onay verilmedi, uzman incelemesine sevk edildi."]
                 )
 
             final_confidence = round(min(0.96, max(0.82, tariff_verif.confidence_score)), 2)

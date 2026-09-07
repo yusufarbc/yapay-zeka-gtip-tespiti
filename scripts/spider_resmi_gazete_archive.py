@@ -270,92 +270,101 @@ def save_decisions_to_cloud_sql(
 
 def scan_and_process_gazette_day(year: int, month: int, day: int, skip_embedding: bool = False) -> int:
     """
-    Tek bir Resmî Gazete gününün fihristini ve eklerini tarar:
-    1. İlgili Gümrük Tebliğlerini saptar.
+    Tek bir Resmî Gazete gününün hem asıl hem de mükerrer (m1, m2, m3) sayılarını tarar:
+    1. İlgili Gümrük Tebliğlerini ve eklerini saptar.
     2. Ekli PDF'i indirip Gemini 3.5 Flash Lite ile multimodal tablo ayrıştırmasından geçirir.
     3. Karar bulunursa ham PDF'i GCS'e arşivler, kararları Cloud SQL'e kaydeder.
     """
     date_str = f"{year}{month:02d}{day:02d}"
     pub_date = f"{year}-{month:02d}-{day:02d}"
-    index_url = f"{RG_BASE}/eskiler/{year}/{month:02d}/{date_str}.htm"
-
+    
+    # Asıl baskı ve mükerrer baskılar (m1, m2, m3)
+    sub_editions = ["", "m1", "m2", "m3"]
     total_saved = 0
-    try:
-        resp = requests.get(index_url, headers=HEADERS, verify=False, timeout=10)
-        if resp.status_code != 200:
-            return 0
 
-        resp.encoding = "windows-1254"
-        soup = BeautifulSoup(resp.text, "html.parser")
+    for sub_ed in sub_editions:
+        sub_key = f"{date_str}{sub_ed}"
+        index_url = f"{RG_BASE}/eskiler/{year}/{month:02d}/{sub_key}.htm"
+        
+        try:
+            resp = requests.get(index_url, headers=HEADERS, verify=False, timeout=12)
+            if resp.status_code != 200:
+                continue
 
-        # Resmî Gazete Sayısını Tespit Et (Örn: "Sayı : 31793")
-        gazette_no = "-"
-        body_text = soup.get_text()
-        no_match = re.search(r"Sayı\s*:\s*(\d+)", body_text, re.IGNORECASE)
-        if no_match:
-            gazette_no = no_match.group(1)
+            resp.encoding = "windows-1254"
+            soup = BeautifulSoup(resp.text, "html.parser")
 
-        pdf_candidates = set()
+            # Resmî Gazete Sayısını Tespit Et (Örn: "Sayı : 31793")
+            gazette_no = "-"
+            body_text = soup.get_text()
+            no_match = re.search(r"Sayı\s*:\s*(\d+)", body_text, re.IGNORECASE)
+            if no_match:
+                base_no = no_match.group(1)
+                gazette_no = f"{base_no} ({sub_ed.upper()})" if sub_ed else base_no
+            elif sub_ed:
+                gazette_no = f"Mükerrer {sub_ed[1:]}"
 
-        # Fihristteki linkleri tara
-        for a in soup.find_all("a", href=True):
-            href = a.get("href", "")
-            link_text = a.get_text(strip=True).lower()
+            pdf_candidates = set()
 
-            if href.endswith(".pdf"):
-                full_pdf = href if href.startswith("http") else f"{RG_BASE}/eskiler/{year}/{month:02d}/{href}"
-                pdf_candidates.add(full_pdf)
+            # Fihristteki linkleri tara
+            for a in soup.find_all("a", href=True):
+                href = a.get("href", "").strip()
+                link_text = a.get_text(strip=True).lower()
 
-            elif href.endswith(".htm") and href != f"{date_str}.htm":
-                full_htm = href if href.startswith("http") else f"{RG_BASE}/eskiler/{year}/{month:02d}/{href}"
-                # İlgili gümrük tebliği anahtar kelimeleri
-                if any(k in link_text for k in ["gümrük", "tarife", "sınıflandırma", "ithalatta haksız rekabet", "tebliğ", "karar"]):
-                    try:
-                        sub_resp = requests.get(full_htm, headers=HEADERS, verify=False, timeout=6)
-                        if sub_resp.status_code == 200:
-                            sub_resp.encoding = "windows-1254"
-                            sub_soup = BeautifulSoup(sub_resp.text, "html.parser")
-                            for sub_a in sub_soup.find_all("a", href=True):
-                                sub_href = sub_a.get("href", "")
-                                if sub_href.endswith(".pdf"):
-                                    full_sub_pdf = sub_href if sub_href.startswith("http") else f"{RG_BASE}/eskiler/{year}/{month:02d}/{sub_href}"
-                                    pdf_candidates.add(full_sub_pdf)
-                    except Exception:
-                        pass
+                if href.lower().endswith(".pdf"):
+                    full_pdf = href if href.startswith("http") else f"{RG_BASE}/eskiler/{year}/{month:02d}/{href}"
+                    pdf_candidates.add(full_pdf)
 
-        # Tespit edilen PDF'leri Multimodal olarak ayrıştır
-        for pdf_url in pdf_candidates:
-            try:
-                pdf_resp = requests.get(pdf_url, headers=HEADERS, verify=False, timeout=15)
-                if pdf_resp.status_code == 200 and len(pdf_resp.content) > 1000:
-                    # 1. Multimodal Ayrıştırma
-                    extracted_items = extract_tables_from_gazette_pdf(
-                        pdf_resp.content, 
-                        pub_date=pub_date, 
-                        gazette_no=gazette_no
-                    )
+                elif href.lower().endswith(".htm") and href != f"{sub_key}.htm":
+                    full_htm = href if href.startswith("http") else f"{RG_BASE}/eskiler/{year}/{month:02d}/{href}"
+                    # İlgili gümrük tebliği anahtar kelimeleri
+                    if any(k in link_text for k in ["gümrük", "tarife", "sınıflandırma", "ithalatta haksız rekabet", "tebliğ", "karar", "cetvel"]):
+                        try:
+                            sub_resp = requests.get(full_htm, headers=HEADERS, verify=False, timeout=8)
+                            if sub_resp.status_code == 200:
+                                sub_resp.encoding = "windows-1254"
+                                sub_soup = BeautifulSoup(sub_resp.text, "html.parser")
+                                for sub_a in sub_soup.find_all("a", href=True):
+                                    sub_href = sub_a.get("href", "").strip()
+                                    if sub_href.lower().endswith(".pdf"):
+                                        full_sub_pdf = sub_href if sub_href.startswith("http") else f"{RG_BASE}/eskiler/{year}/{month:02d}/{sub_href}"
+                                        pdf_candidates.add(full_sub_pdf)
+                        except Exception:
+                            pass
 
-                    if extracted_items:
-                        logger.info(f"🎯 [KARAR BULUNDU] {pub_date} (Sayı: {gazette_no}) - {pdf_url}: {len(extracted_items)} karar tespit edildi!")
-                        
-                        # 2. Ham PDF'i Cloud Storage'a Yükle
-                        pdf_name = pdf_url.split("/")[-1] or f"karar_{date_str}.pdf"
-                        gcs_pdf_uri = upload_pdf_to_gcs(pdf_resp.content, f"{date_str}_{pdf_name}")
-                        
-                        # 3. Cloud SQL'e Kaydet
-                        saved = save_decisions_to_cloud_sql(
-                            extracted_items, 
-                            kaynak_url=pdf_url, 
-                            gcs_pdf_uri=gcs_pdf_uri,
-                            skip_embedding=skip_embedding
+            # Tespit edilen PDF'leri Multimodal olarak ayrıştır
+            for pdf_url in pdf_candidates:
+                try:
+                    pdf_resp = requests.get(pdf_url, headers=HEADERS, verify=False, timeout=20)
+                    if pdf_resp.status_code == 200 and len(pdf_resp.content) > 1000:
+                        # 1. Multimodal Ayrıştırma
+                        extracted_items = extract_tables_from_gazette_pdf(
+                            pdf_resp.content, 
+                            pub_date=pub_date, 
+                            gazette_no=gazette_no
                         )
-                        total_saved += saved
 
-            except Exception as pdf_e:
-                logger.debug(f"PDF işleme hatası [{pdf_url}]: {pdf_e}")
+                        if extracted_items:
+                            logger.info(f"🎯 [KARAR BULUNDU] {pub_date} (Sayı: {gazette_no}) - {pdf_url}: {len(extracted_items)} karar tespit edildi!")
+                            
+                            # 2. Ham PDF'i Cloud Storage'a Yükle
+                            pdf_name = pdf_url.split("/")[-1] or f"karar_{sub_key}.pdf"
+                            gcs_pdf_uri = upload_pdf_to_gcs(pdf_resp.content, f"{sub_key}_{pdf_name}")
+                            
+                            # 3. Cloud SQL'e Kaydet
+                            saved = save_decisions_to_cloud_sql(
+                                extracted_items, 
+                                kaynak_url=pdf_url, 
+                                gcs_pdf_uri=gcs_pdf_uri,
+                                skip_embedding=skip_embedding
+                            )
+                            total_saved += saved
 
-    except Exception as e:
-        logger.debug(f"Fihrist tarama hatası [{pub_date}]: {e}")
+                except Exception as pdf_e:
+                    logger.debug(f"PDF işleme hatası [{pdf_url}]: {pdf_e}")
+
+        except Exception as e:
+            logger.debug(f"Fihrist tarama hatası [{pub_date} {sub_ed}]: {e}")
 
     return total_saved
 
@@ -365,70 +374,95 @@ def scan_and_process_gazette_day(year: int, month: int, day: int, skip_embedding
 # ==============================================================================
 
 def run_archive_backfill(
-    start_date_str: str = "2020-01-01", 
-    end_date_str: str = "2026-08-19",
+    start_date_str: Optional[str] = None, 
+    end_date_str: Optional[str] = None,
     batch_size: int = 30,
     skip_embedding: bool = False
 ):
     """
-    2020 - 2026 yılları arasındaki tüm Resmî Gazete günlerini parçalı (chunked)
-    ve checkpoint mekanizmalı olarak tarar.
+    Son 6 yıllık dinamik pencere (varsayılan) veya belirtilen tarih aralığındaki tüm
+    Resmî Gazete günlerini parçalı (chunked), mükerrer destekli ve hataya dayanıklı checkpoint
+    mekanizmasıyla tarar.
     """
-    start_date = datetime.datetime.strptime(start_date_str, "%Y-%m-%d").date()
-    end_date = datetime.datetime.strptime(end_date_str, "%Y-%m-%d").date()
+    if end_date_str:
+        end_date = datetime.datetime.strptime(end_date_str, "%Y-%m-%d").date()
+    else:
+        end_date = datetime.date.today()
+
+    if start_date_str:
+        start_date = datetime.datetime.strptime(start_date_str, "%Y-%m-%d").date()
+    else:
+        # Son 6 yıl (rolling 6-year window)
+        start_date = end_date - datetime.timedelta(days=6 * 365)
 
     checkpoint = load_checkpoint()
     last_processed = checkpoint.get("last_processed_date")
     if last_processed:
-        last_date = datetime.datetime.strptime(last_processed, "%Y-%m-%d").date()
-        if last_date >= start_date and last_date < end_date:
-            logger.info(f"🔄 Checkpoint devrede! Tarama {last_date + datetime.timedelta(days=1)} tarihinden devam ediyor.")
-            start_date = last_date + datetime.timedelta(days=1)
+        try:
+            last_date = datetime.datetime.strptime(last_processed, "%Y-%m-%d").date()
+            if start_date <= last_date < end_date:
+                logger.info(f"🔄 Checkpoint devrede! Tarama {last_date + datetime.timedelta(days=1)} tarihinden devam ediyor.")
+                start_date = last_date + datetime.timedelta(days=1)
+        except Exception as cp_e:
+            logger.warning(f"Checkpoint tarihi ayrıştırma uyarısı: {cp_e}")
 
     logger.info("=" * 70)
-    logger.info(f"🚀 RESMÎ GAZETE ARŞİV TARAMASI BAŞLATILIYOR ({start_date} ➔ {end_date})")
+    logger.info(f"🚀 RESMÎ GAZETE DİNAMİK ARŞİV TARAMASI ({start_date} ➔ {end_date})")
     logger.info("=" * 70)
 
     current_date = start_date
     delta = datetime.timedelta(days=1)
     grand_total = checkpoint.get("total_saved_records", 0)
     days_processed = checkpoint.get("total_processed_days", 0)
+    consecutive_errors = 0
 
     while current_date <= end_date:
-        saved_today = scan_and_process_gazette_day(
-            current_date.year, 
-            current_date.month, 
-            current_date.day,
-            skip_embedding=skip_embedding
-        )
-        grand_total += saved_today
-        days_processed += 1
+        try:
+            saved_today = scan_and_process_gazette_day(
+                current_date.year, 
+                current_date.month, 
+                current_date.day,
+                skip_embedding=skip_embedding
+            )
+            grand_total += saved_today
+            days_processed += 1
+            consecutive_errors = 0
 
-        # Checkpoint periyodik kaydet
-        if days_processed % batch_size == 0 or current_date == end_date:
-            checkpoint_state = {
-                "last_processed_date": current_date.strftime("%Y-%m-%d"),
-                "total_processed_days": days_processed,
-                "total_saved_records": grand_total
-            }
-            save_checkpoint(checkpoint_state)
-            logger.info(f"📊 [Checkpoint] {current_date} kaydedildi. Toplam İşlenen Gün: {days_processed} | Toplam Karar: {grand_total}")
+            # Checkpoint periyodik kaydet (sadece başarılı işlenen güne kadar ilerletir)
+            if days_processed % batch_size == 0 or current_date == end_date:
+                checkpoint_state = {
+                    "last_processed_date": current_date.strftime("%Y-%m-%d"),
+                    "total_processed_days": days_processed,
+                    "total_saved_records": grand_total
+                }
+                save_checkpoint(checkpoint_state)
+                logger.info(f"📊 [Checkpoint] {current_date} kaydedildi. Toplam İşlenen Gün: {days_processed} | Toplam Karar: {grand_total}")
 
-        current_date += delta
-        time.sleep(0.05)
+            current_date += delta
+            time.sleep(0.05)
+
+        except Exception as e_day:
+            logger.error(f"❌ [{current_date}] Tarama günü hatası: {e_day}")
+            consecutive_errors += 1
+            if consecutive_errors >= 10:
+                logger.critical(f"10 ardışık gün hatası alındı. Checkpoint {current_date - delta} konumunda güvenli şekilde durduruluyor.")
+                break
+            # Hata durumunda o günü atlamadan önce bekle
+            time.sleep(2.0)
+            current_date += delta
 
     logger.info("=" * 70)
     logger.info(f"🎉 ARŞİV TARAMASI TAMAMLANDI! Toplam {grand_total} sınıflandırma kararı veritabanına aktarıldı.")
     logger.info("=" * 70)
 
 
-def run_daily_sync(days_back: int = 2, skip_embedding: bool = False) -> int:
+def run_daily_sync(days_back: int = 3, skip_embedding: bool = False) -> int:
     """
     Günlük gece yarısı Cloud Scheduler tetiklemesiyle çalışan hafif senkronizasyon.
-    Son X günü (varsayılan: son 2 gün) tarar.
+    Son X günü (varsayılan: son 3 gün, asıl + mükerrer) tarar.
     """
     logger.info("=" * 70)
-    logger.info(f"⏰ GÜNLÜK RESMÎ GAZETE SENKRONİZASYONU BAŞLATILIYOR (Son {days_back} Gün)")
+    logger.info(f"⏰ GÜNLÜK RESMÎ GAZETE SENKRONİZASYONU BAŞLATILIYOR (Son {days_back} Gün - Asıl + Mükerrer)")
     logger.info("=" * 70)
 
     end_date = datetime.date.today()
@@ -440,13 +474,17 @@ def run_daily_sync(days_back: int = 2, skip_embedding: bool = False) -> int:
 
     while current_date <= end_date:
         logger.info(f"🔍 Günlük Tarama: {current_date.strftime('%Y-%m-%d')}")
-        saved = scan_and_process_gazette_day(
-            current_date.year, 
-            current_date.month, 
-            current_date.day,
-            skip_embedding=skip_embedding
-        )
-        total_saved += saved
+        try:
+            saved = scan_and_process_gazette_day(
+                current_date.year, 
+                current_date.month, 
+                current_date.day,
+                skip_embedding=skip_embedding
+            )
+            total_saved += saved
+        except Exception as e_day:
+            logger.warning(f"Günlük tarama günü uyarısı [{current_date}]: {e_day}")
+
         current_date += delta
 
     logger.info(f"✅ Günlük tarama bitti. {total_saved} yeni sınıflandırma kararı işlendi.")
@@ -464,10 +502,10 @@ run_spider_daily = run_daily_sync
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Resmî Gazete Gümrük Kararları ETL & Arşiv Tarayıcısı")
     parser.add_argument("--mode", choices=["archive", "daily"], default="archive", help="Çalışma modu: 'archive' (toplu) veya 'daily' (günlük)")
-    parser.add_argument("--start-date", type=str, default="2020-01-01", help="Arşiv başlangıç tarihi (YYYY-MM-DD)")
-    parser.add_argument("--end-date", type=str, default="2026-08-19", help="Arşiv bitiş tarihi (YYYY-MM-DD)")
+    parser.add_argument("--start-date", type=str, default=None, help="Arşiv başlangıç tarihi (YYYY-MM-DD, varsayılan: 6 yıl önce)")
+    parser.add_argument("--end-date", type=str, default=None, help="Arşiv bitiş tarihi (YYYY-MM-DD, varsayılan: bugün)")
     parser.add_argument("--batch-size", type=int, default=30, help="Checkpoint aralığı (gün)")
-    parser.add_argument("--days-back", type=int, default=2, help="Günlük modda geriye dönük taranacak gün sayısı")
+    parser.add_argument("--days-back", type=int, default=3, help="Günlük modda geriye dönük taranacak gün sayısı")
     parser.add_argument("--skip-embedding", action="store_true", help="Vektörleştirme adımını atla")
     args = parser.parse_args()
 

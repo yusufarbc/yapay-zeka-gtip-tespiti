@@ -108,16 +108,18 @@ def get_current_user_session(request: Any) -> UserSession:
 
         iap_email = request.headers.get("x-goog-authenticated-user-email")
         if iap_email:
-            email = iap_email.replace("accounts.google.com:", "").strip()
-            domain = email.split("@")[1] if "@" in email else None
-            role = request.headers.get("X-User-Role", "senior_broker")
-            return UserSession(
-                user_id=f"gcp_{email.split('@')[0]}",
-                email=email,
-                full_name=email.split('@')[0].replace(".", " ").title(),
-                role=role,
-                domain=domain
-            )
+            # Üretim (Production) ortamında imzasız x-goog-authenticated-user-email kesinlikle reddedilir
+            if settings.ENVIRONMENT != "production":
+                email = iap_email.replace("accounts.google.com:", "").strip()
+                domain = email.split("@")[1] if "@" in email else None
+                role = request.headers.get("X-User-Role", "senior_broker")
+                return UserSession(
+                    user_id=f"gcp_{email.split('@')[0]}",
+                    email=email,
+                    full_name=email.split('@')[0].replace(".", " ").title(),
+                    role=role,
+                    domain=domain
+                )
 
         # 3. Özel HTTP Üstbilgileri (Yalnızca Geliştirme Modunda Kabul Edilir)
         if settings.ENVIRONMENT != "production":
@@ -152,4 +154,35 @@ def get_current_user_session(request: Any) -> UserSession:
         role="customs_broker",
         domain="gtip.gov.tr"
     )
+
+
+def require_admin_user(request: Any) -> UserSession:
+    """
+    Yönetimsel işlemler (/api/v1/admin/*) için yetki denetleyicisi:
+    - Cloud Scheduler tarafından yapılan istekleri (X-CloudScheduler veya User-Agent) otomatik onaylar.
+    - Kullanıcı oturumu 'admin' veya 'senior_broker' rolünde değilse 403 Forbidden fırlatır.
+    """
+    # Cloud Scheduler veya dahili GCP otomasyon çağrısı kontrolü
+    user_agent = request.headers.get("User-Agent", "")
+    is_scheduler = (
+        request.headers.get("X-CloudScheduler") == "true" or
+        "Google-Cloud-Scheduler" in user_agent or
+        "AppEngine-Google" in user_agent
+    )
+    if is_scheduler:
+        return UserSession(
+            user_id="cloud_scheduler",
+            email="scheduler@gumruk-mevzuat.iam.gserviceaccount.com",
+            full_name="Cloud Scheduler",
+            role="admin"
+        )
+
+    session = get_current_user_session(request)
+    if session.role not in ["admin", "senior_broker"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Bu yönetimsel operasyon için 'admin' veya 'senior_broker' yetkisi gereklidir."
+        )
+    return session
+
 

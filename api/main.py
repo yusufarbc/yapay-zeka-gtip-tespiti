@@ -17,13 +17,16 @@ from api.graph.workflow import workflow_engine
 from api.exporter import pdf_exporter
 from api.db.audit_logger import audit_logger
 from api.db.gcp_emulator import local_state_store, local_vector_store
-from api.db.database import init_orm_tables, get_db, TgtcGtipModel, TgtcRuleModel, TgtcNoteModel
+from api.db.database import (
+    init_orm_tables, get_db, TgtcGtipModel, TgtcRuleModel, TgtcNoteModel,
+    GumrukEmsalKararModel, GumrukSiniflandirmaKarariModel, GumrukMevzuatMaddesiModel
+)
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
 from fastapi import BackgroundTasks
-from scripts.spider_resmi_gazete_archive import run_spider_2020_to_2026
+from scripts.spider_resmi_gazete_archive import run_spider_2020_to_2026, run_daily_sync
 
 from fastapi.responses import JSONResponse
 import traceback
@@ -52,17 +55,25 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 @app.post("/api/v1/admin/trigger-deep-crawler")
-async def trigger_deep_crawler(background_tasks: BackgroundTasks):
+async def trigger_deep_crawler(request: Request, background_tasks: BackgroundTasks):
     """6 yıllık geçmiş Resmi Gazete arşiv crawler'ını arka planda (Cloud Run Job gibi) tetikler."""
+    from api.security.auth import require_admin_user
+    require_admin_user(request)
     background_tasks.add_task(run_spider_2020_to_2026)
     return {"message": "Dijital PDF Arşiv Crawler'ı arka planda başlatıldı! Veritabanı dolmaya başlayacak."}
 
+@app.post("/api/v1/admin/trigger-daily-sync")
+async def trigger_daily_sync(request: Request, background_tasks: BackgroundTasks, days: int = 3):
+    """Son N günün (varsayılan 3 gün) Resmî Gazete mükerrer ve normal sayılarını arka planda tarar ve eşitler."""
+    from api.security.auth import require_admin_user
+    require_admin_user(request)
+    background_tasks.add_task(run_daily_sync, days_back=days)
+    return {"message": f"Son {days} günün Resmî Gazete senkronizasyonu arka planda başlatıldı."}
+
 @app.get("/api/v1/admin/status")
-@app.get("/api/v1/admin/sync-gcp-official-gazette-status")
-def sync_gcp_official_gazette_status(db: Session = Depends(get_db)):
-    """GET /api/v1/admin/status & /api/v1/admin/sync-gcp-official-gazette-status."""
+def admin_status(db: Session = Depends(get_db)):
+    """GET /api/v1/admin/status sistem genel sağlık ve kayıt sayısı durumunu döndürür."""
     try:
-        from api.db.database import GumrukSiniflandirmaKarariModel
         count = db.query(GumrukSiniflandirmaKarariModel).count()
     except Exception:
         count = 0

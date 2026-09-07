@@ -200,7 +200,7 @@ class GtipRuleModel(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     parent_heading = Column(String(10), nullable=False, index=True)     # 4 haneli pozisyon (Örn: '8471')
-    target_gtip = Column(String(14), nullable=True)                     # 12 haneli kod (Örn: '8471.30.00.00.11')
+    target_gtip = Column(String(30), nullable=True)                     # 12 haneli kod (Örn: '8471.30.00.00.11')
     parametre_adi = Column(String(50), nullable=False)                 # 'weight', 'power', 'composition'
     kosul_operatoru = Column(String(10), nullable=False)               # '<=', '>', '==', 'contains'
     esik_deger = Column(String(50), nullable=False)                    # '10kg', '200g/m2'
@@ -214,7 +214,7 @@ class EmsalBtbKarariModel(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     btb_referans_no = Column(String(50), unique=True, nullable=False, index=True) # Örn: 'TR-34-2025-0042'
-    gtip_kodu = Column(String(14), nullable=False, index=True)
+    gtip_kodu = Column(String(30), nullable=False, index=True)
     urun_tanimi = Column(Text, nullable=False)
     karar_gerekcesi = Column(Text, nullable=False)
     gecerlilik_tarihi = Column(String(30), nullable=False)
@@ -555,6 +555,7 @@ def hybrid_search_headings_and_gtip(
     """
     clean_query = query_text.strip().lower()
     query_tokens = [w for w in clean_query.split() if len(w) > 2]
+    clean_chaps = [str(c).zfill(2) for c in (allowed_chapters or []) if str(c).strip()]
     # 1. SQL Aday Kümesi ve TGTC 4-Haneli Pozisyonlar
     candidate_records = []
     seen_codes = set()
