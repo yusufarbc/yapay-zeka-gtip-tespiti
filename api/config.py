@@ -16,7 +16,7 @@ def _get_secret(secret_id: str, fallback: str = "") -> str:
     """
     try:
         from google.cloud import secretmanager
-        project_id = os.getenv("GCP_PROJECT_ID", "gtip-tespit-projesi")
+        project_id = os.getenv("GCP_PROJECT_ID", "gumruk-mevzuat")
         client = secretmanager.SecretManagerServiceClient()
         name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
         response = client.access_secret_version(request={"name": name})
@@ -34,28 +34,28 @@ class Settings(BaseSettings):
     USE_GCP_EMULATOR: bool = os.getenv("USE_GCP_EMULATOR", "false").lower() == "true"
     ALLOW_PUBLIC_DEMO_ACCESS: bool = os.getenv("ALLOW_PUBLIC_DEMO_ACCESS", "true").lower() == "true"
 
-    # GCP Configurations - Europe-west4 (Hollanda / Eemshaven) Standartlaştırması
-    GCP_PROJECT_ID: str = os.getenv("GCP_PROJECT_ID", "gtip-tespit-projesi")
-    GCP_REGION: str = os.getenv("GCP_REGION", "europe-west4")  # Eemshaven primary Gemini 3.x region
-    GCS_BUCKET_NAME: str = os.getenv("GCS_BUCKET_NAME", "gtip-storage-west4")
-    CLOUD_SQL_CONNECTION_NAME: str = os.getenv("CLOUD_SQL_CONNECTION_NAME", "gtip-tespit-projesi:europe-west4:gtip-db-west4")
-    INSTANCE_CONNECTION_NAME: str = os.getenv("INSTANCE_CONNECTION_NAME", "gtip-tespit-projesi:europe-west4:gtip-db-west4")
+    # GCP Configurations - us-central1 (Iowa) ve gumruk-mevzuat Standartlaştırması
+    GCP_PROJECT_ID: str = os.getenv("GCP_PROJECT_ID", "gumruk-mevzuat")
+    GCP_REGION: str = os.getenv("GCP_REGION", "us-central1")  # us-central1 primary Vertex AI region
+    GCS_BUCKET_NAME: str = os.getenv("GCS_BUCKET_NAME", "gumruk-mevzuat-storage-us-central1")
+    CLOUD_SQL_CONNECTION_NAME: str = os.getenv("CLOUD_SQL_CONNECTION_NAME", "gumruk-mevzuat:us-central1:gumruk-db")
+    INSTANCE_CONNECTION_NAME: str = os.getenv("INSTANCE_CONNECTION_NAME", "gumruk-mevzuat:us-central1:gumruk-db")
     DB_USER: str = os.getenv("DB_USER", "postgres")
     DB_PASS: str = os.getenv("DB_PASS", "")
     DB_NAME: str = os.getenv("DB_NAME", "gtip_db")
 
-    # Vertex AI Model Mimarisi ve Rol Dağılımı
-    PRIMARY_AI_MODEL: str = os.getenv("PRIMARY_AI_MODEL", "gemini-3.7-flash")
-    BULK_EXTRACTOR_MODEL: str = os.getenv("BULK_EXTRACTOR_MODEL", "gemini-3.5-flash-lite")
-    DEFAULT_LLM_MODEL: str = os.getenv("DEFAULT_LLM_MODEL", "gemini-3.7-flash")
-    FAST_LLM_MODEL: str = os.getenv("FAST_LLM_MODEL", "gemini-3.7-flash")
-    EXTRACTOR_LLM_MODEL: str = os.getenv("EXTRACTOR_LLM_MODEL", "gemini-3.7-flash")
-    REASONING_LLM_MODEL: str = os.getenv("REASONING_LLM_MODEL", "gemini-3.7-flash")
-    AUDITOR_LLM_MODEL: str = os.getenv("AUDITOR_LLM_MODEL", "gemini-3.7-flash")
+    # Vertex AI Model Mimarisi ve Rol Dağılımı (gcp_architecture_report.md)
+    PRIMARY_AI_MODEL: str = os.getenv("PRIMARY_AI_MODEL", "gemini-2.5-flash")
+    BULK_EXTRACTOR_MODEL: str = os.getenv("BULK_EXTRACTOR_MODEL", "gemini-2.5-flash-lite")
+    DEFAULT_LLM_MODEL: str = os.getenv("DEFAULT_LLM_MODEL", "gemini-2.5-flash")
+    FAST_LLM_MODEL: str = os.getenv("FAST_LLM_MODEL", "gemini-2.5-flash-lite")
+    EXTRACTOR_LLM_MODEL: str = os.getenv("EXTRACTOR_LLM_MODEL", "gemini-2.5-flash-lite")
+    REASONING_LLM_MODEL: str = os.getenv("REASONING_LLM_MODEL", "gemini-2.5-pro")
+    AUDITOR_LLM_MODEL: str = os.getenv("AUDITOR_LLM_MODEL", "gemini-2.5-pro")
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-005")
     VECTOR_DIM: int = 768
 
-    # Gemini 3.7 Flash Thinking Parametreleri
+    # Gemini Flash Thinking Parametreleri
     THINKING_BUDGET_EXTRACTOR: int = 0      # Ultra hızlı özellik çıkarımı
     THINKING_BUDGET_VERIFIER: int = 2048   # Derin yasal gerekçelendirme ve dışlama analizi
 
@@ -88,8 +88,8 @@ settings = Settings()
 # Güvenlik uyarıları
 if settings.ENVIRONMENT == "production":
     if not settings.GEMINI_API_KEY:
-        logger.error("[GÜVENLİK] GEMINI_API_KEY production ortamında boş! Secret Manager kontrolü yapın.")
+        logger.info("[Vertex AI] GEMINI_API_KEY tanımlı değil; sistem Cloud Run Service Account (ADC) ve Vertex AI IAM yetkileri ile çalışıyor.")
     if "dev-only" in settings.JWT_SECRET_KEY:
-        logger.error("[GÜVENLİK] JWT_SECRET_KEY production için geçersiz! Secret Manager'da 'gtip-jwt-secret' secret'ı tanımlayın.")
+        logger.warning("[GÜVENLİK] JWT_SECRET_KEY varsayılan değerde. Secret Manager'da 'gtip-jwt-secret' secret'ı tanımlanabilir.")
     if settings.CORS_ALLOWED_ORIGINS == "*":
         logger.warning("[GÜVENLİK] CORS_ALLOWED_ORIGINS production'da '*' olarak bırakılmış. CORS_ALLOWED_ORIGINS env var'ını ayarlayın.")

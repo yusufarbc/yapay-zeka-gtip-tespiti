@@ -1,5 +1,5 @@
 """
-Unit tests for GCP Vertex AI (Gemini 3.7 Flash & Gemini 3.5 Flash Lite) Bulk Extractor & Cloud SQL persistence pipeline.
+Unit tests for GCP Vertex AI (Gemini 2.5 Flash & Gemini 2.5 Flash Lite) Bulk Extractor & Cloud SQL persistence pipeline.
 """
 
 import pytest
@@ -11,11 +11,11 @@ from api.config import settings
 client = TestClient(app)
 
 
-def test_model_configured_to_gemini_3_7_flash():
-    """Gemini 3.7 Flash modelinin sistem konfigürasyonunda aktif olduğunu doğrular."""
-    assert settings.PRIMARY_AI_MODEL == "gemini-3.7-flash"
-    assert settings.BULK_EXTRACTOR_MODEL == "gemini-3.5-flash-lite"
-    assert settings.GCP_REGION == "europe-west4"
+def test_model_configured_to_gemini_2_5_flash():
+    """Gemini 2.5 Flash modelinin sistem konfigürasyonunda aktif olduğunu doğrular (us-central1 Vertex AI bölgesinde)."""
+    assert settings.PRIMARY_AI_MODEL == "gemini-2.5-flash"
+    assert settings.BULK_EXTRACTOR_MODEL == "gemini-2.5-flash-lite"
+    assert settings.GCP_REGION == "us-central1"
 
 
 def test_fetch_official_gazette_day_text_structure():
@@ -40,5 +40,5 @@ def test_gcp_sync_status_endpoint():
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "HEALTHY"
-    assert data["active_model"] == "gemini-3.7-flash"
+    assert data["active_model"] == "gemini-2.5-flash"
     assert "cloud_sql_siniflandirma_kararlari_count" in data

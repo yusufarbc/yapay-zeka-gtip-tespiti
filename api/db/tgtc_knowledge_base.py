@@ -285,6 +285,20 @@ def load_btb_catalog() -> List[Dict[str, Any]]:
                 if letter_cnt < 5 or any(k in desc for k in ["Metin İçerikli", "Tebliğ / Karar Metni", "Sayfa "]) or desc.lower().startswith(("toplam", "rg-pdf", "gerekçe:")) or re.match(r"^[\d\.\,\s\-\+\*\$\%\:\;]+$", desc):
                     continue
 
+            # Format source URL (GCS HTTPS or Resmi Gazete link)
+            s_url = item.get("source_url") or item.get("kaynak_url")
+            if s_url:
+                s_url = str(s_url).strip()
+                if s_url.startswith("gs://"):
+                    s_url = f"https://storage.googleapis.com/{s_url[5:]}"
+            elif not btb_id.startswith("TGTC2026-"):
+                d_clean = re.sub(r"[^\d]", "", str(date_val))
+                if len(d_clean) >= 8:
+                    y, m, d = d_clean[:4], d_clean[4:6], d_clean[6:8]
+                    s_url = f"https://www.resmigazete.gov.tr/eskiler/{y}/{m}/{y}{m}{d}.htm"
+                else:
+                    s_url = "https://www.resmigazete.gov.tr"
+
             enriched_list.append({
                 "btb_no": btb_id,
                 "gtip_code": gtip,
@@ -292,7 +306,8 @@ def load_btb_catalog() -> List[Dict[str, Any]]:
                 "heading": item.get("heading", "") or heading_code,
                 "issue_date": str(date_val),
                 "product_description": desc,
-                "legal_justification": legal
+                "legal_justification": legal,
+                "source_url": s_url
             })
         return enriched_list
 
@@ -316,8 +331,8 @@ def load_btb_catalog() -> List[Dict[str, Any]]:
     # 2. GCS Bucket Canlı Emsal Karar Okuma Kontrolü (Bakanlık Kazıma Verileri)
     try:
         from google.cloud import storage
-        project_id = os.getenv("GCP_PROJECT_ID", "gtip-tespit-projesi")
-        bucket_name = os.getenv("GCS_BUCKET_NAME", f"gtip-evrak-bucket-{project_id}")
+        project_id = os.getenv("GCP_PROJECT_ID", "gumruk-mevzuat")
+        bucket_name = os.getenv("GCS_BUCKET_NAME", "gumruk-mevzuat-storage-us-central1")
         client = storage.Client(project=project_id)
         bucket = client.bucket(bucket_name)
         blobs = list(client.list_blobs(bucket, prefix="official_btb/"))

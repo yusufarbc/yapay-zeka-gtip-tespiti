@@ -6,7 +6,7 @@ import logging
 import requests
 import urllib3
 import pdfplumber
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if root_dir not in sys.path:
@@ -181,7 +181,7 @@ def upload_pdf_to_gcs(pdf_bytes: bytes, filename: str, gcs_folder: str = "resmi_
     """
     Sınıflandırma kararı içeren Resmî Gazete PDF'ini GCP Cloud Storage'a yükler ve gs:// URI döndürür.
     """
-    bucket_name = os.getenv("GCS_BUCKET_NAME", "gtip-storage-west4")
+    bucket_name = os.getenv("GCS_BUCKET_NAME", "gumruk-mevzuat-storage-us-central1")
     blob_name = f"{gcs_folder}/{filename}"
     try:
         from google.cloud import storage

@@ -114,20 +114,9 @@ def _get_embedding(text: str, api_key: str) -> Optional[List[float]]:
         return _EMBEDDING_MEM_CACHE[cache_key]
 
     try:
-        from google import genai
-        client = genai.Client(api_key=api_key)
-        response = client.models.embed_content(
-            model="text-embedding-005",
-            contents=text,
-            config={"task_type": "RETRIEVAL_QUERY"}
-        )
-        # google-genai SDK yapısına göre değer erişimi
-        if hasattr(response, "embeddings") and response.embeddings:
-            val = response.embeddings[0].values
-            _EMBEDDING_MEM_CACHE[cache_key] = val
-            return val
-        if hasattr(response, "embedding") and response.embedding:
-            val = response.embedding.values
+        from api.modules.vertex_client import generate_embedding
+        val = generate_embedding(text)
+        if val and any(val):
             _EMBEDDING_MEM_CACHE[cache_key] = val
             return val
     except Exception as e:

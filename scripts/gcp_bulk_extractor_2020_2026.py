@@ -101,10 +101,10 @@ def run_gcp_bulk_extraction(
     limit_days: Optional[int] = None
 ) -> Dict[str, Any]:
     """
-    2020 - 2026 yılları arasındaki Resmi Gazete kararlarını Vertex AI Gemini 3.6 Flash kullanarak harfi harfine Cloud SQL'e aktarır.
+    2020 - 2026 yılları arasındaki Resmi Gazete kararlarını Vertex AI Gemini 2.5 Flash kullanarak harfi harfine Cloud SQL'e aktarır.
     """
     logger.info(f"=== GCP Vertex AI Resmi Gazete Bulk Extractor Başlatıldı ({start_year} - {end_year}) ===")
-    logger.info(f"Kullanılan AI Modeli: {getattr(settings, 'DEFAULT_LLM_MODEL', 'gemini-3.6-flash')}")
+    logger.info(f"Kullanılan AI Modeli: {getattr(settings, 'DEFAULT_LLM_MODEL', 'gemini-2.5-flash')}")
 
     init_orm_tables()
     session = SessionLocal()

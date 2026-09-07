@@ -63,17 +63,12 @@ class ContextCacheManager:
             self.cached_content_name = existing
             return existing
 
-        api_key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            logger.info("[SIMULATION] Vertex AI Context Cache hazırlandı (Çevrimdışı Mod).")
-            return None  # Simüle edilen cache kaydetme — gerçek API olmadan işe yaramaz
-
         try:
-            from google import genai
+            from api.modules.vertex_client import get_genai_client
             from google.genai import types
 
             target_model = model_name or settings.REASONING_LLM_MODEL
-            self.client = genai.Client(api_key=api_key)
+            self.client = get_genai_client()
             # TGTC Mevzuat İzahnamelerini, Yorum Kurallarını ve Fasıl Notlarını Yükle
             # TGTC Mevzuat İzahnamelerini, Yorum Kurallarını ve Fasıl Notlarını Yükle
             from api.db.tgtc_knowledge_base import GIR_RULES, TGTC_CHAPTERS, load_tgtc_rules_and_notes, get_local_tgtc_headings

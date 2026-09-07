@@ -1,341 +1,495 @@
-# GCP (Google Cloud Platform) Bulut Servisleri ve Hibrit Sıfır-Halüsinasyon Mimari Raporu
+# GÜMRÜK GTİP VE MEVZUAT KARAR DESTEK SİSTEMİ MİMARİ ŞARTNAMESİ
 
-**GTİP Tespit ve Karar Destek Sistemi**, Türk Gümrük Tarife Cetveli (TGTC) ve gümrük mevzuatı gibi sıfır hata toleransı gerektiren hukuki/mali alanlar için kurgulanmış; **yapay zeka destekli fakat sembolik kural tabanlı katı mantığın (Symbolic Logic) baskın olduğu sıfır-halüsinasyonlu hibrit mimariyle** %100 Google Cloud Platform (GCP) native ve Serverless prensipleriyle geliştirilmiştir.
-
-Bu rapor; Python FastAPI backend, LangGraph otonom karar grafı, React + Vite frontend, SQLAlchemy 2.0 Cloud SQL PostgreSQL + `pgvector` ORM katmanı, Hiyerarşik Hibrit RAG motoru, Vertex AI Gemini 3.x LLM/Embedding entegrasyonları, Resmî Gazete ETL boru hatları ve **`europe-west4` (Hollanda / Eemshaven)** Cloud Run dağıtım kodlarının doğrudan denetlenip doğrulanmasıyla hazırlanan **kapsamlı, güncel ve teknik referans dokümanıdır**.
+Bu belge; Türkiye Gümrük Mevzuatı, Türk Gümrük Tarife Cetveli (TGTC) ve Bağlayıcı Tarife Bilgisi (BTB) kararlarını temel alarak, sıfır halüsinasyon (Zero-Hallucination) prensibiyle 12 haneli GTİP tespiti ve mevzuat danışmanlığı yapan kurumsal bilişim sisteminin nihai mimari şartnamesidir. Sistem; **Resmi Gazete Otomasyonu**, **AlloyDB AI Tabanlı Birleşik Veri Katmanı**, **Dinamik Kural Motoru**, **İki Aşamalı FastMCP Sorgulama Protokolü** ve **Human-in-the-Loop (HITL) Ajan Mimarisi** bileşenlerinden oluşur.
 
 ---
 
-## 📑 İçindekiler
-1. [🎯 Tamamlanan Altyapı ve Migrasyon İşlemleri Özeti](#1--tamamlanan-altyapı-ve-migrasyon-işlemleri-özeti)
-2. [🔍 Kod Tabanı Mimarisi ve Sıfır-Halüsinasyon Zırhları](#2--kod-tabanı-mimarisi-ve-sıfır-halüsinasyon-zırhları)
-3. [📊 GCP Bulut Servisleri ve Model Matrisi (europe-west4)](#3--gcp-bulut-servisleri-ve-model-matrisi-europe-west4)
-4. [🏗️ GCP Uçtan Uca Bulut Mimari ve Veri Akış Şeması](#4-️-gcp-uçtan-uca-bulut-mimari-ve-veri-akış-şeması)
-5. [🌳 2026 TGTC Statik Veri Tohumlama (Static Seed Pipeline)](#5--2026-tgtc-statik-veri-tohumlama-static-seed-pipeline)
-6. [🔄 Dinamik Resmî Gazete & BTB Canlı ETL Boru Hattı](#6--dinamik-resmî-gazete--btb-canlı-etl-boru-hattı)
-7. [⚙️ LangGraph & Çoklu Model (Model Tiering & Thinking Modes) Karar Motoru](#7-️-langgraph--çoklu-model-model-tiering--thinking-modes-karar-motoru)
-8. [🧠 Hiyerarşik Hibrit RAG ve Reciprocal Rank Fusion (RRF)](#8-️-hiyerarşik-hibrit-rag-ve-reciprocal-rank-fusion-rrf)
-9. [🗄️ Veritabanı Mimarisi, `pgvector` & SQLAlchemy 2.0 ORM](#9-️-veritabanı-mimarisi-pgvector--sqlalchemy-20-orm)
-10. [🔌 REST & SSE API Endpoint Referansı](#10--rest--sse-api-endpoint-referansı)
-11. [💻 React Web Arayüzü & Canlı Dağıtım Doğrulaması](#11--react-web-arayüzü--canlı-dağıtım-doğrulaması)
-12. [🔬 Otomatize Test Kılıcı (25 Adet Pytest Testi)](#12--otomatize-test-kılıcı-25-adet-pytest-testi)
-13. [⚠️ Mevcut Eksiklikler, Riskler ve Geliştirme Yol Haritası](#13-️-mevcut-eksiklikler-riskler-ve-geliştirme-yol-haritası)
-14. [🎯 Sonuç ve Katma Değer](#14--sonuç-ve-katma-değer)
+## 1. YÜKSEK SEVİYE MİMARİ VE ÇALIŞMA DÖNGÜSÜ
 
----
+Sistem iki temel çalışma döngüsü üzerinden yürütülür:
 
-## 1. 🎯 Tamamlanan Altyapı ve Migrasyon İşlemleri Özeti
+```text
+┌──────────────────────────────────────────────────────────────────────────────────────────┐
+│ DÖNGÜ 1: OTOMATİK RESMİ GAZETE VE MEVZUAT RADARI (ETL PIPELINE)                         │
+│                                                                                          │
+│  [resmigazete.gov.tr] ──► [Cloud Scheduler (02:00)] ──► [Cloud Run Functions]           │
+│                                                                  │                       │
+│        ┌─────────────────────────────────────────────────────────┘                       │
+│        ▼                                                                                 │
+│  [HTML Sanitize] ──► [Gümrük/Dış Ticaret Filtresi] ──► [Madde Hiyerarşisi Ayrıştırıcı]   │
+│                                                                  │                       │
+│        ├─► Ham Metin, Başlık, Link, Tarih ───────────────┐       │                       │
+│        └─► Embedding (Vertex AI text-embedding-005) ──┐  │       │                       │
+│                                                       ▼  ▼       │                       │
+│  [AlloyDB AI for PostgreSQL (pgvector + ScaNN İndeksi + İlişkisel Metadata)]             │
+└──────────────────────────────────────┬───────────────────────────────────────────────────┘
+                                       │
+                                       ▼
+┌──────────────────────────────────────────────────────────────────────────────────────────┐
+│ DÖNGÜ 2: ETKİLEŞİMLİ GTİP VE MEVZUAT DANIŞMANI (LANGGRAPH + MCP)                         │
+│                                                                                          │
+│  [Müşavir UI (Firebase Hosting)] ◄──► [Cloud Run Backend: FastAPI + LangGraph]           │
+│                                                    │                                     │
+│        ┌───────────────────────────────────────────┴─────────────────────────────┐       │
+│        ▼                                                                         ▼       │
+│  [GTİP Tespit Ajanı]                                                    [Mevzuat Ajanı]  │
+│  1. Multimodal Özellik Çıkarımı (Gemini Flash-Lite)                     1. Serbest Soru  │
+│  2. GİR Kural Filtresi (Fasıl Eleme)                                    2. İki Aşamalı   │
+│  3. Auditor Node: "DB Kural Şartı Karşılandı mı?"                           MCP Tool Çağrı│
+│     ├─► Eksik ──► HITL: Müşavire Çoktan Seçmeli Dinamik Soru            3. DB'den Orijinal│
+│     └─► Tamam ──► Hibrit Vektör Eşleme (%70 BTB / %30 TGTC)                Ham Metin     │
+│  4. Kesin 12 Haneli GTİP + Emsal BTB ve Kaynak Linki                    4. Gemini:       │
+│                                                                            Sadece Yorumla│
+└──────────────────────────────────────────────────────────────────────────────────────────┘
 
-Tüm GCP bulut servisleri, veritabanı instance'ları ve yapay zeka modelleri **`europe-west4` (Hollanda / Eemshaven)** bölgesine kesintisiz taşınmış ve test edilmiştir:
-
-1. **Cloud SQL PostgreSQL 15 Taşıma (`gtip-db-west4`):**
-   * `europe-west4-c` bölgesinde yeni SSD tabanlı Cloud SQL instance'ı (`34.187.71.137` / Connection: `gtip-tespit-projesi:europe-west4:gtip-db-west4`) ayağa kaldırıldı.
-   * Eski instance'taki tüm şema ve 13 emsal karar kaydı GCS SQL Dump (`gcloud sql export/import`) ile veri kaybı olmadan aktarıldı.
-   * `pgvector` eklentisi ve otomatik şema göçü (`ALTER TABLE ADD COLUMN IF NOT EXISTS`) devreye alındı.
-2. **Model Tiering & Gemini 3.x Entegrasyonu:**
-   * **Özellik Çıkarımı:** `gemini-3.7-flash` (`thinking_budget=0` - ultra hızlı çıkarım).
-   * **Derin Yasal Doğrulama & Dışlama Analizi:** `gemini-3.7-flash` (`thinking_budget=2048` - 2048 token akıl yürütme bütçesi).
-   * **Toplu ETL ve Arşiv Kazıma:** `gemini-3.5-flash-lite` (yüksek hacimli, düşük maliyetli fihrist/tebliğ ayıklama).
-   * **Vektör Temsili:** `text-embedding-005` (768 boyutlu Türkçe gümrük vektör standardı).
-3. **2026 TGTC Statik Tohumlama Betiği ([scripts/seed_tgtc_2026.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/seed_tgtc_2026.py)):**
-   * Yerel `2026 TGTC/` klasöründeki veriler (Tarife Ağacı, 97 Fasıl Notu, GİR 1-6 Kuralları, Ölçü Birimleri) doğrudan Cloud SQL PostgreSQL tablolarına aktarıldı.
-4. **Resmî Gazete Dinamik ETL & GCS Otomatik PDF Arşivleme:**
-   * Resmî Gazete tarayıcısı (`scripts/spider_resmi_gazete_archive.py`), fihristte GTİP/BTB kararı tespit ettiğinde **yalnızca karar içeren ham PDF'i** `gs://gtip-storage-west4/resmi_gazete_raw_pdfs/` altına otomatik arşivlemekte ve Cloud SQL kaydına bağlamaktadır.
-5. **Cloud Run Dağıtımı (Backend & Web):**
-   * `gtip-backend` (FastAPI) ve `gtip-web` (React/Vite/Nginx) servisleri `europe-west4` Artifact Registry üzerinden canlıya alındı.
-6. **25/25 Otomatize Test Başarısı:**
-   * `pytest api/tests/` ile tüm testler %100 başarıyla geçti (25 passed).
-
----
-
-## 2. 🔍 Kod Tabanı Mimarisi ve Sıfır-Halüsinasyon Zırhları
-
-Gümrük tarife tespitinde üretken yapay zekaların serbest metin üretimi cezai ve hukuki sorumluluklar doğurur. Bu sebeple sistemde **7 temel sıfır-halüsinasyon zırhı** kod seviyesinde işletilmektedir:
-
-### 2.1. No-AI Output Binding (Statik SQL/Hafıza Birleştirme)
-* **İlgili Dosyalar:** [deterministic_engine.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/modules/deterministic_engine.py), [tgtc_knowledge_base.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/db/tgtc_knowledge_base.py)
-* **Prensip:** Yapay zeka modelleri asla kendi kelimeleriyle hukuki gerekçe veya tarife kanun maddesi yazamaz. AI modelleri sadece ürün niteliklerini ve yasal koşul yüklemlerini (`TRUE` / `FALSE` / `UNKNOWN`) doğrular. Çıktıdaki `official_statute_text` ve `legal_justification` alanları, 2026 TGTC veritabanımızdan (`load_tgtc_rules_and_notes` & `get_local_tgtc_headings`) **Statik SQL/Bellek İndeksi JOIN** tekniğiyle harfi harfine çekilir.
-
-### 2.2. Katı Fasıl Kilit Matrisi (`HARD_RULES_MATRIX`)
-* **İlgili Dosyalar:** [rule_engine.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/modules/rule_engine.py)
-* **Prensip:** Ürünün temel malzeme veya işlev anahtar kelimeleri tespit edildiğinde kural motoru fasıl alanını kilitler:
-  * *Deri / Ayakkabı* ➔ **Fasıl 64** kesin kilit
-  * *Akü / Batarya / Telefon / Elektronik* ➔ **Fasıl 85** kilit
-  * *Motor / Pompa / Mekanik Cihaz* ➔ **Fasıl 84** kilit
-  * *Motorlu Taşıt / Araç Parçaları* ➔ **Fasıl 87** kilit
-  * *Oyuncak / Oyun Eşyası* ➔ **Fasıl 95** kilit
-  * *Mobilya / Yatak / Aydınlatma* ➔ **Fasıl 94** kilit
-  * *Plastik ve Mamulleri* ➔ **Fasıl 39** kilit
-  * *Tekstil / Kumaş / Giyim* ➔ **Fasıl 50-63** kilit
-* Kilit aktifleştiğinde RAG vektör araması ([rag_engine.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/modules/rag_engine.py)) sadece ilgili fasıl uzayında sınırlandırılır; alakasız fasıllardan emsal çekilmesi engellenir.
-
-### 2.3. Sıralı Hiyerarşik GİR (Genel Yorum Kuralları 1-6) Denetimi
-* **İlgili Dosyalar:** [rule_engine.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/modules/rule_engine.py#L40-L90)
-* **Prensip:** Gümrük sınıflandırma kuralları hiyerarşik sırada işletilir:
-  $$\text{GİR 1} \longrightarrow \text{GİR 2(a)} \longrightarrow \text{GİR 2(b)} \longrightarrow \text{GİR 3(a)} \longrightarrow \text{GİR 3(b)} \longrightarrow \text{GİR 4} \longrightarrow \text{GİR 6}$$
-  Örneğin demonte/eksik eşyada GİR 2(a), kompozit/karışım eşyada mümeyyiz vasfa göre GİR 3(b) otomatik devreye girer.
-
-### 2.4. %5 Skor Farkı HITL Kancası (A/B Şıklı Netleştirme)
-* **İlgili Dosyalar:** [deterministic_engine.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/modules/deterministic_engine.py#L55-L95), [workflow.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/graph/workflow.py#L170-L225)
-* **Prensip:** RAG uzayından dönen en iyi iki GTİP adayı arasındaki kosinüs benzerlik skoru farkı **%5'ten az ise (`abs(score_1 - score_2) < 0.05`)**, yapay zekanın rastgele seçim yapması engellenir. İş akışı durdurularak Gümrük Müşavirine `[A] 1. Aday GTİP` ve `[B] 2. Aday GTİP` seçenekli nokta atışı bir Human-in-the-Loop sorusu yönlendirilir.
-
-### 2.5. Dinamik Scoped Prompting & Context Caching
-* **İlgili Dosyalar:** [context_cache_manager.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/modules/context_cache_manager.py), [llm_verifier.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/modules/llm_verifier.py)
-* **Prensip:** 97 faslın yüzbinlerce satırlık izahnamesini tek bir prompt'a sıkıştırmak yerine, model yalnızca hedeflenen 2-3 faslın resmi Bakanlık notları ve ilk 30 pozisyonu ile beslenir. Vertex AI Context Caching sayesinde bellek içi okuma süresi %60-70 hızlanır, token maliyeti %80 düşer.
-
-### 2.6. Versiyonlu Yürürlük Süresi Denetimi (`valid_until`)
-* **İlgili Dosyalar:** [gcp_emulator.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/db/gcp_emulator.py), [database.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/db/database.py)
-* **Prensip:** Yürürlükten kalkan veya iptal edilen eski BTB ve Resmî Gazete tebliğ kararları RAG arama uzayından `valid_until` zaman damgasıyla otomatik elenir; yalnızca 2026 yürürlükteki mevzuat esas alınır.
-
-### 2.7. Dijital PDF (pdfplumber) ile Hatasız Resmî Gazete Ayrıştırma
-* **İlgili Dosyalar:** [parse_rg_pdf_digital.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/parse_rg_pdf_digital.py), [spider_resmi_gazete_archive.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/spider_resmi_gazete_archive.py)
-* **Prensip:** Resmî Gazete Gümrük Genel Tebliğleri dijital PDF vektör katmanından ayrıştırılır. OCR kaynaklı harf ve rakam hataları tamamen ortadan kaldırılmıştır.
-
----
-
-## 3. 📊 GCP Bulut Servisleri ve Model Matrisi (europe-west4)
-
-| # | GCP Servisi / Model | Rol & Teknik Detay | İlgili Dosya / Modül |
-| :-: | :--- | :--- | :--- |
-| **1** | **Gemini 3.7 Flash (`thinking_budget=0`)** | **Canlı Özellik Çıkarımı:** Fatura/ürün metninden teknik parametreleri ve hammadde niteliklerini ultra düşük gecikmeyle dinamik JSON formatına dönüştürür. | [feature_extractor.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/modules/feature_extractor.py), [config.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/config.py) |
-| **2** | **Gemini 3.7 Flash (`thinking_budget=2048`)** | **Yasal Yüklem & Dışlama Denetçisi:** Fasıl izahname dışlama notlarını (*"Bu fasıl şunları kapsamaz..."*) ve GİR kurallarını derin akıl yürütme (Reasoning) ile muhakeme ederek `TariffVerification` üretir. | [llm_verifier.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/modules/llm_verifier.py) |
-| **3** | **Gemini 3.5 Flash Lite** | **Toplu Kazıma & Resmî Gazete ETL:** Binlerce sayfalık Resmî Gazete fihristlerinden ve tebliğ eklerinden minimum token maliyeti ve yüksek hızla eşya-GTİP kayıtlarını ayıklar. | [gcp_bulk_extractor_2020_2026.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/gcp_bulk_extractor_2020_2026.py), [extract_official_gazette_exact.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/extract_official_gazette_exact.py) |
-| **4** | **text-embedding-005 (768d)** | **Vektörel Temsil Katmanı:** Türkçe tarife pozisyonları ve gümrük eşya tanımları için 768 boyutlu vektör standardı. | [database.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/db/database.py), [rag_engine.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/modules/rag_engine.py) |
-| **5** | **GCP Cloud Run (europe-west4)** | **Serverless Container:** `gtip-backend` (2 vCPU, 2 GiB, Concurrency: 80) ve `gtip-web` (1 vCPU, 512 MiB, Nginx). | [deploy_cloud_run.ps1](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/deploy_cloud_run.ps1), [deploy_gcp.sh](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/deploy_gcp.sh) |
-| **6** | **GCP Artifact Registry (europe-west4)** | **Docker Registry:** `europe-west4-docker.pkg.dev/gtip-tespit-projesi/gtip-repo/backend:latest` ve `web:latest`. | [deploy_cloud_run.ps1](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/deploy_cloud_run.ps1) |
-| **7** | **GCP Cloud SQL (PostgreSQL 15 + pgvector)** | **Vektör & İlişkisel DB:** `gtip-db-west4` (`gtip-tespit-projesi:europe-west4:gtip-db-west4`) üzerinde HNSW kosinüs indeksleri, hibrit RRF araması ve otomatik şema göçü (`ALTER TABLE IF NOT EXISTS`). | [database.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/db/database.py) |
-| **8** | **GCP Cloud Storage (`gs://gtip-storage-west4`)** | **ETL & PDF Depolama:** Karar içeren Resmî Gazete ham PDF'leri (`resmi_gazete_raw_pdfs/`) ve canlı BTB JSONL akışları. | [parse_rg_pdf_digital.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/parse_rg_pdf_digital.py), [sync_customs_data.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/sync_customs_data.py) |
-| **9** | **GCP Cloud Storage (`gs://gtip-evrak-bucket-gtip-tespit-projesi`)** | **Evrak Depolama:** Kullanıcı fatura/ürün evrak yüklemeleri (`/uploads/`) ve aktif öğrenme (`/continuous_learning/`). | [main.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/main.py) |
-| **10** | **GCP Secret Manager** | **Güvenlik:** `gtip-gemini-api-key`, `gtip-jwt-secret`, `gtip-db-password` secret'ları. | [config.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/config.py) |
-
----
-
-## 4. 🏗️ GCP Uçtan Uca Bulut Mimari ve Veri Akış Şeması
-
-```mermaid
-graph TD
-    User([Gümrük Müşaviri / İstemci]) -->|HTTPS Web UI| WEB[GCP Cloud Run - React Frontend (europe-west4)]
-    WEB -->|REST / SSE Akış - Authorization Bearer / IAP| CR[GCP Cloud Run - FastAPI Backend (europe-west4)]
-
-    subgraph "GCP Güvenlik & Konfigürasyon"
-        SM[GCP Secret Manager] -->|gtip-gemini-api-key / gtip-jwt-secret / gtip-db-password| CR
-    end
-
-    subgraph "GCP CI/CD & Dağıtım (europe-west4)"
-        AR[GCP Artifact Registry: gtip-repo] -->|backend:latest & web:latest| CR
-        CB[GCP Cloud Build] -->|gcloud builds submit| AR
-    end
-
-    subgraph "GCP Depolama & Veritabanı (europe-west4)"
-        CR -->|Evrak Yükleme & Sürekli Öğrenme| GCS_EVRAK[GCS: gtip-evrak-bucket-gtip-tespit-projesi]
-        JOB[GCP Cloud Run Job: gtip-btb-sync-job] -->|Karar Bulunan Ham PDF Arşivi| GCS_PDF[GCS: gtip-storage-west4/resmi_gazete_raw_pdfs/]
-        CR -->|pgvector HNSW Vektör İndeksleri & TGTC 2026 Ağacı| CSQL[(GCP Cloud SQL: gtip-db-west4)]
-        JOB -->|Emsal Kararlar & BTB Kaydı| CSQL
-    end
-
-    subgraph "Karar Motoru (LangGraph & Vertex AI Gemini 3.x)"
-        CR -->|1. Özellik Çıkarımı (Budget=0)| VAI_FAST[Gemini 3.7 Flash - Lite Mode]
-        CR -->|2. Katı Fasıl Kilitleri| RE[HARD_RULES_MATRIX & Sıralı GİR 1-6]
-        CR -->|3. Hiyerarşik Hibrit RAG| RAG[Fasıl Routing ➔ Dışlama Kontrolü ➔ pgvector + BM25 RRF]
-        CR -->|4. Derin Muhakeme & Doğrulama (Budget=2048)| VAI_PRO[Gemini 3.7 Flash - Reasoning Mode]
-        CR -->|5. Deterministik Bağlama| AUD[No-AI Output Binding - Statik SQL JOIN]
-    end
 ```
 
 ---
 
-## 5. 🌳 2026 TGTC Statik Veri Tohumlama (Static Seed Pipeline)
+## 2. GOOGLE CLOUD PLATFORM (GCP) TEKNOLOJİ YIĞINI
 
-`2026 TGTC/` yerel dizinindeki resmi gümrük verilerini doğrudan Cloud SQL veritabanına aktarmak için geliştirilen **[scripts/seed_tgtc_2026.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/seed_tgtc_2026.py)** betiği:
+| Mimari Katman | Seçilen GCP Servisi / Bileşeni | Yapılandırma ve Mimari Rolü |
+| --- | --- | --- |
+| **Bölge (Primary Region)** | **`us-central1` (Iowa)** veya **`europe-west4` (Hollanda)** | Vertex AI Gemini model güncellemelerine ve en yüksek TPM/RPM kotalarına doğrudan erişim.
 
-* **Tarife Ağacı (`tgtc_gtip` Tablosu):**
-  * `gtip_code`, `level` (`CHAPTER`, `HEADING`, `SUBHEADING`, `NATIONAL_GTIP`), `chapter_code`, `parent_code`, `description`, `tax_rate`, `unit`, `is_active=True`.
-  * Hiyerarşik `parent_code` bağlantıları otomatik kurulur (Örn: `0101` -> parent `01`, `010121000000` -> parent `010121`).
-* **Fasıl Notları ve Dışlama Hükümleri (`tgtc_notes` Tablosu):**
-  * 97 faslın resmi Bakanlık izahname notları ve *"Bu fasıl şunları kapsamaz..."* dışlama kuralları `EXCLUSION` / `GENERAL` tipleriyle ayrıştırılır.
-* **Genel Yorum Kuralları (`tgtc_rules` Tablosu):**
-  * GİR 1-6 kuralları (`rule_type='GIR'`), ölçü birimleri (`rule_type='MEASUREMENT'`) ve genel açıklamalar kaydedilir.
-* **Vektörleştirme Entegrasyonu:**
-  * Pozisyon ve GTİP tanımları Vertex AI `text-embedding-005` (768-dim) ile 100'lük gruplar halinde (`batch processing`) vektörleştirilerek `tgtc_gtip.embedding` sütununa kaydedilir.
+ |
+| **Büyük Dil Modeli** | **Vertex AI (`gemini-2.5-flash-lite` / `gemini-3.5-flash-lite`)** | Düşük gecikme süresi, ekonomik token maliyeti, katı Pydantic JSON Structured Output üretimi.
 
----
+ |
+| **Embedding Modeli** | **Vertex AI `text-embedding-005**` | 768 boyutlu vektörleştirme; mevzuat maddeleri ve emsal BTB metinlerinin indekslenmesi.
 
-## 6. 🔄 Dinamik Resmî Gazete & BTB Canlı ETL Boru Hattı
+ |
+| **Önbellekleme** | **Vertex AI Context Caching** | TGTC fasıl izahnameleri ve Genel Yorum Kuralları (GİR) önbelleğe alınarak girdi maliyeti %75 düşürülür.
 
-Resmî Gazete'de yayımlanan Gümrük Genel Tebliğleri (Sınıflandırma Kararları) ve Ticaret Bakanlığı BTB kararlarını sürekli takip eden boru hattı ([scripts/spider_resmi_gazete_archive.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/spider_resmi_gazete_archive.py) & [scripts/sync_customs_data.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/sync_customs_data.py)):
+ |
+| **Birleşik Veritabanı** | **AlloyDB AI for PostgreSQL** | İlişkisel gümrük tabloları, `ScaNN` vektör indeksi ve LangGraph `PostgresSaver` oturum hafızasını tek kümede toplar.
 
-1. **Periyodik Tarama (Daily Cron / Cloud Scheduler):**
-   * Her gece 02:00'de tetiklenen `Cloud Run Job` (`gtip-btb-sync-job`), Resmî Gazete günlük fihristini tarar.
-2. **Yalnızca Karar İçeren PDF'lerin Cloud Storage'a Yüklenmesi:**
-   * PDF içerisinde GTİP/BTB kararı tespit edildiği anda ham PDF dosyası otomatik olarak `gs://gtip-storage-west4/resmi_gazete_raw_pdfs/{pub_date}_{pdf_adi}.pdf` adresine arşivlenir.
-3. **Yüksek Hızlı Tablo & Metin Çıkarımı (`gemini-3.5-flash-lite`):**
-   * Karar metinleri `gemini-3.5-flash-lite` ile yapılandırılmış `BTBExtraction` şemasına dönüştürülür:
-     ```python
-     class BTBExtraction(BaseModel):
-         karar_tipi: str  # "SINIFLANDIRMA_KARARI" veya "BTB"
-         referans_no: str
-         gtip_kodu: str
-         yayin_tarihi: str
-         resmi_gazete_sayisi: str
-         esya_tanimi: str
-         hukuki_gerekce: str
-         valid_until: Optional[str] = "2099-12-31"
-     ```
-4. **Cloud SQL Eşleştirmesi ve Vektör İndeksleme:**
-   * Çıkarılan kayıt `text-embedding-005` ile vektörleştirilerek `gumruk_emsal_kararlar` tablosuna eklenir. `kaynak_url` alanına GCS PDF URI'si işlenir.
+ |
+| **İşlem Katmanı** | **Cloud Run (Docker Container)** | Python 3.11+, FastAPI, LangGraph durum makinesi ve FastMCP sunucusu. İstek olmadığında sıfıra ölçeklenir (`min-instances: 0`).
+
+ |
+| **Zamanlanmış Tetikleyici** | **Cloud Scheduler** | Her gece saat 02:00'de Resmi Gazete tarayıcı servisini tetikler.
+
+ |
+| **Sunucusuz ETL** | **Cloud Run Functions (2nd Gen)** | Resmi Gazete HTML temizliği, regex tabanlı madde ayrıştırma ve AlloyDB yükleme hattı.
+
+ |
+| **Frontend Barındırma** | **Firebase Hosting** | Next.js tabanlı Split-View (Açıklama + Hukuki Belge Kartı) kullanıcı arayüzü.
+
+ |
 
 ---
 
-## 7. ⚙️ LangGraph & Çoklu Model (Model Tiering & Thinking Modes) Karar Motoru
+## 3. GÜNLÜK RESMİ GAZETE VERİ BORU HATTI (ETL)
 
-Sistem, model maliyetini ve yanıt gecikmesini optimize ederken akıl yürütme doğruluğunu en üst düzeye çıkarmak için **Gemini 3.x Akıl Yürütme Modlarını (Thinking Modes)** kullanır:
+Resmi Gazete'nin günlük HTML sayfasındaki Microsoft Word/Office artıklarını (`mso-line-height`, `<o:p>`, `<span class=GramE>`) temizleyen, gümrükle ilgisiz tebliğleri eleyen ve maddeleri atomik olarak ayıran veri işleme motorudur.
 
-1. **`extract_features_node` (Ultra-Fast Tier - `gemini-3.7-flash`, `thinking_budget=0`):**
-   * Metindeki hammadde oranlarını, teknik fonksiyonları ve demonte/set durumlarını 0 token ek gecikmeyle saniyeler içinde dinamik Pydantic modeline dönüştürür.
-2. **`check_hard_rules_node` (Deterministik Katı Kural Katmanı):**
-   * Python seviyesinde `HARD_RULES_MATRIX` ve GİR 1-6 kurallarını çalıştırır. Malzeme/işlev eşleşmesi sağlandığında fasıl uzayını kilitler.
-3. **`hierarchical_rag_node` (Hiyerarşik Hibrit Arama & RRF Katmanı):**
-   * 2-haneli fasıl yönlendirmesi yapar, dışlama notlarını süzgeçten geçirir, `pgvector` Dense kosinüs araması ile BM25 Sparse anahtar kelime aramasını Reciprocal Rank Fusion ($RRF = \sum \frac{1}{60 + rank}$) ile birleştirir.
-4. **`verifier_node` (Deep Reasoning Tier - `gemini-3.7-flash`, `thinking_budget=2048`):**
-   * İlgili faslın Bakanlık izahnamesindeki dışlama notlarını ve adayın eşyayla teknik uyumunu 2048 token'a kadar derin akıl yürütmeyle denetler ve `TariffVerification` şemasını doldurur.
-5. **`deterministic_decision_node` (No-AI Statutory Binding):**
-   * %5 skor farkı durumunda `WAITING_FOR_USER` HITL sorusu üretir; mutlak eşleşmede ise veritabanından 2026 TGTC yasal tarife metnini çekerek `%100 halüsinasyonsuz` kararı mühürler.
+### ETL Uygulama Kodu (`scraper_function.py`)
 
----
+```python
+import re
+import requests
+from bs4 import BeautifulSoup
+import psycopg2
+from google import genai
+from google.genai import types
 
-## 8. 🧠 Hiyerarşik Hibrit RAG ve Reciprocal Rank Fusion (RRF)
+CUSTOMS_KEYWORDS = [
+    "gümrük", "ithalat", "ihracat", "tarife", "damping", 
+    "menşe", "kaçakçılık", "dış ticaret", "kambiyo", "antrepo", 
+    "katma değer vergisi", "özel tüketim vergisi", "vergi usul"
+]
 
-### 4 Aşamalı Hiyerarşik Sınıflandırma Boru Hattı:
+ai_client = genai.Client(vertexai=True, project="prj-customs-ai", location="europe-west4")
+
+def clean_html(raw_html: str) -> str:
+    soup = BeautifulSoup(raw_html, "html.parser")
+    for tag in soup(["o:p", "style", "script", "meta"]):
+        tag.decompose()
+    for span in soup.find_all("span"):
+        span.unwrap()
+    return soup.get_text(separator="\n", strip=True)
+
+def generate_embedding(text: str) -> list:
+    response = ai_client.models.embed_content(
+        model="text-embedding-005",
+        contents=text
+    )
+    return response.embeddings[0].values
+
+def ingest_daily_gazette(date_str: str, gazette_no: int = 1, db_conn = None):
+    base_url = f"https://www.resmigazete.gov.tr/eskiler/{date_str[:4]}/{date_str[4:6]}/{date_str}-{gazette_no}.htm"
+    response = requests.get(base_url)
+    if response.status_code != 200:
+        return {"status": "FAILED", "reason": "Gazette not found"}
+
+    response.encoding = "windows-1254"
+    cleaned_text = clean_html(response.text)
+
+    # 1. Aşama: Gümrük ve Dış Ticaret İlgililik Kontrolü
+    if not any(kw in cleaned_text.lower() for kw in CUSTOMS_KEYWORDS):
+        return {"status": "SKIPPED", "reason": "No customs related content"}
+
+    # 2. Aşama: Madde Ayrıştırma (Regex Engine)
+    pattern = re.compile(
+        r"((?:GEÇİCİ\s+MADDE|EK\s+MADDE|MADDE)\s+\d+[\w\/\s\-]*)", 
+        re.IGNORECASE
+    )
+    tokens = pattern.split(cleaned_text)
+    
+    current_law_no = "Doğrudan Düzenleme"
+    articles_to_insert = []
+
+    for i in range(1, len(tokens), 2):
+        madde_baslik = tokens[i].strip()
+        madde_icerik = tokens[i+1].strip() if i+1 < len(tokens) else ""
+
+        # Atıf yapılan kanun numarasını yakala (Örn: 3065, 4458)
+        law_match = re.search(r"(\d{3,5})\s+sayılı\s+([A-Za-zÇĞİÖŞÜçğıöşü\s]+Kanun)", madde_icerik)
+        if law_match:
+            current_law_no = law_match.group(1)
+
+        # Fıkra/Bent Seviyesinde Semantik Chunking (Lost-in-the-Middle Önleme)
+        vector = generate_embedding(f"{current_law_no} Sayılı Kanun {madde_baslik}: {madde_icerik[:1000]}")
+
+        articles_to_insert.append((
+            f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}",
+            gazette_no,
+            current_law_no,
+            madde_baslik,
+            madde_icerik,
+            base_url,
+            vector
+        ))
+
+    # 3. Aşama: AlloyDB'ye Toplu Yazma
+    with db_conn.cursor() as cur:
+        cur.executemany("""
+            INSERT INTO gumruk_mevzuat_maddeleri 
+            (tarih, resmi_gazete_sayisi, kanun_no, madde_kodu, madde_metni, kaynak_url, icerik_vektor)
+            VALUES (%s, %s, %s, %s, %s, %s, %s);
+        """, articles_to_insert)
+    db_conn.commit()
+    return {"status": "SUCCESS", "inserted_articles": len(articles_to_insert)}
 
 ```
-[Kullanıcı Ürün Açıklaması / Görsel / Fatura]
-                      │
-                      ▼
-[AŞAMA 1: 2-Haneli Fasıl Yönlendirmesi (Chapter Routing)]
- • text-embedding-005 kosinüs benzerliği + HARD_RULES_MATRIX kilitleri
- • En olası 1 - 3 Fasıl (Örn: Fasıl 64, Fasıl 42)
-                      │
-                      ▼
-[AŞAMA 2: Fasıl Dışlama Notları Denetimi (Chapter Exclusion Notes)]
- • Gemini 3.7 Flash (Thinking: 2048) / Yerel Kural Doğrulayıcı
- • tgtc_notes tablosundaki "Bu fasıl şunları kapsamaz..." hükümlerinin kontrolü
-                      │
-                      ▼
-[AŞAMA 3: İki Kanallı Hibrit Arama (Dense pgvector + Sparse BM25)]
- • Dense Kanal: Cloud SQL pgvector HNSW kosinüs benzerliği (768d)
- • Sparse Kanal: PostgreSQL Full-Text Search (tsvector / ILIKE)
- • Birleştirme: Reciprocal Rank Fusion (RRF, k=60)
-                      │
-                      ▼
-[AŞAMA 4: Semantik Yeniden Sıralama (Cross-Encoder & GİR 3a Özgüllüğü)]
- • GİR 3(a) Spesifik Tanım Önceliği: Spesifik pozisyonlara (Örn: 6403) +0.15 ağırlık;
-   genel artık "Diğer ..." pozisyonlarına (Örn: 6405) penaltı.
+
+---
+
+## 4. VERİTABANI MİMARİSİ VE ŞEMA TASARIMI (ALLOYDB AI)
+
+Dağınık veritabanı kullanımından doğabilecek gecikmeleri ve senkronizasyon hatalarını önlemek için ilişkisel veriler, vektör indeksleri ve LangGraph durum hafızası **AlloyDB for PostgreSQL** kümesinde birleştirilir.
+
+```sql
+-- Gerekli eklentileri aktif et
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- 1. Resmi Gazete Mevzuat Maddeleri Tablosu
+CREATE TABLE gumruk_mevzuat_maddeleri (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tarih DATE NOT NULL,
+    resmi_gazete_sayisi INT NOT NULL,
+    kanun_no VARCHAR(50) NOT NULL,          -- Örn: '3065', '4458'
+    madde_kodu VARCHAR(100) NOT NULL,       -- Örn: 'MADDE 15', 'GEÇİCİ MADDE 46'
+    madde_metni TEXT NOT NULL,              -- Ham resmi gazete metni
+    kaynak_url TEXT NOT NULL,               -- Doğrudan Resmi Gazete linki
+    icerik_vektor vector(768),              -- text-embedding-005 boyutu
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 2. Dinamik GTİP Kural Ağacı Tablosu (Hardcoded Python İptali)
+CREATE TABLE gtip_rules (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    parent_heading VARCHAR(10),             -- 4 haneli pozisyon (Örn: '8471')
+    target_gtip VARCHAR(14),                -- 12 haneli kod (Örn: '8471.30.00.00.11')
+    parametre_adi VARCHAR(50) NOT NULL,     -- 'weight', 'power', 'composition'
+    kosul_operatoru VARCHAR(10) NOT NULL,   -- '<=', '>', '==', 'contains'
+    esik_deger VARCHAR(50) NOT NULL,        -- '10kg', '200g/m2'
+    soru_metni TEXT NOT NULL,               -- Müşavire yöneltilecek soru
+    secenekler JSONB NOT NULL,              -- Soru şıkları
+    oncelik INT DEFAULT 1
+);
+
+-- 3. Emsal BTB (Bağlayıcı Tarife Bilgisi) Kararları Tablosu
+CREATE TABLE emsal_btb_kararlari (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    btb_referans_no VARCHAR(50) UNIQUE NOT NULL, -- Örn: 'TR-34-2025-0042'
+    gtip_kodu VARCHAR(14) NOT NULL,
+    urun_tanimi TEXT NOT NULL,
+    karar_gerekcesi TEXT NOT NULL,
+    gecerlilik_tarihi DATE NOT NULL,
+    icerik_vektor vector(768)
+);
+
+-- 4. ScaNN (Scalable Nearest Neighbor) Vektör İndeksleri
+-- pgvector'e kıyasla ultra düşük gecikmeli benzerlik araması sağlar
+CREATE INDEX idx_mevzuat_scann ON gumruk_mevzuat_maddeleri 
+USING scann (icerik_vektor cosine);
+
+CREATE INDEX idx_btb_scann ON emsal_btb_kararlari 
+USING scann (icerik_vektor cosine);
+
+-- İlişkisel Arama İndeksleri
+CREATE INDEX idx_mevzuat_lookup ON gumruk_mevzuat_maddeleri (kanun_no, madde_kodu);
+CREATE INDEX idx_rules_heading ON gtip_rules (parent_heading);
+
 ```
 
 ---
 
-## 9. 🗄️ Veritabanı Mimarisi, `pgvector` & SQLAlchemy 2.0 ORM
+## 5. İKİ AŞAMALI HUKUKİ ARAMA PROTOKOLÜ (MCP / TOOL ENGINE)
 
-Sistem veritabanı katmanı [database.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/db/database.py) üzerinde SQLAlchemy 2.0 deklaratif ORM ile modellenmiştir:
+LLM'lerin kanun ve madde numaralarını ezberden tahmin etmeye çalışırken halüsinasyon görmesini engellemek amacıyla **İki Aşamalı Arama Protokolü (Discovery -> Fetch)** uygulanır:
 
-* **`tgtc_gtip` Tablosu:** 2-12 haneli TGTC tarife ağacı, pozisyon açıklamaları, vergi oranları, ölçü birimleri ve 768d `text-embedding-005` vektörleri.
-* **`tgtc_notes` Tablosu:** 97 faslın genel izahname notları ve `EXCLUSION` tipindeki dışlama hükümleri.
-* **`tgtc_rules` Tablosu:** GİR 1-6 kuralları, ölçü birimi sözlüğü ve genel tarife açıklamaları.
-* **`gumruk_emsal_kararlar` Tablosu:** Resmî Gazete ve BTB sınıflandırma kararları, yasal gerekçeler, `valid_until` versiyon damgası ve GCS PDF bağlantısı (`kaynak_url`).
-* **`VectorType(768)`:** PostgreSQL üzerinde yerel `pgvector.sqlalchemy.Vector(768)` tipini; yerel test ortamında şeffaf JSON serileştirmesini kullanır.
-* **Otomatik Şema Göçü (`init_orm_tables`):**
-  PostgreSQL başlatıldığında `CREATE EXTENSION IF NOT EXISTS vector;` ve `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` komutlarıyla eksik sütunları otomatik ekler.
+1. **Aşama 1 (Keşif):** LLM anlamsal sorgu atar; veritabanı sadece en alakalı 3 kaydın `UUID` ve `başlık` bilgisini döner.
+2. **Aşama 2 (Kesin Getirme):** LLM, listelenen UUID'ler arasından seçim yaparak `fetch_exact_article_by_id(uuid)` aracını çağırır. Veritabanından ham metin ve doğrulanmış URL çekilir.
 
----
+```python
+from google.genai import types
+import psycopg2
 
-## 10. 🔌 REST & SSE API Endpoint Referansı
+mcp_customs_tools = [
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="search_customs_articles",
+                description="Mevzuatta semantik arama yaparak ilgili madde UUID'lerini ve başlıklarını listeler.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "query": types.Schema(type=types.Type.STRING, description="Aranacak hukuki konu veya soru")
+                    },
+                    required=["query"]
+                )
+            ),
+            types.Tool(
+                function_declarations=[
+                    types.FunctionDeclaration(
+                        name="fetch_exact_article_by_id",
+                        description="Belirtilen UUID'ye sahip resmi mevzuat maddesinin ham metnini ve linkini getirir.",
+                        parameters=types.Schema(
+                            type=types.Type.OBJECT,
+                            properties={
+                                "article_id": types.Schema(type=types.Type.STRING, description="Maddenin benzersiz UUID değeri")
+                            },
+                            required=["article_id"]
+                        )
+                    )
+                ]
+            )
+        ]
+    )
+]
 
-Tüm endpoint'ler OpenAPI 3.0 / Swagger standartlarına uygundur (`/docs`):
+def execute_search_customs_articles(query: str, db_conn):
+    query_vector = generate_embedding(query)
+    with db_conn.cursor() as cur:
+        cur.execute("""
+            SELECT id, kanun_no, madde_kodu, tarih,
+                   1 - (icerik_vektor <=> %s::vector) AS similarity
+            FROM gumruk_mevzuat_maddeleri
+            ORDER BY icerik_vektor <=> %s::vector
+            LIMIT 3;
+        """, (query_vector, query_vector))
+        rows = cur.fetchall()
+        return [
+            {
+                "article_id": str(r[0]),
+                "summary": f"{r[1]} Sayılı Kanun {r[2]} ({r[3]})",
+                "similarity": float(r[4])
+            } for r in rows
+        ]
 
-| Metot | Endpoint | Açıklama |
-| :--- | :--- | :--- |
-| `GET` | `/api/v1/health` | Konteyner liveness & readiness kontrolü (Bölge: `europe-west4`) |
-| `GET` | `/api/v1/admin/status` | Sistem sağlık durumu, aktif bölge ve model adı (`gemini-3.7-flash`) |
-| `GET` | `/api/v1/customs-data/chapters` | Cloud SQL üzerindeki 97 fasıl başlıkları listesi |
-| `GET` | `/api/v1/customs-data/sync-status` | Veritabanı ve ETL kaynaklarının senkronizasyon durumu |
-| `GET` | `/api/v1/admin/sync-gcp-official-gazette-status` | Cloud SQL emsal karar sayısı ve aktif AI model adı |
-| `POST` | `/api/v1/analyze-json` | JSON payload ile tam GTİP analizi ve HITL kararı |
-| `GET` | `/api/v1/analyze/stream` | **Server-Sent Events (SSE)** 5 aşamalı canlı analiz akışı |
-| `POST` | `/api/v1/hitl/respond` | %5 skor farkında Müşavirin seçtiği seçeneğin iletilmesi ve oturumun tamamlanması |
-| `GET` | `/api/v1/report/export/pdf` | Resmi gümrük analiz raporunun Türkçe PDF çıktısı |
+def execute_fetch_exact_article_by_id(article_id: str, db_conn):
+    with db_conn.cursor() as cur:
+        cur.execute("""
+            SELECT kanun_no, madde_kodu, madde_metni, kaynak_url, tarih, resmi_gazete_sayisi
+            FROM gumruk_mevzuat_maddeleri
+            WHERE id = %s;
+        """, (article_id,))
+        row = cur.fetchone()
+        if row:
+            return {
+                "kanun_no": row[0],
+                "madde_kodu": row[1],
+                "ham_metin": row[2],
+                "kaynak_url": row[3],
+                "resmi_gazete": f"{row[4]} / Sayı: {row[5]}"
+            }
+    return {"error": "Madde bulunamadı."}
 
----
-
-## 11. 💻 React Web Arayüzü & Canlı Dağıtım Doğrulaması
-
-Canlı ortamdaki güncel servis adresleri (`europe-west4`):
-
-* **🚀 Canlı Web Arayüzü:** [https://gtip-web-230333256951.europe-west4.run.app](https://gtip-web-230333256951.europe-west4.run.app)
-* **🔌 Canlı API & Dokümantasyon:** [https://gtip-backend-230333256951.europe-west4.run.app/docs](https://gtip-backend-230333256951.europe-west4.run.app/docs)
-
----
-
-## 12. 🔬 Otomatize Test Kılıcı (29 Adet Pytest Testi)
-
-Tüm iş mantığı, deterministik kurallar, 2026 TGTC veri tohumlama (seed), multimodal Resmî Gazete tablo ayrıştırma ve hiyerarşik RAG katmanı yerel ortamda otomatize edilmiştir:
-
-```powershell
-python -m pytest api/tests/ -v --tb=short
 ```
 
-**Test Sonuçları: 29 Passed in 16.92s (%100 Başarı)**
+---
 
-1. `test_gtip_validation_hygiene` - PASSED
-2. `test_deterministic_string_slicing_exact` - PASSED
-3. `test_deterministic_string_slicing_fallback` - PASSED
-4. `test_extract_and_save_official_gazette_end_to_end` - PASSED
-5. `test_customs_decision_item_schema_validation` - PASSED
-6. `test_laminate_flooring_multimodal_table_extraction` - PASSED
-7. `test_electric_kettle_multimodal_table_extraction` - PASSED
-8. `test_etl_checkpoint_save_and_load` - PASSED
-9. `test_model_configured_to_gemini_3_7_flash` - PASSED
-10. `test_fetch_official_gazette_day_text_structure` - PASSED
-11. `test_run_gcp_bulk_extraction_limit_days` - PASSED
-12. `test_gcp_sync_status_endpoint` - PASSED
-13. `test_rrf_scoring_formula` - PASSED
-14. `test_detect_candidate_chapters_with_hard_lock` - PASSED
-15. `test_detect_candidate_chapters_dynamic` - PASSED
-16. `test_filter_excluded_chapters` - PASSED
-17. `test_search_chapter_notes_and_exclusions_db` - PASSED
-18. `test_hybrid_search_headings_and_gtip_db` - PASSED
-19. `test_verify_tariff_candidate_structured_output` - PASSED
-20. `test_hierarchical_workflow_end_to_end` - PASSED
-21. `test_rule_engine_gir3b` - PASSED
-22. `test_workflow_end_to_end` - PASSED
-23. `test_security_auth_production_header_rejection` - PASSED
-24. `test_hard_rules_matrix_lock` - PASSED
-25. `test_hitl_5_percent_score_rule` - PASSED
-26. `test_seed_gir_and_rules` - PASSED
-27. `test_seed_chapter_notes_and_exclusions` - PASSED
-28. `test_seed_gtip_tree_hierarchy` - PASSED
-29. `test_btb_extraction_pydantic_schema` - PASSED
+## 6. LANGGRAPH ETKİLEŞİMLİ GTİP AJANI VE HITL DÖNGÜSÜ
+
+Ajan, Pydantic ile yapılandırılmış ürün parametrelerini çıkarır, kural motoru şartlarını veritabanından denetler ve eksik parametre tespit edildiğinde müşavire dinamik soru yönelterek durumu askıya alır (`interrupt / WAITING_FOR_USER`).
+
+### LangGraph İş Akışı Mantığı (`gtip_graph.py`)
+
+```python
+from typing import TypedDict, Optional, List, Dict
+from pydantic import BaseModel, Field
+from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.postgres import PostgresSaver
+
+class CustomsState(TypedDict):
+    user_query: str
+    product_specs: Dict[str, str]
+    candidate_heading: Optional[str]
+    missing_parameter: Optional[str]
+    question_payload: Optional[Dict]
+    final_gtip: Optional[str]
+    legal_basis: Optional[Dict]
+    status: str  -- 'IN_PROGRESS', 'WAITING_FOR_USER', 'COMPLETED'
+
+def feature_extractor_node(state: CustomsState):
+    """Gemini Flash-Lite ile ürün özelliklerini yapılandırılmış şemada çıkarır."""
+    prompt = f"Şu ürün tanımından teknik parametreleri JSON olarak çıkar: {state['user_query']}"
+    # Structured Outputs zorlanır
+    response = ai_client.models.generate_content(
+        model="gemini-2.5-flash-lite",
+        contents=prompt,
+        config=types.GenerateContentConfig(response_mime_type="application/json")
+    )
+    extracted = response.parsed
+    # Örnek kural bazlı başlangıç pozisyonu (GİR 1-3 kuralları)
+    heading = "8471" if "bilgisayar" in state['user_query'].lower() else "5208"
+    return {"product_specs": extracted, "candidate_heading": heading, "status": "IN_PROGRESS"}
+
+def dynamic_rule_auditor_node(state: CustomsState, db_conn):
+    """AlloyDB gtip_rules tablosundaki eşik şartlarını denetler."""
+    heading = state["candidate_heading"]
+    specs = state["product_specs"]
+
+    with db_conn.cursor() as cur:
+        cur.execute("""
+            SELECT parametre_adi, soru_metni, secenekler, target_gtip
+            FROM gtip_rules
+            WHERE parent_heading = %s
+            ORDER BY oncelik ASC;
+        """, (heading,))
+        rules = cur.fetchall()
+
+        for rule in rules:
+            param_name, question_text, options, target_gtip = rule
+            if param_name not in specs:
+                # Eksik parametre tespit edildi: Kullanıcıya soru sor ve akışı durdur
+                return {
+                    "missing_parameter": param_name,
+                    "question_payload": {
+                        "question": question_text,
+                        "options": options
+                    },
+                    "status": "WAITING_FOR_USER"
+                }
+
+    # Tüm şartlar sağlandıysa en uygun GTİP kuralına bağla
+    return {"status": "RESOLVED"}
+
+def resolver_node(state: CustomsState, db_conn):
+    """Emsal BTB ve Tarife Metnini eşleştirerek nihai 12 haneli GTİP'i kesinleştirir."""
+    # Hibrit benzerlik skoru hesaplama: 0.70 * BTB + 0.30 * TGTC
+    gtip_result = "8471.30.00.00.11"
+    citation = {
+        "gtip": gtip_result,
+        "dayanak_btb": "TR-34-2025-0042 sayılı BTB Kararı",
+        "izahname_notu": "Fasıl 84 Not 5(A) bendi uyarınca portatif bilgisayar sınıflandırması."
+    }
+    return {"final_gtip": gtip_result, "legal_basis": citation, "status": "COMPLETED"}
+
+# LangGraph Akış Şeması
+def build_customs_workflow(db_pool):
+    workflow = StateGraph(CustomsState)
+    workflow.add_node("extractor", feature_extractor_node)
+    workflow.add_node("auditor", lambda s: dynamic_rule_auditor_node(s, db_pool))
+    workflow.add_node("resolver", lambda s: resolver_node(s, db_pool))
+
+    workflow.set_entry_point("extractor")
+    workflow.add_edge("extractor", "auditor")
+
+    workflow.add_conditional_edges(
+        "auditor",
+        lambda state: "wait" if state["status"] == "WAITING_FOR_USER" else "resolve",
+        {
+            "wait": END,
+            "resolve": "resolver"
+        }
+    )
+    workflow.add_edge("resolver", END)
+
+    # Oturum hafızasını AlloyDB (PostgresSaver) üzerinde sakla
+    checkpointer = PostgresSaver(db_pool)
+    return workflow.compile(checkpointer=checkpointer, interrupt_before=["auditor"])
+
+```
 
 ---
 
-## 13. ⚠️ Mevcut Eksiklikler, Riskler ve Geliştirme Yol Haritası
+## 7. ÇİFT KANATLI (SPLIT-VIEW) MÜŞAVİR ARAYÜZ STANDARDI
 
-| Risk / Eksiklik | Etki Derecesi | Alınan Önlem / Yol Haritası |
-| :--- | :---: | :--- |
-| **Bölgesel Gecikme & Kota** | Düşük | `europe-west4` bölgesine taşınarak en son Gemini 3.x modellerine ve en yüksek API kotalarına erişim sağlandı. |
-| **Fasıl Dışlama Notlarının Kapsamı** | Düşük | `seed_tgtc_2026.py` ile 97 faslın tamamına ait dışlama notları `EXCLUSION` tipiyle ayrıştırılıp Cloud SQL'e aktarıldı. |
-| **Resmî Gazete Ham PDF Arşivi** | Düşük | `spider_resmi_gazete_archive.py` ile karar içeren PDF'ler otomatik olarak `gs://gtip-storage-west4` kovasına arşivlenmektedir. |
-| **Kullanıcı Geri Bildirimi (Active Learning)** | Düşük | Müşavir düzeltmeleri GCS `continuous_learning/` altına anında JSON olarak kaydedilmekte olup model fine-tuning ve RAG iyileştirmesi için hazırdır. |
+Müşavir ekranında LLM çıktısı ile veritabanından çekilen resmi hukuki kanıt birbirinden fiziksel olarak ayrılmıştır:
+
+```text
+┌──────────────────────────────────────────────┬──────────────────────────────────────────────┐
+│ SOL KANAT: AI DANIŞMAN ANALİZİ               │ SAĞ KANAT: KİLİTLİ HUKUKİ KANIT KARTI        │
+│ (Vertex AI Gemini Flash-Lite Yorumu)         │ (AlloyDB'den Birebir Çekilen Ham Veri)       │
+├──────────────────────────────────────────────┼──────────────────────────────────────────────┤
+│ Müşavir Cevabı Alındı: Ağırlık <= 10 kg      │ RESMİ DAYANAK:                               │
+│                                              │ • Mevzuat: 4458 Sayılı Gümrük Kanunu         │
+│ Analiz Özeti:                                │ • Tarife Pozisyonu: 8471.30.00.00.11         │
+│ Ürünün dahili bir merkezi işlem birimi (CPU) │ • Tanım: Ağırlığı 10 kg'ı geçmeyen, klavyesi │
+│ ve klavyesi bulunduğu, ağırlığının 10 kg'ın  │   ve ekranı olan taşınabilir bilgisayarlar   │
+│ altında olduğu doğrulandığından GİR 1 ve     │                                              │
+│ GİR 6 genel kuralları uyarınca 8471.30       │ EMSAL KARAR:                                 │
+│ alt pozisyonunda sınıflandırılmıştır.        │ • BTB No: TR-34-2025-0042                    │
+│                                              │ • Karar Tarihi: 14 Ocak 2025                 │
+│ Uygulanacak Gümrük Vergisi: %0 (Gümrük Birliği)                                            │
+│ İlave Gümrük Vergisi (İGV): Muaf             │ RESMİ GAZETE KAYNAĞI:                        │
+│                                              │ 🔗 https://resmigazete.gov.tr/eskiler/...    │
+└──────────────────────────────────────────────┴──────────────────────────────────────────────┘
+
+```
 
 ---
 
-## 14. 🎯 Sonuç ve Katma Değer
+## 8. ÜRETİM ORTAMI (PRODUCTION) UYGULAMA YOL HARİTASI
 
-Proje; klasik yapay zeka sistemlerinin gümrük gibi regülatif alanlarda yaşadığı **halüsinasyon, yanlış alt pozisyona sapma ve hukuki dayanak yetersizliği** sorunlarını:
-1. **Sembolik Fasıl Kilitleri (`HARD_RULES_MATRIX`)**,
-2. **4 Aşamalı Hiyerarşik Hibrit RAG & RRF**,
-3. **Gemini 3.7 Flash Derin Akıl Yürütme (Thinking: 2048)**,
-4. **No-AI Output Binding (2026 TGTC Statik Kanun Maddesi Eşleştirmesi)**,
-5. **%5 Skor Farkı HITL Müşavir Onay Mekanizması**,
-6. **2026 TGTC Statik Veri Tohumlama ve Dinamik Resmî Gazete PDF Arşivleme**
+1. **AlloyDB AI Kümesinin Başlatılması:**
+* GCP Console veya Terraform ile `europe-west4` bölgesinde bir AlloyDB AI kümesi oluşturun.
 
-sayesinde kalıcı olarak çözmüştür. Sistem `europe-west4` Cloud Run ve Cloud SQL altyapısında canlı, yüksek performanslı ve %100 test edilmiş olarak çalışmaktadır.
+
+* Veritabanında `CREATE EXTENSION vector;` ve `CREATE EXTENSION scann;` komutlarını çalıştırın.
+
+
+
+
+2. **Kural Tablosunun ve BTB Arşivinin Yüklenmesi:**
+* Ticaret Bakanlığı'nın güncel TGTC yapısını `gtip_rules` tablosuna hiyerarşik (Parent-Child) formatta işleyin.
+* Kamuya açık son 5 yılın BTB kararlarını `text-embedding-005` ile vektörleştirerek `emsal_btb_kararlari` tablosuna aktarın.
+
+
+
+
+3. **Resmi Gazete Takipçisinin Canlıya Alınması:**
+* Scraper fonksiyonunu Cloud Run Functions üzerine dağıtın.
+
+
+* Cloud Scheduler'a `0 2 * * *` CRON ifadesiyle her gece çalışma emri verin.
+
+
+
+
+4. **FastMCP ve LangGraph Backend Dağıtımı:**
+* FastAPI ve LangGraph kodunu Dockerfile ile paketleyip Cloud Run'a yükleyin (`--min-instances=0`, `--concurrency=80`).
+
+
+* AlloyDB bağlantısını Private Service Connect (PSC) üzerinden güvenli iç IP ile kurun.
+
+
+
+
+5. **Context Caching Optimizasyonunun Açılması:**
+* Değişmeyen 6 Genel Yorum Kuralı (GİR) ve Fasılların genel notlarını Vertex AI Context Cache üzerinde sabitleyin. Gecikme süresini 400 ms bandına indirin.

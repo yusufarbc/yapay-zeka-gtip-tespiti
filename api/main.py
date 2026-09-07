@@ -1,12 +1,13 @@
 import time
 import os
 import json
+import re
 import asyncio
 import logging
 from fastapi import FastAPI, HTTPException, Depends, Response, Form, UploadFile, File, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from typing import Optional, List
+from typing import Optional, List, Any
 from pydantic import BaseModel
 
 from api.config import settings
@@ -27,10 +28,19 @@ from scripts.spider_resmi_gazete_archive import run_spider_2020_to_2026
 from fastapi.responses import JSONResponse
 import traceback
 
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Uygulama başlangıç ve kapanış yaşam döngüsü yöneticisi."""
+    init_orm_tables()
+    yield
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    description="Gümrük Tarife İstatistik Pozisyonu (GTİP) Tespit ve Karar Destek Sistemi Serverless API"
+    description="Gümrük Tarife İstatistik Pozisyonu (GTİP) Tespit ve Karar Destek Sistemi Serverless API",
+    lifespan=lifespan
 )
 
 @app.exception_handler(Exception)
@@ -71,8 +81,8 @@ def startup_event():
 _cors_origins_raw = settings.CORS_ALLOWED_ORIGINS
 if settings.ENVIRONMENT == "production" and (_cors_origins_raw == "*" or not _cors_origins_raw):
     _cors_origins = [
-        "https://gtip-web-230333256951.europe-west4.run.app",
-        "https://gtip-web-230333256951.europe-west3.run.app"
+        "https://gtip-web-230333256951.us-central1.run.app",
+        "https://gumruk-mevzuat-web.uc.r.appspot.com"
     ]
     _allow_credentials = True
 elif _cors_origins_raw == "*":
@@ -495,61 +505,89 @@ async def get_audit_logs(request: Request, limit: int = Query(default=50, ge=1, 
 async def get_customs_btbs(db: Session = Depends(get_db)):
     """
     Resmi Gazete'den ve Ticaret Bakanlığı portallarından çekilen sınıflandırma kararlarını ve emsal BTB kararlarını döndürür.
+    Sıfır-duplikasyon garantisi ile tekilleştirilmiş kayıtları ve tıklandığında açılan GCS PDF linklerini sağlar.
     """
     results = []
-    seen_ids = set()
+    seen_keys = set()
 
-    # 1. Cloud SQL gumruk_siniflandirma_kararlari Tablosundan Çek
-    try:
-        siniflandirma_list = db.query(GumrukSiniflandirmaKarariModel).order_by(GumrukSiniflandirmaKarariModel.yayin_tarihi.desc()).all()
-        for s in siniflandirma_list:
-            if not s.esya_tanimi or "Sınıflandırma Kararı Kaydı" in s.esya_tanimi or "Resmî Gazete Sınıflandırma Kararı" in s.esya_tanimi:
-                continue
-            btb_id = f"RG-{s.yayin_tarihi}-{s.gtip_kodu}"
-            if btb_id not in seen_ids:
-                seen_ids.add(btb_id)
-                gtip_clean = str(s.gtip_kodu or "").replace(".", "").strip()
-                chap = gtip_clean[:2] if len(gtip_clean) >= 2 else "01"
-                
-                desc_text = s.esya_tanimi.strip()
-                legal_text = s.hukuki_gerekce or "Resmî Gazete Sınıflandırma Kararı"
+    def format_source_url(raw_url: Optional[str], pub_date: Any = None) -> Optional[str]:
+        if raw_url:
+            clean_u = str(raw_url).strip()
+            if clean_u.startswith("gs://"):
+                return f"https://storage.googleapis.com/{clean_u[5:]}"
+            if clean_u.startswith("http"):
+                return clean_u
+        if pub_date:
+            d_str = re.sub(r"[^\d]", "", str(pub_date))
+            if len(d_str) >= 8:
+                y, m, d = d_str[:4], d_str[4:6], d_str[6:8]
+                return f"https://www.resmigazete.gov.tr/eskiler/{y}/{m}/{y}{m}{d}.htm"
+        return "https://www.resmigazete.gov.tr"
 
-                results.append({
-                    "btb_no": btb_id,
-                    "gtip_code": s.gtip_kodu,
-                    "chapter": chap,
-                    "issue_date": str(s.yayin_tarihi or "2026-01-01"),
-                    "product_description": desc_text,
-                    "legal_justification": legal_text,
-                    "source_url": s.kaynak_url or None
-                })
-    except Exception as e_s:
-        logger.warning(f"[get_customs_btbs] Siniflandirma kararları okunurken uyarı: {e_s}")
-
-    # 2. Cloud SQL gumruk_emsal_kararlar Tablosundan Çek
+    # 1. Cloud SQL gumruk_emsal_kararlar Tablosundan Çek (En zengin referans_no ve GCS PDF bağlantılarına sahip)
     try:
         emsal_list = db.query(GumrukEmsalKararModel).order_by(GumrukEmsalKararModel.yayin_tarihi.desc()).all()
         for e in emsal_list:
-            if not e.esya_tanimi or "Emsal BTB Kaydı" in e.esya_tanimi or "Resmî Gazete Sınıflandırma Kararı" in e.esya_tanimi:
+            if not e.esya_tanimi or len(e.esya_tanimi.strip()) < 3:
                 continue
-            btb_id = e.referans_no or f"EMSAL-{e.gtip_kodu}-{e.id}"
-            if btb_id not in seen_ids:
-                seen_ids.add(btb_id)
-                gtip_clean = str(e.gtip_kodu or "").replace(".", "").strip()
-                chap = gtip_clean[:2] if len(gtip_clean) >= 2 else "01"
+            gtip_clean = str(e.gtip_kodu or "").replace(".", "").strip()
+            if len(gtip_clean) < 4:
+                continue
+
+            pub_date = str(e.yayin_tarihi or "2026-01-01")
+            desc_text = e.esya_tanimi.strip()
+            desc_key = desc_text[:40].lower()
+            unique_key = (gtip_clean, pub_date, desc_key)
+
+            if unique_key not in seen_keys:
+                seen_keys.add(unique_key)
+                chap = gtip_clean[:2]
+                btb_id = e.referans_no or f"RG-DEC-{pub_date.replace('-', '')}-{gtip_clean}"
 
                 results.append({
                     "btb_no": btb_id,
                     "gtip_code": e.gtip_kodu,
                     "chapter": chap,
-                    "issue_date": str(e.yayin_tarihi or "2026-01-01"),
-                    "product_description": e.esya_tanimi.strip(),
-                    "legal_justification": e.hukuki_gerekce or "Emsal BTB Kararı",
-                    "source_url": e.kaynak_url or None
+                    "issue_date": pub_date,
+                    "product_description": desc_text,
+                    "legal_justification": e.hukuki_gerekce or "Emsal Sınıflandırma Kararı",
+                    "source_url": format_source_url(e.kaynak_url, pub_date)
                 })
 
     except Exception as e_e:
         logger.warning(f"[get_customs_btbs] Emsal kararları okunurken uyarı: {e_e}")
+
+    # 2. Cloud SQL gumruk_siniflandirma_kararlari Tablosundan Eksikleri Tamamla (Varsa ek unique olanlar)
+    try:
+        siniflandirma_list = db.query(GumrukSiniflandirmaKarariModel).order_by(GumrukSiniflandirmaKarariModel.yayin_tarihi.desc()).all()
+        for s in siniflandirma_list:
+            if not s.esya_tanimi or len(s.esya_tanimi.strip()) < 3:
+                continue
+            gtip_clean = str(s.gtip_kodu or "").replace(".", "").strip()
+            if len(gtip_clean) < 4:
+                continue
+
+            pub_date = str(s.yayin_tarihi or "2026-01-01")
+            desc_text = s.esya_tanimi.strip()
+            desc_key = desc_text[:40].lower()
+            unique_key = (gtip_clean, pub_date, desc_key)
+
+            if unique_key not in seen_keys:
+                seen_keys.add(unique_key)
+                chap = gtip_clean[:2]
+                btb_id = f"RG-{pub_date.replace('-', '')}-{gtip_clean}"
+
+                results.append({
+                    "btb_no": btb_id,
+                    "gtip_code": s.gtip_kodu,
+                    "chapter": chap,
+                    "issue_date": pub_date,
+                    "product_description": desc_text,
+                    "legal_justification": s.hukuki_gerekce or "Resmî Gazete Sınıflandırma Kararı",
+                    "source_url": format_source_url(s.kaynak_url, pub_date)
+                })
+    except Exception as e_s:
+        logger.warning(f"[get_customs_btbs] Siniflandirma kararları okunurken uyarı: {e_s}")
 
     # 3. Eğer DB'de henüz dinamik kayıt yoksa Katalog Ön Belleğinden Yükle (Fallback)
     if not results:
@@ -558,6 +596,9 @@ async def get_customs_btbs(db: Session = Depends(get_db)):
             catalog = load_btb_catalog()
             if catalog:
                 real_btbs = [item for item in catalog if not str(item.get("btb_no", "")).startswith("TGTC2026-")]
+                for b in real_btbs:
+                    if not b.get("source_url"):
+                        b["source_url"] = format_source_url(b.get("kaynak_url"), b.get("issue_date"))
                 return real_btbs
         except Exception as e_c:
             logger.error(f"[get_customs_btbs Catalog Fallback Error] {e_c}", exc_info=True)
@@ -793,7 +834,7 @@ async def get_gcp_official_gazette_sync_status(db: Session = Depends(get_db)):
 
         return {
             "status": "HEALTHY",
-            "active_model": getattr(settings, "DEFAULT_LLM_MODEL", "gemini-3.6-flash"),
+            "active_model": getattr(settings, "DEFAULT_LLM_MODEL", "gemini-2.5-flash"),
             "cloud_sql_siniflandirma_kararlari_count": total_siniflandirma,
             "cloud_sql_emsal_kararlar_count": total_emsal,
             "latest_extracted_gtip": latest_record.gtip_kodu if latest_record else None,

@@ -419,7 +419,7 @@ function BTBTab({ btbs, chapters, isLoading }) {
                           onMouseEnter={e => e.currentTarget.style.background = 'rgba(99,102,241,0.18)'}
                           onMouseLeave={e => e.currentTarget.style.background = 'rgba(99,102,241,0.08)'}
                         >
-                          📄 RG
+                          {b.source_url?.endsWith('.pdf') || b.source_url?.includes('.pdf') ? '📄 PDF' : '🌐 RG'}
                         </a>
                       ) : (
                         <span style={{ color: 'var(--text-muted)', fontSize: '0.70rem' }}>—</span>

@@ -20,3 +20,19 @@ class GTIPState(TypedDict):
     legal_justification: Optional[str]
     precedents: List[Dict[str, Any]]
     audit_notes: List[str]
+
+class CustomsState(TypedDict):
+    """
+    gcp_architecture_report.md Bölüm 6 Şartnamesi:
+    LangGraph Etkileşimli GTİP Ajanı ve HITL Durum Makinesi Şeması.
+    """
+    session_id: str
+    user_query: str
+    product_specs: Dict[str, Any]
+    candidate_heading: Optional[str]
+    missing_parameter: Optional[str]
+    question_payload: Optional[Dict[str, Any]]
+    final_gtip: Optional[str]
+    legal_basis: Optional[Dict[str, Any]]
+    status: str # 'IN_PROGRESS' | 'WAITING_FOR_USER' | 'RESOLVED' | 'COMPLETED'
+    audit_notes: List[str]

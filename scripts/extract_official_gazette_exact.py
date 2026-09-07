@@ -75,8 +75,8 @@ def extract_tables_from_gazette_pdf(pdf_bytes: bytes, pub_date: str, gazette_no:
     if not pdf_bytes or len(pdf_bytes) < 100:
         return []
 
-    project_id = os.getenv("GCP_PROJECT_ID", "gtip-tespit-projesi")
-    location = os.getenv("GCP_REGION", "europe-west4")
+    project_id = os.getenv("GCP_PROJECT_ID", "gumruk-mevzuat")
+    location = os.getenv("GCP_REGION", "us-central1")
 
     prompt = f"""
     Resmî Gazete Tarihi: {pub_date}, Sayı: {gazette_no}.
@@ -117,7 +117,7 @@ def extract_tables_from_gazette_pdf(pdf_bytes: bytes, pub_date: str, gazette_no:
             }
 
         response = client.models.generate_content(
-            model="gemini-3.5-flash-lite",
+            model="gemini-2.5-flash-lite",
             contents=contents,
             config=config
         )
@@ -134,7 +134,7 @@ def extract_tables_from_gazette_pdf(pdf_bytes: bytes, pub_date: str, gazette_no:
             return parsed.items
         return []
     except Exception as e:
-        logger.warning(f"Multimodal PDF çıkarma hatası (gemini-3.5-flash-lite): {e}")
+        logger.warning(f"Multimodal PDF çıkarma hatası (gemini-2.5-flash-lite): {e}")
         # Fallback to digital pdf extraction if genai fails or offline
         try:
             from scripts.parse_rg_pdf_digital import extract_gtip_records_from_digital_pdf
@@ -182,11 +182,11 @@ def find_decision_boundaries(raw_text: str) -> BoundariesList:
         return BoundariesList(items=[])
 
     os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "true"
-    os.environ["GOOGLE_CLOUD_PROJECT"] = os.getenv("GCP_PROJECT_ID", "gtip-tespit-projesi")
+    os.environ["GOOGLE_CLOUD_PROJECT"] = os.getenv("GCP_PROJECT_ID", "gumruk-mevzuat")
     os.environ["GOOGLE_CLOUD_LOCATION"] = os.getenv("VERTEX_AI_LOCATION", "us-central1")
 
 
-    project_id = os.getenv("GCP_PROJECT_ID", "gtip-tespit-projesi")
+    project_id = os.getenv("GCP_PROJECT_ID", "gumruk-mevzuat")
     location = os.getenv("VERTEX_AI_LOCATION", "us-central1")
     api_key = os.getenv("GEMINI_API_KEY", "")
 
@@ -227,9 +227,8 @@ def find_decision_boundaries(raw_text: str) -> BoundariesList:
         )
 
         candidate_models = [
-            os.getenv("DEFAULT_LLM_MODEL", "gemini-3.5-flash-lite"),
-            "gemini-3.5-flash-lite",
-            "gemini-3.6-flash",
+            os.getenv("DEFAULT_LLM_MODEL", "gemini-2.5-flash-lite"),
+            "gemini-2.5-flash-lite",
             "gemini-2.5-flash",
         ]
 

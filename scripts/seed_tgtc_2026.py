@@ -1,6 +1,6 @@
 """
 2026 Türk Gümrük Tarife Cetveli (TGTC) Statik Veri Tohumlama (Seed) & Vektörleştirme Betiği.
-GCP europe-west4 (Cloud SQL PostgreSQL + pgvector) ve yerel test ortamlarıyla %100 uyumludur.
+GCP us-central1 (Cloud SQL PostgreSQL + pgvector) ve yerel test ortamlarıyla %100 uyumludur.
 
 Görevler:
 1. 2026 TGTC 97 Fasıl, 4-haneli Pozisyon, 6-haneli Alt Pozisyon ve 12-haneli Milli GTİP Ağacını 'tgtc_gtip' tablosuna aktarır.

@@ -5,6 +5,7 @@ tekil (Singleton) ORM Engine, SessionLocal, Dependency get_db() ve
 vektör/metin hibrit arama fonksiyonları sağlar.
 """
 import os
+import uuid
 import json
 import logging
 import math
@@ -169,6 +170,56 @@ class TgtcGtipModel(Base):
     is_active = Column(Boolean, default=True, index=True)
     embedding = Column(VectorType(768), nullable=True)           # 768d text-embedding-005 vektörü
 
+# ==============================================================================
+# YENİ GCP ALLOYDB AI / CLOUD SQL ŞARTNAME MODELLERİ (gcp_architecture_report.md)
+# ==============================================================================
+
+class GumrukMevzuatMaddesiModel(Base):
+    """1. Resmi Gazete Mevzuat Maddeleri Tablosu (Bölüm 4 Şartnamesi)"""
+    __tablename__ = "gumruk_mevzuat_maddeleri"
+    __table_args__ = (
+        Index("idx_mevzuat_lookup", "kanun_no", "madde_kodu"),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tarih = Column(String(30), nullable=False, index=True)
+    resmi_gazete_sayisi = Column(Integer, nullable=False)
+    kanun_no = Column(String(50), nullable=False, index=True)          # Örn: '3065', '4458'
+    madde_kodu = Column(String(100), nullable=False)                   # Örn: 'MADDE 15', 'GEÇİCİ MADDE 46'
+    madde_metni = Column(Text, nullable=False)                          # Ham resmi gazete metni
+    kaynak_url = Column(Text, nullable=False)                           # Doğrudan Resmi Gazete linki
+    icerik_vektor = Column(VectorType(768), nullable=True)             # text-embedding-005 boyutu
+    created_at = Column(DateTime, server_default=func.now())
+
+class GtipRuleModel(Base):
+    """2. Dinamik GTİP Kural Ağacı Tablosu (Bölüm 4 Şartnamesi)"""
+    __tablename__ = "gtip_rules"
+    __table_args__ = (
+        Index("idx_rules_heading", "parent_heading"),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    parent_heading = Column(String(10), nullable=False, index=True)     # 4 haneli pozisyon (Örn: '8471')
+    target_gtip = Column(String(14), nullable=True)                     # 12 haneli kod (Örn: '8471.30.00.00.11')
+    parametre_adi = Column(String(50), nullable=False)                 # 'weight', 'power', 'composition'
+    kosul_operatoru = Column(String(10), nullable=False)               # '<=', '>', '==', 'contains'
+    esik_deger = Column(String(50), nullable=False)                    # '10kg', '200g/m2'
+    soru_metni = Column(Text, nullable=False)                          # Müşavire yöneltilecek soru
+    secenekler = Column(Text, nullable=False)                          # Soru şıkları (JSON string)
+    oncelik = Column(Integer, default=1)
+
+class EmsalBtbKarariModel(Base):
+    """3. Emsal BTB (Bağlayıcı Tarife Bilgisi) Kararları Tablosu (Bölüm 4 Şartnamesi)"""
+    __tablename__ = "emsal_btb_kararlari"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    btb_referans_no = Column(String(50), unique=True, nullable=False, index=True) # Örn: 'TR-34-2025-0042'
+    gtip_kodu = Column(String(14), nullable=False, index=True)
+    urun_tanimi = Column(Text, nullable=False)
+    karar_gerekcesi = Column(Text, nullable=False)
+    gecerlilik_tarihi = Column(String(30), nullable=False)
+    icerik_vektor = Column(VectorType(768), nullable=True)
+
 def get_database_url() -> str:
     """GCP Cloud SQL PostgreSQL bağlantı dizesini döndürür."""
     env_db_url = os.getenv("DATABASE_URL")
@@ -178,7 +229,7 @@ def get_database_url() -> str:
     cloud_sql_conn = (
         os.getenv("CLOUD_SQL_CONNECTION_NAME") 
         or os.getenv("INSTANCE_CONNECTION_NAME") 
-        or "gtip-tespit-projesi:europe-west4:gtip-db-west4"
+        or "gumruk-mevzuat:us-central1:gumruk-db"
     )
     db_user = os.getenv("DB_USER", "postgres")
     db_pass = os.getenv("DB_PASS", "")
@@ -303,6 +354,14 @@ def init_orm_tables():
                         CREATE INDEX IF NOT EXISTS idx_tgtc_notes_embedding_hnsw 
                         ON tgtc_notes USING hnsw (embedding vector_cosine_ops);
                     """))
+                    conn.execute(text("""
+                        CREATE INDEX IF NOT EXISTS idx_mevzuat_embedding_hnsw 
+                        ON gumruk_mevzuat_maddeleri USING hnsw (icerik_vektor vector_cosine_ops);
+                    """))
+                    conn.execute(text("""
+                        CREATE INDEX IF NOT EXISTS idx_emsal_btb_embedding_hnsw 
+                        ON emsal_btb_kararlari USING hnsw (icerik_vektor vector_cosine_ops);
+                    """))
                     conn.commit()
                     logger.info("[SQLAlchemy ORM] PostgreSQL HNSW vektör kosinüs indeksleri doğrulandı.")
             except Exception as ex_idx:
@@ -343,6 +402,58 @@ def init_orm_tables():
                     logger.info(f"[SQLAlchemy ORM] 2026 TGTC Tarife Ağacı mevcut ({count_gtip} kayıt aktif).")
         except Exception as ex_seed:
             logger.warning(f"[SQLAlchemy ORM] TGTC Tohumlama uyarısı: {ex_seed}")
+
+        # 🚀 OTOMATİK DİNAMİK GTİP KURAL TOHUMLAYICI (gcp_architecture_report.md) 🚀
+        try:
+            with SessionLocal() as session:
+                count_rules = session.query(GtipRuleModel).count()
+                if count_rules == 0:
+                    sample_rules = [
+                        GtipRuleModel(
+                            parent_heading="8471",
+                            target_gtip="8471.30.00.00.11",
+                            parametre_adi="weight",
+                            kosul_operatoru="<=",
+                            esik_deger="10kg",
+                            soru_metni="Cihazın net ağırlığı klavye ve ekran dahil 10 kg'ı geçiyor mu?",
+                            secenekler=json.dumps([
+                                {"id": "opt_le_10kg", "label": "Ağırlık 10 kg veya altında (Portatif / Dizüstü)"},
+                                {"id": "opt_gt_10kg", "label": "Ağırlık 10 kg'dan fazla (Masaüstü / Sunucu)"}
+                            ], ensure_ascii=False),
+                            oncelik=1
+                        ),
+                        GtipRuleModel(
+                            parent_heading="8471",
+                            target_gtip="8471.30.00.00.11",
+                            parametre_adi="has_display_and_keyboard",
+                            kosul_operatoru="==",
+                            esik_deger="true",
+                            soru_metni="Cihaz en azından bir merkezi işlem birimi, bir klavye ve bir ekrandan mı oluşuyor?",
+                            secenekler=json.dumps([
+                                {"id": "opt_has_both", "label": "Evet, entegre ekran ve klavyesi var"},
+                                {"id": "opt_no_both", "label": "Hayır, harici birimler gerekiyor"}
+                            ], ensure_ascii=False),
+                            oncelik=2
+                        ),
+                        GtipRuleModel(
+                            parent_heading="5208",
+                            target_gtip="5208.11.90.00.00",
+                            parametre_adi="cotton_ratio",
+                            kosul_operatoru=">=",
+                            esik_deger="85%",
+                            soru_metni="Kumaşın ağırlık itibariyle pamuk oranı en az %85 mi?",
+                            secenekler=json.dumps([
+                                {"id": "opt_cotton_gte_85", "label": "Evet, %85 veya daha fazla pamuk içerir"},
+                                {"id": "opt_cotton_lt_85", "label": "Hayır, pamuk oranı %85'in altında"}
+                            ], ensure_ascii=False),
+                            oncelik=1
+                        )
+                    ]
+                    session.add_all(sample_rules)
+                    session.commit()
+                    logger.info("[SQLAlchemy ORM] gtip_rules tablosu başlangıç kuralları ile tohumlandı.")
+        except Exception as ex_rule_seed:
+            logger.warning(f"[SQLAlchemy ORM] gtip_rules tohumlama uyarısı: {ex_rule_seed}")
             
         logger.info("[SQLAlchemy ORM] GCP Cloud SQL PostgreSQL tabloları başarıyla doğrulandı ve güncellendi.")
     except Exception as e:

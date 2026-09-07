@@ -2,8 +2,8 @@
 Resmî Gazete Gümrük Genel Tebliğleri ve Sınıflandırma Kararları Arşiv & Canlı ETL Tarayıcısı.
 
 GCP Entegrasyonları:
-- Cloud Storage (gs://gtip-storage-west4/resmi_gazete_raw_pdfs/) -> Karar içeren ham PDF arşivi
-- Cloud Storage (gs://gtip-storage-west4/etl_state/archive_checkpoint.json) -> Dağıtık checkpoint durumu
+- Cloud Storage (gs://gumruk-mevzuat-storage-us-central1/resmi_gazete_raw_pdfs/) -> Karar içeren ham PDF arşivi
+- Cloud Storage (gs://gumruk-mevzuat-storage-us-central1/etl_state/archive_checkpoint.json) -> Dağıtık checkpoint durumu
 - Vertex AI Gemini 3.5 Flash Lite -> Multimodal tablo ve GİR gerekçe ayrıştırma
 - Vertex AI text-embedding-005 -> 768 boyutlu vektörleştirme
 - Cloud SQL PostgreSQL -> Versiyonlu upsert (gumruk_emsal_kararlar)
@@ -59,7 +59,7 @@ def load_checkpoint() -> Dict[str, Any]:
     }
     
     # 1. GCS'den oku
-    bucket_name = getattr(settings, "GCS_BUCKET_NAME", "gtip-storage-west4")
+    bucket_name = getattr(settings, "GCS_BUCKET_NAME", "gumruk-mevzuat-storage-us-central1")
     try:
         from google.cloud import storage
         client = storage.Client()
@@ -98,7 +98,7 @@ def save_checkpoint(state: Dict[str, Any]):
         pass
 
     # 2. GCS'e kaydet
-    bucket_name = getattr(settings, "GCS_BUCKET_NAME", "gtip-storage-west4")
+    bucket_name = getattr(settings, "GCS_BUCKET_NAME", "gumruk-mevzuat-storage-us-central1")
     try:
         from google.cloud import storage
         client = storage.Client()
@@ -108,6 +108,31 @@ def save_checkpoint(state: Dict[str, Any]):
         logger.debug(f"[Checkpoint] GCS'e yazıldı: {state.get('last_processed_date')}")
     except Exception as e:
         logger.debug(f"[Checkpoint] GCS yazma hatası: {e}")
+
+
+def upload_pdf_to_gcs(pdf_bytes: bytes, filename: str) -> Optional[str]:
+    """
+    Resmî Gazete PDF dosyasını Google Cloud Storage bucket'ına yükler
+    ve doğrudan erişilebilir public HTTPS URL'sini döner.
+    """
+    if not pdf_bytes or len(pdf_bytes) < 100:
+        return None
+    try:
+        from google.cloud import storage
+        project_id = getattr(settings, "GCP_PROJECT_ID", "gumruk-mevzuat")
+        bucket_name = getattr(settings, "GCS_BUCKET_NAME", "gumruk-mevzuat-storage-us-central1")
+        client = storage.Client(project=project_id)
+        bucket = client.bucket(bucket_name)
+        blob_path = f"resmi_gazete_raw_pdfs/{filename}"
+        blob = bucket.blob(blob_path)
+        blob.upload_from_string(pdf_bytes, content_type="application/pdf")
+
+        https_url = f"https://storage.googleapis.com/{bucket_name}/{blob_path}"
+        logger.info(f"📤 [GCS PDF Yüklendi] {https_url}")
+        return https_url
+    except Exception as e:
+        logger.warning(f"⚠️ [GCS PDF Yükleme Hatası] ({filename}): {e}")
+        return None
 
 
 # ==============================================================================
@@ -120,8 +145,8 @@ def generate_embedding_for_decision(text: str) -> Optional[List[float]]:
         return None
     try:
         from google import genai
-        project_id = getattr(settings, "GCP_PROJECT_ID", "gtip-tespit-projesi")
-        location = getattr(settings, "GCP_REGION", "europe-west4")
+        project_id = getattr(settings, "GCP_PROJECT_ID", "gumruk-mevzuat")
+        location = getattr(settings, "GCP_REGION", "us-central1")
         client = genai.Client(vertexai=True, project=project_id, location=location)
         res = client.models.embed_content(
             model="text-embedding-005",
@@ -147,12 +172,12 @@ def save_decisions_to_cloud_sql(
         return 0
 
     try:
-        from api.db.database import SessionLocal, GumrukEmsalKararModel
-        from api.db.gcp_emulator import OfficialBTBModel
+        from api.db.database import SessionLocal, GumrukEmsalKararModel, GumrukSiniflandirmaKarariModel
 
         session = SessionLocal()
         saved_count = 0
 
+        batch_sinif_keys = set()
         for idx, it in enumerate(items, start=1):
             gtip = it.gtip_kodu.strip()
             clean = re.sub(r"[^\d]", "", gtip)
@@ -160,12 +185,9 @@ def save_decisions_to_cloud_sql(
                 continue
 
             chapter = clean[:2]
-            heading = clean[:4]
-            hs6 = clean[:6]
-            cn8 = clean[:8] if len(clean) >= 8 else clean[:6].ljust(8, '0')
-
             yayin_tarihi = it.yayin_tarihi or datetime.date.today().strftime("%Y-%m-%d")
             ref_no = f"RG-DEC-{yayin_tarihi.replace('-', '')}-{clean}-N{it.karar_no or idx}"
+            sinif_key = (gtip, yayin_tarihi)
 
             # Vektör Embedding
             embedding_vec = None
@@ -173,61 +195,72 @@ def save_decisions_to_cloud_sql(
                 embed_text = f"GTİP: {gtip} | Eşya: {it.esya_tanimi} | Gerekçe: {it.hukuki_gerekce}"
                 embedding_vec = generate_embedding_for_decision(embed_text)
 
-            # OfficialBTBModel Upsert
-            existing_btb = session.query(OfficialBTBModel).filter(OfficialBTBModel.btb_no == ref_no).first()
-            if existing_btb:
-                existing_btb.product_description = it.esya_tanimi[:1000]
-                existing_btb.legal_justification = f"Resmî Gazete ({it.resmi_gazete_sayisi}) | GCS: {gcs_pdf_uri or '-'} | Gerekçe: {it.hukuki_gerekce[:1500]}"
-                if embedding_vec and hasattr(existing_btb, "embedding"):
-                    existing_btb.embedding = embedding_vec
-            else:
-                btb_obj = OfficialBTBModel(
-                    btb_no=ref_no,
-                    gtip_code=gtip,
-                    hs6_code=hs6,
-                    cn8_code=cn8,
-                    chapter=chapter,
-                    heading=heading,
-                    issue_date=yayin_tarihi,
-                    product_description=it.esya_tanimi[:1000],
-                    legal_justification=f"Resmî Gazete ({it.resmi_gazete_sayisi}) | GCS: {gcs_pdf_uri or '-'} | Gerekçe: {it.hukuki_gerekce[:1500]}",
-                    source="RG_MULTIMODAL_DECISION",
-                    is_active=True
-                )
-                if embedding_vec and hasattr(btb_obj, "embedding"):
-                    btb_obj.embedding = embedding_vec
-                session.add(btb_obj)
-                saved_count += 1
+            try:
+                # 1. GumrukSiniflandirmaKarariModel Upsert
+                existing_sinif = session.query(GumrukSiniflandirmaKarariModel).filter(
+                    GumrukSiniflandirmaKarariModel.gtip_kodu == gtip,
+                    GumrukSiniflandirmaKarariModel.yayin_tarihi == yayin_tarihi
+                ).first()
 
-            # GumrukEmsalKararModel Upsert
-            existing_emsal = session.query(GumrukEmsalKararModel).filter(GumrukEmsalKararModel.referans_no == ref_no).first()
-            if existing_emsal:
-                existing_emsal.esya_tanimi = it.esya_tanimi[:1000]
-                existing_emsal.hukuki_gerekce = it.hukuki_gerekce[:1500]
-                existing_emsal.kaynak_url = gcs_pdf_uri or kaynak_url
-                if embedding_vec and hasattr(existing_emsal, "embedding"):
-                    existing_emsal.embedding = embedding_vec
-            else:
-                emsal_obj = GumrukEmsalKararModel(
-                    karar_tipi="SINIFLANDIRMA_KARARI",
-                    referans_no=ref_no,
-                    yayin_tarihi=yayin_tarihi,
-                    resmi_gazete_sayisi=it.resmi_gazete_sayisi or "-",
-                    gtip_kodu=gtip,
-                    esya_tanimi=it.esya_tanimi[:1000],
-                    hukuki_gerekce=it.hukuki_gerekce[:1500],
-                    kaynak_url=gcs_pdf_uri or kaynak_url
-                )
-                if embedding_vec and hasattr(emsal_obj, "embedding"):
-                    emsal_obj.embedding = embedding_vec
-                session.add(emsal_obj)
+                if existing_sinif or sinif_key in batch_sinif_keys:
+                    if existing_sinif:
+                        existing_sinif.esya_tanimi = (existing_sinif.esya_tanimi + " | " + it.esya_tanimi)[:1000]
+                        existing_sinif.hukuki_gerekce = it.hukuki_gerekce[:1500]
+                        existing_sinif.resmi_gazete_sayisi = it.resmi_gazete_sayisi or "-"
+                        existing_sinif.kaynak_url = gcs_pdf_uri or kaynak_url
+                else:
+                    sinif_obj = GumrukSiniflandirmaKarariModel(
+                        karar_tipi="SINIFLANDIRMA_KARARI",
+                        gtip_kodu=gtip,
+                        yayin_tarihi=yayin_tarihi,
+                        resmi_gazete_sayisi=it.resmi_gazete_sayisi or "-",
+                        esya_tanimi=it.esya_tanimi[:1000],
+                        hukuki_gerekce=it.hukuki_gerekce[:1500],
+                        kaynak_url=gcs_pdf_uri or kaynak_url
+                    )
+                    session.add(sinif_obj)
+                    batch_sinif_keys.add(sinif_key)
+                    saved_count += 1
 
-        session.commit()
+                # 2. GumrukEmsalKararModel Upsert
+                existing_emsal = session.query(GumrukEmsalKararModel).filter(
+                    (GumrukEmsalKararModel.referans_no == ref_no) | 
+                    ((GumrukEmsalKararModel.gtip_kodu == gtip) & (GumrukEmsalKararModel.yayin_tarihi == yayin_tarihi) & (GumrukEmsalKararModel.esya_tanimi == it.esya_tanimi[:1000]))
+                ).first()
+
+                if existing_emsal:
+                    existing_emsal.referans_no = ref_no
+                    existing_emsal.esya_tanimi = it.esya_tanimi[:1000]
+                    existing_emsal.hukuki_gerekce = it.hukuki_gerekce[:1500]
+                    existing_emsal.kaynak_url = gcs_pdf_uri or kaynak_url
+                    if embedding_vec and hasattr(existing_emsal, "embedding"):
+                        existing_emsal.embedding = embedding_vec
+                else:
+                    emsal_obj = GumrukEmsalKararModel(
+                        karar_tipi="SINIFLANDIRMA_KARARI",
+                        referans_no=ref_no,
+                        yayin_tarihi=yayin_tarihi,
+                        resmi_gazete_sayisi=it.resmi_gazete_sayisi or "-",
+                        gtip_kodu=gtip,
+                        chapter_code=chapter,
+                        esya_tanimi=it.esya_tanimi[:1000],
+                        hukuki_gerekce=it.hukuki_gerekce[:1500],
+                        kaynak_url=gcs_pdf_uri or kaynak_url
+                    )
+                    if embedding_vec and hasattr(emsal_obj, "embedding"):
+                        emsal_obj.embedding = embedding_vec
+                    session.add(emsal_obj)
+
+                session.commit()
+            except Exception as e_item:
+                session.rollback()
+                logger.debug(f"[Cloud SQL] Karar kaydetme satır uyarısı: {e_item}")
+
         session.close()
         logger.info(f"✅ [Cloud SQL] {len(items)} karar başarıyla işlendi (Yeni eklenen: {saved_count}).")
         return saved_count
     except Exception as e:
-        logger.error(f"[Cloud SQL] Veritabanı kayıt hatası: {e}")
+        logger.error(f"[Cloud SQL] Veritabanı kayıt hatası: {e}", exc_info=True)
         return 0
 
 
