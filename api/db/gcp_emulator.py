@@ -190,23 +190,40 @@ class LocalVectorStore:
         if not docs:
             return []
 
-        # --- Strateji 1: text-embedding-005 ile Cosine Similarity (Vertex AI ADC veya Key) ---
+        # 1. Hızlı Aday Ön Süzgeci: İzinli fasıllar ve kelime örtüşmesi (O(N) CPU filtresi)
+        query_tokens = set(query.lower().split())
+        candidate_docs = []
+        for doc in docs:
+            valid_until = str(doc.get("valid_until") or "")
+            if valid_until and valid_until != "9999-12-31" and valid_until < "2026-01-01":
+                continue  # Versiyonlanmış eski mevzuat zırhı: Süresi biten kayıtlar atlanır
+            chap = str(doc.get("chapter", doc.get("gtip_code", "")[:2])).zfill(2)
+            if allowed_chapters and chap not in allowed_chapters:
+                continue
+
+            desc = doc.get("product_description", "")
+            if not desc:
+                continue
+
+            doc_tokens = set(desc.lower().split())
+            overlap = len(query_tokens.intersection(doc_tokens))
+            candidate_docs.append((overlap, doc))
+
+        if not candidate_docs:
+            return []
+
+        # En alakalı ilk 10 adayı derin semantik/vektör doğrulaması için seç (100+ gereksiz API çağrısını önler)
+        candidate_docs.sort(key=lambda x: x[0], reverse=True)
+        top_candidates = [d for _, d in candidate_docs[:10]]
+
+        # --- Strateji 1: text-embedding-005 ile Cosine Similarity (Sadece Top-10 Aday) ---
         query_embedding = _get_embedding(query, "")
         if query_embedding and any(query_embedding):
             scored_results = []
-            for doc in docs:
-                valid_until = str(doc.get("valid_until") or "")
-                if valid_until and valid_until != "9999-12-31" and valid_until < "2026-01-01":
-                    continue  # Versiyonlanmış eski mevzuat zırhı: Süresi biten kayıtlar atlanır
+            for doc in top_candidates:
                 chap = str(doc.get("chapter", doc.get("gtip_code", "")[:2])).zfill(2)
-                if allowed_chapters and chap not in allowed_chapters:
-                    continue
-
                 desc = doc.get("product_description", "")
-                if not desc:
-                    continue
-
-                doc_embedding = _get_embedding(desc, "")
+                doc_embedding = doc.get("embedding") or _get_embedding(desc, "")
                 if doc_embedding:
                     similarity = _cosine_similarity(query_embedding, doc_embedding)
                     scored_results.append({
@@ -227,17 +244,9 @@ class LocalVectorStore:
 
         # --- Strateji 2: Jaccard Token Overlap (Offline Fallback) ---
         logger.debug("[VectorStore] Jaccard Token Overlap fallback kullanılıyor (API key yok veya embedding hatası).")
-        query_tokens = set(query.lower().split())
         scored_results = []
-
-        for doc in docs:
-            valid_until = str(doc.get("valid_until") or "")
-            if valid_until and valid_until != "9999-12-31" and valid_until < "2026-01-01":
-                continue  # Versiyonlanmış eski mevzuat zırhı
+        for doc in top_candidates:
             chap = str(doc.get("chapter", doc.get("gtip_code", "")[:2])).zfill(2)
-            if allowed_chapters and chap not in allowed_chapters:
-                continue
-
             desc = doc.get("product_description", "").lower()
             doc_tokens = set(desc.split())
 
