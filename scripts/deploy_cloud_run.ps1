@@ -82,6 +82,7 @@ gcloud.cmd run deploy gtip-backend `
     --max-instances 10 `
     --timeout 300s `
     --service-account $SERVICE_ACCOUNT `
+    --add-cloudsql-instances $CLOUD_SQL_INSTANCE `
     --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,ENVIRONMENT=production,PRIMARY_AI_MODEL=gemini-2.5-flash,EXTRACTOR_LLM_MODEL=gemini-2.5-flash-lite,REASONING_LLM_MODEL=gemini-2.5-pro,AUDITOR_LLM_MODEL=gemini-2.5-pro,EMBEDDING_MODEL=text-embedding-005,GCS_BUCKET_NAME=$GCS_BUCKET,CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_INSTANCE,WEB_CONCURRENCY=2,CORS_ALLOWED_ORIGINS=*"
 
 if ($LASTEXITCODE -ne 0) { Write-Error "Backend deploy hatası!"; exit 1 }
