@@ -73,3 +73,4 @@ Write-Host "  ✅ Cloud Run Job $JOB_NAME başarıyla hazırlandı!"
 Write-Host "  İşi tetiklemek için:"
 Write-Host "    gcloud run jobs execute $JOB_NAME --region $REGION"
 Write-Host "=========================================================="
+
