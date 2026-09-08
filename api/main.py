@@ -26,7 +26,6 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger(__name__)
 
 from fastapi import BackgroundTasks
-from scripts.spider_resmi_gazete_archive import run_spider_2020_to_2026, run_daily_sync
 
 from fastapi.responses import JSONResponse
 import traceback
@@ -54,29 +53,56 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": "Sistemde geçici bir sorun oluştu. Optimizasyon loglarına kaydedildi."}
     )
 
-@app.post("/api/v1/admin/trigger-deep-crawler")
-async def trigger_deep_crawler(request: Request, background_tasks: BackgroundTasks):
-    """6 yıllık geçmiş Resmi Gazete arşiv crawler'ını arka planda (Cloud Run Job gibi) tetikler."""
-    from api.security.auth import require_admin_user
-    require_admin_user(request)
-    background_tasks.add_task(run_spider_2020_to_2026)
-    return {"message": "Dijital PDF Arşiv Crawler'ı arka planda başlatıldı! Veritabanı dolmaya başlayacak."}
+def _trigger_cloud_run_job(job_name: str) -> str:
+    """Kimlikli Cloud Run Jobs API çağrısı yapar ve operation adını döndürür."""
+    import google.auth
+    from google.auth.transport.requests import AuthorizedSession
 
-@app.post("/api/v1/admin/trigger-daily-sync")
-async def trigger_daily_sync(request: Request, background_tasks: BackgroundTasks, days: int = 3):
-    """Son N günün (varsayılan 3 gün) Resmî Gazete mükerrer ve normal sayılarını arka planda tarar ve eşitler."""
+    credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    session = AuthorizedSession(credentials)
+    job_url = (
+        f"https://run.googleapis.com/v2/projects/{settings.GCP_PROJECT_ID}/"
+        f"locations/{settings.GCP_REGION}/jobs/{job_name}:run"
+    )
+    response = session.post(job_url, json={}, timeout=30)
+    response.raise_for_status()
+    return response.json().get("name", "")
+
+
+@app.post("/api/v1/admin/trigger-deep-crawler", status_code=202)
+async def trigger_deep_crawler(request: Request):
+    """6 yıllık Resmî Gazete arşiv Cloud Run Job'unu tetikler."""
     from api.security.auth import require_admin_user
     require_admin_user(request)
-    background_tasks.add_task(run_daily_sync, days_back=days)
-    return {"message": f"Son {days} günün Resmî Gazete senkronizasyonu arka planda başlatıldı."}
+    try:
+        operation = _trigger_cloud_run_job("gtip-archive-backfill")
+        return {"message": "Arşiv taraması Cloud Run Job olarak başlatıldı.", "operation": operation}
+    except Exception as exc:
+        logger.exception("Arşiv Cloud Run Job tetiklenemedi")
+        raise HTTPException(status_code=503, detail=f"Arşiv işi tetiklenemedi: {exc}")
+
+@app.post("/api/v1/admin/trigger-daily-sync", status_code=202)
+async def trigger_daily_sync(request: Request):
+    """Son 3 günün Resmî Gazete Cloud Run Job'unu tetikler."""
+    from api.security.auth import require_admin_user
+    require_admin_user(request)
+    try:
+        operation = _trigger_cloud_run_job("gtip-daily-sync")
+        return {"message": "Günlük Resmî Gazete işi Cloud Run Job olarak başlatıldı.", "operation": operation}
+    except Exception as exc:
+        logger.exception("Günlük Cloud Run Job tetiklenemedi")
+        raise HTTPException(status_code=503, detail=f"Günlük iş tetiklenemedi: {exc}")
 
 @app.get("/api/v1/admin/status")
-def admin_status(db: Session = Depends(get_db)):
+def admin_status(request: Request, db: Session = Depends(get_db)):
     """GET /api/v1/admin/status sistem genel sağlık ve kayıt sayısı durumunu döndürür."""
+    from api.security.auth import require_admin_user
+    require_admin_user(request)
     try:
         count = db.query(GumrukSiniflandirmaKarariModel).count()
-    except Exception:
-        count = 0
+    except Exception as exc:
+        logger.error("Admin durum sorgusunda Cloud SQL hatası: %s", exc)
+        raise HTTPException(status_code=503, detail="Cloud SQL erişilemiyor.")
     return {
         "status": "HEALTHY",
         "region": settings.GCP_REGION,
@@ -84,16 +110,12 @@ def admin_status(db: Session = Depends(get_db)):
         "cloud_sql_siniflandirma_kararlari_count": count
     }
 
-@app.on_event("startup")
-def startup_event():
-    init_orm_tables()
-
 # CORS Configuration: Production ortamında wildcard (*) kesinlikle engellenir.
 _cors_origins_raw = settings.CORS_ALLOWED_ORIGINS
 if settings.ENVIRONMENT == "production" and (_cors_origins_raw == "*" or not _cors_origins_raw):
     _cors_origins = [
-        "https://gtip-web-230333256951.us-central1.run.app",
-        "https://gumruk-mevzuat-web.uc.r.appspot.com"
+        "https://gtip-web-141090733173.us-central1.run.app",
+        "https://gtip-web-gu6pxpqefa-uc.a.run.app",
     ]
     _allow_credentials = True
 elif _cors_origins_raw == "*":
@@ -264,6 +286,17 @@ def health_check():
         "emulator_mode": settings.USE_GCP_EMULATOR,
         "version": settings.VERSION
     }
+
+@app.get("/api/v1/ready")
+def readiness_check(db: Session = Depends(get_db)):
+    """Cloud SQL dahil kritik bağımlılıkların trafiğe hazır olduğunu doğrular."""
+    try:
+        from sqlalchemy import text
+        db.execute(text("SELECT 1"))
+        return {"status": "ready", "database": "healthy"}
+    except Exception as exc:
+        logger.error("Readiness kontrolü başarısız: %s", exc)
+        raise HTTPException(status_code=503, detail="Database dependency is unavailable.")
 
 from api.security.auth import get_current_user_session
 
@@ -513,10 +546,16 @@ async def get_audit_logs(request: Request, limit: int = Query(default=50, ge=1, 
     return AuditLogQueryResponse(total_count=len(logs), entries=logs)
 
 @app.get("/api/v1/customs-data/btbs")
-async def get_customs_btbs(db: Session = Depends(get_db)):
+async def get_customs_btbs(
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    chapter: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
     """
     Resmi Gazete'den ve Ticaret Bakanlığı portallarından çekilen sınıflandırma kararlarını ve emsal BTB kararlarını döndürür.
     Sıfır-duplikasyon garantisi ile tekilleştirilmiş kayıtları ve tıklandığında açılan GCS PDF linklerini sağlar.
+    Performans optimizasyonu: 768 boyutlu vektör kolonunu aktarmadan hafif projeksiyon sorgusu çalıştırır.
     """
     results = []
     seen_keys = set()
@@ -535,70 +574,92 @@ async def get_customs_btbs(db: Session = Depends(get_db)):
                 return f"https://www.resmigazete.gov.tr/eskiler/{y}/{m}/{y}{m}{d}.htm"
         return "https://www.resmigazete.gov.tr"
 
-    # 1. Cloud SQL gumruk_emsal_kararlar Tablosundan Çek (En zengin referans_no ve GCS PDF bağlantılarına sahip)
+    # 1. Cloud SQL gumruk_emsal_kararlar Tablosundan Hafif Projeksiyon ile Çek (Embedding kolonu hariç)
     try:
-        emsal_list = db.query(GumrukEmsalKararModel).order_by(GumrukEmsalKararModel.yayin_tarihi.desc()).all()
-        for e in emsal_list:
-            if not e.esya_tanimi or len(e.esya_tanimi.strip()) < 3:
+        query = db.query(
+            GumrukEmsalKararModel.referans_no,
+            GumrukEmsalKararModel.gtip_kodu,
+            GumrukEmsalKararModel.chapter_code,
+            GumrukEmsalKararModel.yayin_tarihi,
+            GumrukEmsalKararModel.esya_tanimi,
+            GumrukEmsalKararModel.hukuki_gerekce,
+            GumrukEmsalKararModel.kaynak_url
+        )
+        if chapter:
+            chap_clean = str(chapter).strip().zfill(2)
+            query = query.filter(GumrukEmsalKararModel.chapter_code == chap_clean)
+
+        emsal_rows = query.order_by(GumrukEmsalKararModel.yayin_tarihi.desc()).offset(offset).limit(limit).all()
+        for ref_no, gtip_kodu, chapter_code, pub_date, esya_tanimi, hukuki_gerekce, kaynak_url in emsal_rows:
+            if not esya_tanimi or len(esya_tanimi.strip()) < 3:
                 continue
-            gtip_clean = str(e.gtip_kodu or "").replace(".", "").strip()
+            gtip_clean = str(gtip_kodu or "").replace(".", "").strip()
             if len(gtip_clean) < 4:
                 continue
 
-            pub_date = str(e.yayin_tarihi or "2026-01-01")
-            desc_text = e.esya_tanimi.strip()
+            pub_date_str = str(pub_date or "2026-01-01")
+            desc_text = esya_tanimi.strip()
             desc_key = desc_text[:40].lower()
-            unique_key = (gtip_clean, pub_date, desc_key)
+            unique_key = (gtip_clean, pub_date_str, desc_key)
 
             if unique_key not in seen_keys:
                 seen_keys.add(unique_key)
-                chap = gtip_clean[:2]
-                btb_id = e.referans_no or f"RG-DEC-{pub_date.replace('-', '')}-{gtip_clean}"
+                chap = chapter_code or gtip_clean[:2]
+                btb_id = ref_no or f"RG-DEC-{pub_date_str.replace('-', '')}-{gtip_clean}"
 
                 results.append({
                     "btb_no": btb_id,
-                    "gtip_code": e.gtip_kodu,
+                    "gtip_code": gtip_kodu,
                     "chapter": chap,
-                    "issue_date": pub_date,
+                    "issue_date": pub_date_str,
                     "product_description": desc_text,
-                    "legal_justification": e.hukuki_gerekce or "Emsal Sınıflandırma Kararı",
-                    "source_url": format_source_url(e.kaynak_url, pub_date)
+                    "legal_justification": hukuki_gerekce or "Emsal Sınıflandırma Kararı",
+                    "source_url": format_source_url(kaynak_url, pub_date_str)
                 })
 
     except Exception as e_e:
         logger.warning(f"[get_customs_btbs] Emsal kararları okunurken uyarı: {e_e}")
 
     # 2. Cloud SQL gumruk_siniflandirma_kararlari Tablosundan Eksikleri Tamamla (Varsa ek unique olanlar)
-    try:
-        siniflandirma_list = db.query(GumrukSiniflandirmaKarariModel).order_by(GumrukSiniflandirmaKarariModel.yayin_tarihi.desc()).all()
-        for s in siniflandirma_list:
-            if not s.esya_tanimi or len(s.esya_tanimi.strip()) < 3:
-                continue
-            gtip_clean = str(s.gtip_kodu or "").replace(".", "").strip()
-            if len(gtip_clean) < 4:
-                continue
+    if len(results) < limit:
+        remaining = limit - len(results)
+        try:
+            sinif_query = db.query(
+                GumrukSiniflandirmaKarariModel.gtip_kodu,
+                GumrukSiniflandirmaKarariModel.yayin_tarihi,
+                GumrukSiniflandirmaKarariModel.esya_tanimi,
+                GumrukSiniflandirmaKarariModel.hukuki_gerekce,
+                GumrukSiniflandirmaKarariModel.kaynak_url
+            )
+            sinif_rows = sinif_query.order_by(GumrukSiniflandirmaKarariModel.yayin_tarihi.desc()).limit(remaining).all()
+            for s_gtip, s_pub_date, s_desc, s_gerekce, s_url in sinif_rows:
+                if not s_desc or len(s_desc.strip()) < 3:
+                    continue
+                gtip_clean = str(s_gtip or "").replace(".", "").strip()
+                if len(gtip_clean) < 4:
+                    continue
 
-            pub_date = str(s.yayin_tarihi or "2026-01-01")
-            desc_text = s.esya_tanimi.strip()
-            desc_key = desc_text[:40].lower()
-            unique_key = (gtip_clean, pub_date, desc_key)
+                pub_date_str = str(s_pub_date or "2026-01-01")
+                desc_text = s_desc.strip()
+                desc_key = desc_text[:40].lower()
+                unique_key = (gtip_clean, pub_date_str, desc_key)
 
-            if unique_key not in seen_keys:
-                seen_keys.add(unique_key)
-                chap = gtip_clean[:2]
-                btb_id = f"RG-{pub_date.replace('-', '')}-{gtip_clean}"
+                if unique_key not in seen_keys:
+                    seen_keys.add(unique_key)
+                    chap = gtip_clean[:2]
+                    btb_id = f"RG-{pub_date_str.replace('-', '')}-{gtip_clean}"
 
-                results.append({
-                    "btb_no": btb_id,
-                    "gtip_code": s.gtip_kodu,
-                    "chapter": chap,
-                    "issue_date": pub_date,
-                    "product_description": desc_text,
-                    "legal_justification": s.hukuki_gerekce or "Resmî Gazete Sınıflandırma Kararı",
-                    "source_url": format_source_url(s.kaynak_url, pub_date)
-                })
-    except Exception as e_s:
-        logger.warning(f"[get_customs_btbs] Siniflandirma kararları okunurken uyarı: {e_s}")
+                    results.append({
+                        "btb_no": btb_id,
+                        "gtip_code": s_gtip,
+                        "chapter": chap,
+                        "issue_date": pub_date_str,
+                        "product_description": desc_text,
+                        "legal_justification": s_gerekce or "Resmî Gazete Sınıflandırma Kararı",
+                        "source_url": format_source_url(s_url, pub_date_str)
+                    })
+        except Exception as e_s:
+            logger.warning(f"[get_customs_btbs] Siniflandirma kararları okunurken uyarı: {e_s}")
 
     # 3. Eğer DB'de henüz dinamik kayıt yoksa Katalog Ön Belleğinden Yükle (Fallback)
     if not results:

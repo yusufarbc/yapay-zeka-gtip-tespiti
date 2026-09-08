@@ -29,7 +29,6 @@ root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 from api.db.database import engine, SessionLocal, Base, GumrukEmsalKararModel
-from api.db.tgtc_knowledge_base import OfficialBTBModel
 
 # Tablo Şemalarını Doğrula / Kur
 try:
@@ -204,21 +203,6 @@ def run_bulk_import_2020_2026():
                 )
                 session.add(new_rec)
                 added += 1
-                
-                try:
-                    btb_rec = OfficialBTBModel(
-                        btb_no=f"RG-{str(d['teblig_no'])[:18]}-{gtip_clean[:4]}",
-                        gtip_code=gtip_clean[:50],
-                        chapter=gtip_clean[:2],
-                        heading=gtip_clean.replace(".", "")[:4],
-                        issue_date=str(d["resmi_gazete_tarihi"])[:20],
-                        product_description=str(d["esya_tanimi"])[:500],
-                        legal_justification=str(d["hukuki_gerekce"])[:500],
-                        source="T.C. Resmi Gazete & Ticaret Bakanlığı Emsal"
-                    )
-                    session.merge(btb_rec)
-                except Exception as ex_btb:
-                    pass
             else:
                 record.esya_tanimi = str(d["esya_tanimi"])[:500]
                 record.hukuki_gerekce = str(d["hukuki_gerekce"])[:500]
@@ -344,4 +328,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

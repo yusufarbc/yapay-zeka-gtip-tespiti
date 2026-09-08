@@ -1,105 +1,213 @@
-"""
-Resmi Gazete Günlük Mevzuat Radarı (Cloud Run Function 2nd Gen).
-gcp_architecture_report.md Bölüm 3 Şartnamesi.
-Her gece saat 02:00'de Cloud Scheduler tarafından tetiklenir.
-Resmi Gazete HTML sayfasını temizler, gümrük maddelerini atomik olarak ayrıştırır,
-Vertex AI text-embedding-005 ile vektörleştirir ve AlloyDB / Cloud SQL'e yazar.
-"""
+"""Resmî Gazete gümrük mevzuatı HTML ayrıştırma ve Cloud SQL yükleme hattı."""
 
-import os
-import re
 import logging
-import requests
-import urllib3
-from bs4 import BeautifulSoup
-from typing import Dict, Any, List
-from api.modules.vertex_client import generate_embedding
-from api.db.database import SessionLocal, GumrukMevzuatMaddesiModel
+import re
+from typing import Any, Dict, List
+from urllib.parse import urljoin
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+import requests
+from bs4 import BeautifulSoup
+
 logger = logging.getLogger("OfficialGazetteETL")
 
-CUSTOMS_KEYWORDS = [
-    "gümrük", "ithalat", "ihracat", "tarife", "damping", 
-    "menşe", "kaçakçılık", "dış ticaret", "kambiyo", "antrepo", 
-    "katma değer vergisi", "özel tüketim vergisi", "vergi usul"
-]
+CUSTOMS_KEYWORDS = (
+    "gümrük",
+    "ithalat",
+    "ihracat",
+    "tarife",
+    "gtip",
+    "g.t.i.p",
+    "menşe",
+    "antrepo",
+    "dış ticaret",
+    "serbest bölge",
+    "damping",
+    "korunma önlemi",
+    "gözetim uygulanması",
+)
+
+ARTICLE_PATTERN = re.compile(
+    r"(?im)^\s*((?:GEÇİCİ\s+|EK\s+)?MADDE\s+\d+(?:/[A-ZÇĞİÖŞÜ0-9]+)?)\s*[-–—]?\s*"
+)
+LAW_NUMBER_PATTERN = re.compile(r"(\d{3,5})\s+sayılı\s+[^\n]{0,120}?(?:Kanun|Kararname)", re.IGNORECASE)
+
 
 def clean_html(raw_html: str) -> str:
     """HTML etiketlerini ve Office/Word artıklarını temizler."""
     soup = BeautifulSoup(raw_html, "html.parser")
-    for tag in soup(["o:p", "style", "script", "meta", "link"]):
+    for tag in soup(["o:p", "style", "script", "meta", "link", "noscript"]):
         tag.decompose()
     for span in soup.find_all("span"):
         span.unwrap()
     return soup.get_text(separator="\n", strip=True)
 
-def ingest_daily_gazette(date_str: str, gazette_no: int = 1) -> Dict[str, Any]:
-    """
-    Belirtilen günün Resmi Gazete sayfasını çeker ve gümrük maddelerini veritabanına kaydeder.
-    date_str formatı: YYYYMMDD (Örn: '20260907')
-    """
-    base_url = f"https://www.resmigazete.gov.tr/eskiler/{date_str[:4]}/{date_str[4:6]}/{date_str}-{gazette_no}.htm"
-    try:
-        response = requests.get(base_url, timeout=30, verify=False)
-    except Exception as e:
-        return {"status": "FAILED", "reason": f"Ağ hatası: {str(e)}"}
 
-    if response.status_code != 200:
-        return {"status": "SKIPPED", "reason": f"Resmi Gazete sayfası bulunamadı ({response.status_code})"}
+def is_customs_related(text_value: str) -> bool:
+    normalized = (text_value or "").casefold()
+    return any(keyword.casefold() in normalized for keyword in CUSTOMS_KEYWORDS)
 
-    response.encoding = "windows-1254"
-    cleaned_text = clean_html(response.text)
 
-    # 1. Aşama: Gümrük ve Dış Ticaret İlgililik Kontrolü
-    if not any(kw in cleaned_text.lower() for kw in CUSTOMS_KEYWORDS):
-        return {"status": "SKIPPED", "reason": "Gümrük veya dış ticaret ile ilgili içerik bulunamadı."}
+def extract_customs_articles(raw_html: str) -> List[Dict[str, str]]:
+    """Gümrükle ilgili bir RG HTML belgesini atomik MADDE parçalarına ayırır."""
+    cleaned_text = clean_html(raw_html)
+    if not is_customs_related(cleaned_text):
+        return []
 
-    # 2. Aşama: Madde Ayrıştırma (Regex Engine)
-    pattern = re.compile(
-        r"((?:GEÇİCİ\s+MADDE|EK\s+MADDE|MADDE)\s+\d+[\w\/\s\-]*)", 
-        re.IGNORECASE
-    )
-    tokens = pattern.split(cleaned_text)
-    
-    current_law_no = "Doğrudan Düzenleme"
-    articles_to_insert = []
-    formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+    matches = list(ARTICLE_PATTERN.finditer(cleaned_text))
+    if not matches:
+        return []
+
+    header_text = cleaned_text[: matches[0].start()]
+    title_lines = [line.strip() for line in header_text.splitlines() if line.strip()]
+    title = title_lines[-1][:500] if title_lines else "Doğrudan Düzenleme"
+    header_law_match = LAW_NUMBER_PATTERN.search(header_text)
+    current_law_no = header_law_match.group(1) if header_law_match else title
+
+    articles: List[Dict[str, str]] = []
+    for index, match in enumerate(matches):
+        content_end = matches[index + 1].start() if index + 1 < len(matches) else len(cleaned_text)
+        article_text = cleaned_text[match.end():content_end].strip()
+        if len(article_text) < 20:
+            continue
+
+        law_match = LAW_NUMBER_PATTERN.search(article_text)
+        if law_match:
+            current_law_no = law_match.group(1)
+
+        articles.append({
+            "kanun_no": str(current_law_no)[:50],
+            "madde_kodu": match.group(1).strip().upper()[:100],
+            "madde_metni": article_text[:15000],
+            "baslik": title,
+        })
+    return articles
+
+
+def _gazette_number_as_int(gazette_no: Any) -> int:
+    match = re.search(r"\d+", str(gazette_no or ""))
+    return int(match.group(0)) if match else 0
+
+
+def ingest_gazette_document(
+    raw_html: str,
+    source_url: str,
+    pub_date: str,
+    gazette_no: Any,
+    skip_embedding: bool = False,
+) -> Dict[str, Any]:
+    """Tek bir ilgili mevzuat HTML belgesini idempotent olarak Cloud SQL'e yazar."""
+    # Saf HTML ayrıştırıcının test/import sırasında GCP SDK ve DB bağlantılarını
+    # yüklememesi için ağır bağımlılıklar yalnızca gerçek ingest anında alınır.
+    from api.db.database import GumrukMevzuatMaddesiModel, SessionLocal
+    from api.modules.vertex_client import generate_embedding
+
+    articles = extract_customs_articles(raw_html)
+    if not articles:
+        return {"status": "SKIPPED", "inserted_articles": 0, "updated_articles": 0}
+
+    inserted = 0
+    updated = 0
+    gazette_number = _gazette_number_as_int(gazette_no)
 
     with SessionLocal() as session:
-        for i in range(1, len(tokens), 2):
-            madde_baslik = tokens[i].strip()
-            madde_icerik = tokens[i+1].strip() if i+1 < len(tokens) else ""
+        for article in articles:
+            vector = None
+            if not skip_embedding:
+                try:
+                    chunk_text = (
+                        f"{article['kanun_no']} {article['madde_kodu']}: "
+                        f"{article['madde_metni'][:1500]}"
+                    )
+                    generated = generate_embedding(chunk_text)
+                    vector = generated if generated and any(generated) else None
+                except Exception as exc:
+                    logger.warning("Mevzuat embedding üretilemedi (%s): %s", source_url, exc)
 
-            # Atıf yapılan kanun numarasını yakala (Örn: 3065, 4458)
-            law_match = re.search(r"(\d{3,5})\s+sayılı\s+([A-Za-zÇĞİÖŞÜçğıöşü\s]+Kanun)", madde_icerik)
-            if law_match:
-                current_law_no = law_match.group(1)
+            existing = session.query(GumrukMevzuatMaddesiModel).filter(
+                GumrukMevzuatMaddesiModel.tarih == pub_date,
+                GumrukMevzuatMaddesiModel.madde_kodu == article["madde_kodu"],
+                GumrukMevzuatMaddesiModel.kaynak_url == source_url,
+            ).first()
 
-            # Vektör üret
-            chunk_text = f"{current_law_no} Sayılı Kanun {madde_baslik}: {madde_icerik[:1000]}"
-            vector = generate_embedding(chunk_text)
-
-            record = GumrukMevzuatMaddesiModel(
-                tarih=formatted_date,
-                resmi_gazete_sayisi=gazette_no,
-                kanun_no=current_law_no,
-                madde_kodu=madde_baslik,
-                madde_metni=madde_icerik[:15000],
-                kaynak_url=base_url,
-                icerik_vektor=vector if any(vector) else None
-            )
-            session.add(record)
-            articles_to_insert.append(madde_baslik)
+            if existing:
+                existing.resmi_gazete_sayisi = gazette_number
+                existing.kanun_no = article["kanun_no"]
+                existing.madde_metni = article["madde_metni"]
+                if vector is not None:
+                    existing.icerik_vektor = vector
+                updated += 1
+            else:
+                session.add(GumrukMevzuatMaddesiModel(
+                    tarih=pub_date,
+                    resmi_gazete_sayisi=gazette_number,
+                    kanun_no=article["kanun_no"],
+                    madde_kodu=article["madde_kodu"],
+                    madde_metni=article["madde_metni"],
+                    kaynak_url=source_url,
+                    icerik_vektor=vector,
+                ))
+                inserted += 1
 
         session.commit()
 
-    logger.info(f"[Resmi Gazete ETL] {formatted_date} için {len(articles_to_insert)} madde başarıyla yüklendi.")
-    return {"status": "SUCCESS", "inserted_articles": len(articles_to_insert)}
+    logger.info(
+        "[Resmî Gazete ETL] %s: %s yeni, %s güncel madde (%s)",
+        pub_date,
+        inserted,
+        updated,
+        source_url,
+    )
+    return {"status": "SUCCESS", "inserted_articles": inserted, "updated_articles": updated}
+
+
+def ingest_daily_gazette(date_str: str, gazette_no: int = 1, skip_embedding: bool = False) -> Dict[str, Any]:
+    """Geriye uyumlu giriş: günlük fihristteki ilgili HTML belgelerini tarar."""
+    index_url = f"https://www.resmigazete.gov.tr/eskiler/{date_str[:4]}/{date_str[4:6]}/{date_str}.htm"
+    try:
+        response = requests.get(index_url, timeout=30)
+        response.raise_for_status()
+    except Exception as exc:
+        return {"status": "FAILED", "reason": f"Ağ hatası: {exc}"}
+
+    response.encoding = "windows-1254"
+    soup = BeautifulSoup(response.text, "html.parser")
+    pub_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+    total_inserted = 0
+    total_updated = 0
+
+    for anchor in soup.find_all("a", href=True):
+        href = anchor.get("href", "").strip()
+        context = anchor.parent.get_text(" ", strip=True) if anchor.parent else anchor.get_text(" ", strip=True)
+        if not href.lower().endswith((".htm", ".html")) or not is_customs_related(context):
+            continue
+
+        document_url = urljoin(index_url, href)
+        try:
+            document_response = requests.get(document_url, timeout=30)
+            document_response.raise_for_status()
+            document_response.encoding = "windows-1254"
+            result = ingest_gazette_document(
+                document_response.text,
+                document_url,
+                pub_date,
+                gazette_no,
+                skip_embedding=skip_embedding,
+            )
+            total_inserted += result.get("inserted_articles", 0)
+            total_updated += result.get("updated_articles", 0)
+        except Exception as exc:
+            logger.warning("Resmî Gazete belgesi işlenemedi (%s): %s", document_url, exc)
+
+    return {
+        "status": "SUCCESS",
+        "inserted_articles": total_inserted,
+        "updated_articles": total_updated,
+    }
+
 
 def main_cloud_function(request):
-    """Cloud Run Function HTTP veya Pub/Sub giriş noktası."""
+    """Eski Cloud Function giriş noktası; yeni kurulum Cloud Run Job kullanır."""
     import datetime
+
     today_str = datetime.datetime.now().strftime("%Y%m%d")
-    result = ingest_daily_gazette(today_str)
-    return result
+    return ingest_daily_gazette(today_str)

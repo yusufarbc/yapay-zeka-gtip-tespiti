@@ -1,6 +1,19 @@
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, List
 
+
+class LegalSource(BaseModel):
+    """GTİP kararında gerçekten sorgulanan ve kullanıcıya gösterilebilen hukuki kaynak."""
+    source_type: str = Field(
+        description="TGTC_2026 | GIR | IZAHNAME | BTB | SINIFLANDIRMA_KARARI | GUMRUK_MEVZUATI",
+        max_length=50,
+    )
+    reference_no: str = Field(default="", max_length=150)
+    title: str = Field(default="", max_length=500)
+    publication_date: Optional[str] = Field(default=None, max_length=30)
+    excerpt: str = Field(default="")
+    source_url: Optional[str] = None
+
 class ProductFeatures(BaseModel):
     product_name: str = Field(description="Ürünün ticari adı veya kısa tanımı", min_length=1, max_length=2000)
     primary_material: str = Field(description="Baskın malzeme: Pamuk, Plastik, Çelik, Cam vb.", max_length=500)
@@ -23,6 +36,8 @@ class PrecedentBTB(BaseModel):
     product_description: str = Field(description="BTB kararındaki ürün tanımı")
     legal_justification: str = Field(description="Bakanlığın yasal gerekçe açıklaması")
     similarity_score: float = Field(description="Vektör benzerlik skoru (0.0 - 1.0)", ge=0.0, le=1.0)
+    source_type: str = Field(default="BTB", max_length=50)
+    source_url: Optional[str] = None
 
 class GTIPCandidate(BaseModel):
     gtip_code: str = Field(description="12 Haneli GTİP Kodu (örn. 8471.30.00.00.11)", max_length=30)
@@ -31,6 +46,8 @@ class GTIPCandidate(BaseModel):
     heading: str = Field(description="4 Haneli Pozisyon Kodu", max_length=10)
     score: float = Field(description="Kombine RAG Skoru (BTB + TGTC)", ge=0.0, le=1.0)
     precedents: List[PrecedentBTB] = Field(default_factory=list)
+    legal_sources: List[LegalSource] = Field(default_factory=list)
+    consulted_sources: List[str] = Field(default_factory=list)
 
 class HITLOption(BaseModel):
     option_id: str = Field(description="Seçenek Kimliği (A, B, C)", max_length=50)
@@ -59,5 +76,7 @@ class GTIPDecision(BaseModel):
     legal_justification: Optional[str] = None
     applied_gir_rules: List[str] = Field(default_factory=list)
     precedent_btbs: List[PrecedentBTB] = Field(default_factory=list)
+    legal_sources: List[LegalSource] = Field(default_factory=list)
+    consulted_sources: List[str] = Field(default_factory=list)
     hitl_question: Optional[HITLQuestion] = None
     audit_notes: List[str] = Field(default_factory=list)

@@ -36,6 +36,7 @@ def test_security_auth_production_header_rejection():
 
     old_env = settings.ENVIRONMENT
     old_emu = settings.USE_GCP_EMULATOR
+    old_demo = settings.ALLOW_PUBLIC_DEMO_ACCESS
     try:
         # 1. Geliştirme modunda X-User-Email okunmalı
         settings.ENVIRONMENT = "development"
@@ -52,6 +53,24 @@ def test_security_auth_production_header_rejection():
     finally:
         settings.ENVIRONMENT = old_env
         settings.USE_GCP_EMULATOR = old_emu
+        settings.ALLOW_PUBLIC_DEMO_ACCESS = old_demo
+
+def test_scheduler_header_cannot_bypass_admin_auth():
+    from unittest.mock import MagicMock
+    from api.security.auth import require_admin_user
+    import pytest
+    from fastapi import HTTPException
+
+    req = MagicMock()
+    req.headers = {
+        "X-CloudScheduler": "true",
+        "User-Agent": "Google-Cloud-Scheduler"
+    }
+    req.client.host = "127.0.0.1"
+
+    with pytest.raises(HTTPException) as exc_info:
+        require_admin_user(req)
+    assert exc_info.value.status_code == 403
 
 def test_hard_rules_matrix_lock():
     features = ProductFeatures(
@@ -62,6 +81,27 @@ def test_hard_rules_matrix_lock():
     allowed_chapters, rules = rule_engine.apply_rules(features)
     assert "64" in allowed_chapters
     assert any("HARD LOCK" in r or "katı kural kilidi" in r.lower() for r in rules)
+
+def test_electric_kettle_is_locked_to_chapter_85():
+    features = ProductFeatures(
+        product_name="Paslanmaz çelik gövdeli 2200 W elektrikli su ısıtıcı kettle",
+        primary_material="Paslanmaz çelik",
+        intended_use="Ev tipi su ısıtma"
+    )
+    allowed_chapters, rules = rule_engine.apply_rules(features)
+    assert allowed_chapters == ["85"]
+    assert any("elektrotermik" in rule.lower() for rule in rules)
+
+
+def test_decision_schema_exposes_all_consulted_legal_layers():
+    from api.modules.rag_engine import CONSULTED_SOURCE_LAYERS
+
+    assert "TGTC_2026" in CONSULTED_SOURCE_LAYERS
+    assert "GIR_1_6" in CONSULTED_SOURCE_LAYERS
+    assert "FASIL_IZAHNAME" in CONSULTED_SOURCE_LAYERS
+    assert "BTB_LAST_6_YEARS" in CONSULTED_SOURCE_LAYERS
+    assert "SINIFLANDIRMA_KARARLARI_LAST_6_YEARS" in CONSULTED_SOURCE_LAYERS
+    assert "GUMRUK_MEVZUATI_LAST_6_YEARS" in CONSULTED_SOURCE_LAYERS
 
 def test_hitl_5_percent_score_rule():
     from api.modules.deterministic_engine import deterministic_engine

@@ -7,21 +7,59 @@ Düz vektör araması yerine 4 aşamalı hiyerarşik karar boru hattı işletir:
 4. Adım 4 (Top-K Re-ranking & Emsal Sentezi): Emsal BTB (%70) ve TGTC (%30) ağırlıklarıyla aday listesini üretir.
 """
 
+import datetime
 import logging
+import re
 from typing import List, Dict, Any, Optional
-from api.schemas.product import ProductFeatures, GTIPCandidate, PrecedentBTB
+from api.schemas.product import ProductFeatures, GTIPCandidate, PrecedentBTB, LegalSource
 from api.db.gcp_emulator import local_vector_store, get_text_embedding
 from api.db.tgtc_knowledge_base import (
     TGTC_CHAPTERS, get_local_tgtc_headings, load_tgtc_rules_and_notes
 )
 from api.db.database import (
     SessionLocal, hybrid_search_headings_and_gtip,
-    search_chapter_notes_and_exclusions, GumrukEmsalKararModel
+    search_chapter_notes_and_exclusions, search_recent_customs_legislation
 )
 from api.modules.llm_verifier import llm_verifier
 from api.config import settings
 
 logger = logging.getLogger("HierarchicalRAGEngine")
+
+CONSULTED_SOURCE_LAYERS = [
+    "TGTC_2026",
+    "GIR_1_6",
+    "FASIL_IZAHNAME",
+    "BTB_LAST_6_YEARS",
+    "SINIFLANDIRMA_KARARLARI_LAST_6_YEARS",
+    "GUMRUK_MEVZUATI_LAST_6_YEARS",
+]
+
+
+def _six_year_cutoff(today: Optional[datetime.date] = None) -> datetime.date:
+    today = today or datetime.date.today()
+    try:
+        return today.replace(year=today.year - 6)
+    except ValueError:
+        return today.replace(year=today.year - 6, day=28)
+
+
+def _decision_source(item: Dict[str, Any]) -> LegalSource:
+    source_type = str(item.get("source_type") or "BTB").upper()
+    return LegalSource(
+        source_type=source_type,
+        reference_no=str(item.get("btb_no") or ""),
+        title=str(item.get("product_description") or source_type),
+        publication_date=str(item.get("issue_date") or ""),
+        excerpt=str(item.get("legal_justification") or "")[:1200],
+        source_url=item.get("source_url"),
+    )
+
+
+def _format_current_gtip(value: Any) -> str:
+    digits = re.sub(r"[^0-9]", "", str(value or ""))
+    if len(digits) == 12:
+        return f"{digits[:4]}.{digits[4:6]}.{digits[6:8]}.{digits[8:10]}.{digits[10:12]}"
+    return str(value or "")
 
 class RAGEngine:
     """
@@ -142,6 +180,8 @@ class RAGEngine:
         # 4. ADIM 3: Hibrit Pozisyon ve GTİP Arama (pgvector Dense + BM25 Sparse + RRF)
         session = SessionLocal()
         hybrid_results = []
+        legislation_results = []
+        cutoff = _six_year_cutoff()
         try:
             hybrid_results = hybrid_search_headings_and_gtip(
                 session=session,
@@ -151,91 +191,119 @@ class RAGEngine:
                 top_k=8,
                 rrf_k=settings.RRF_K
             )
+            legislation_results = search_recent_customs_legislation(
+                session=session,
+                query_text=query_text,
+                min_date=cutoff.isoformat(),
+                top_k=5,
+            )
         except Exception as ex_hybrid:
             logger.warning(f"[Hybrid DB Search Warning] {ex_hybrid}")
         finally:
             session.close()
 
-        # Emsal BTB Vektör Araması (valid_until süzgeciyle)
+        # Son altı yıldaki BTB ve sınıflandırma kararlarını AYRI katmanlar olarak tara.
         btb_results = local_vector_store.search_btb(
             query_text=query_text,
-            allowed_chapters=retained_chapters if is_hard_locked else None,
-            top_k=5
+            allowed_chapters=retained_chapters,
+            top_k=5,
+            source_types=["BTB"],
+            min_issue_date=cutoff,
+        )
+        classification_results = local_vector_store.search_btb(
+            query_text=query_text,
+            allowed_chapters=retained_chapters,
+            top_k=5,
+            source_types=["SINIFLANDIRMA_KARARI", "SINIFLANDIRMA", "CLASSIFICATION_DECISION"],
+            min_issue_date=cutoff,
         )
 
         # 5. ADIM 4: Top-K Sentez ve Re-Ranking
         rules_db = load_tgtc_rules_and_notes()
         chapter_notes = rules_db.get("fasil_notlari", {})
         candidates = []
-        seen_gtips = set()
-
-        # A) Hibrit Veritabanı ve BTB Eşleşmelerini Birleştir
-        combined_items = []
-        
-        # Hibrit SQL pozisyonlarını ekle (TGTC 2026 Resmi Pozisyonları)
+        full_gtip_results = [
+            item for item in hybrid_results
+            if len(re.sub(r"[^0-9]", "", str(item.get("gtip_code") or ""))) == 12
+        ]
+        if full_gtip_results:
+            # Nihai sınıflandırma 12 hanelidir. 4/6 haneli başlıklar bağlam olarak
+            # kullanılır, 12 haneli uygun aday varken nihai aday listesine girmez.
+            hybrid_results = full_gtip_results
+        # Adaylar yalnızca yürürlükteki 2026 TGTC ağacından doğar. Eski kararlar
+        # aday kod üretemez; sadece mevcut tarife kodunu destekler veya çelişkiyi görünür kılar.
         for hr in hybrid_results:
-            gtip = hr.get("gtip_code")
-            if gtip and gtip not in seen_gtips:
-                seen_gtips.add(gtip)
-                combined_items.append({
-                    "source": "TGTC_TREE",
-                    "gtip_code": gtip,
-                    "description": hr.get("description", ""),
-                    "chapter": hr.get("chapter", gtip[:2]),
-                    "heading": hr.get("heading", gtip[:4]),
-                    "similarity_score": hr.get("similarity_score", 0.85),
-                    "legal_justification": f"TGTC 2026 Pozisyon {hr.get('heading')}: {hr.get('description')}",
-                    "btb_no": f"TGTC-{gtip[:4]}",
-                    "issue_date": "2026-01-01"
-                })
-
-        # BTB emsal kararlarını ekle
-        for btb in btb_results:
-            gtip = btb.get("gtip_code")
-            if gtip and gtip not in seen_gtips:
-                seen_gtips.add(gtip)
-                combined_items.append({
-                    "source": "BTB",
-                    "gtip_code": gtip,
-                    "description": btb.get("product_description", ""),
-                    "chapter": btb.get("chapter", gtip[:2]),
-                    "heading": btb.get("heading", gtip[:4]),
-                    "similarity_score": btb.get("similarity_score", 0.80),
-                    "legal_justification": btb.get("legal_justification", "TGTC Mevzuat Kaydı"),
-                    "btb_no": btb.get("btb_no", f"EMSAL-{gtip[:4]}"),
-                    "issue_date": btb.get("issue_date", "2026-01-01")
-                })
-
-        # Aday Puanlaması ve Sıralama
-        for item in combined_items[:10]:
-            sim = item.get("similarity_score", 0.80)
-            res_chap = str(item.get("chapter", item.get("gtip_code", "")[:2])).zfill(2)
+            raw_gtip = hr.get("gtip_code")
+            if not raw_gtip:
+                continue
+            gtip = _format_current_gtip(raw_gtip)
+            heading = str(hr.get("heading") or re.sub(r"[^0-9]", "", str(raw_gtip))[:4])
+            sim = float(hr.get("similarity_score", 0.75))
+            res_chap = str(hr.get("chapter", re.sub(r"[^0-9]", "", str(raw_gtip))[:2])).zfill(2)
             chap_note = chapter_notes.get(res_chap, "")
-            
-            base_legal = item.get("legal_justification", "TGTC 2026 Mevzuatı")
-            if chap_note and "[2026 Fasıl" not in base_legal:
-                base_legal += f" [2026 Fasıl {res_chap} Resmi Hukuki İzahname: {chap_note[:300]}...]"
 
-            precedent = PrecedentBTB(
-                btb_no=item.get("btb_no", f"EMSAL-{item['gtip_code'][:4]}"),
-                gtip_code=item["gtip_code"],
-                issue_date=item.get("issue_date", "2026-01-01"),
-                product_description=item["description"],
-                legal_justification=base_legal,
-                similarity_score=sim
+            matching_btbs = [b for b in btb_results if str(b.get("heading") or "") == heading]
+            matching_classifications = [
+                c for c in classification_results if str(c.get("heading") or "") == heading
+            ]
+            precedents = [
+                PrecedentBTB(
+                    btb_no=str(item.get("btb_no") or "EMSAL-BTB"),
+                    gtip_code=str(item.get("gtip_code") or ""),
+                    issue_date=str(item.get("issue_date") or ""),
+                    product_description=str(item.get("product_description") or ""),
+                    legal_justification=str(item.get("legal_justification") or ""),
+                    similarity_score=float(item.get("similarity_score") or 0.0),
+                    source_type="BTB",
+                    source_url=item.get("source_url"),
+                )
+                for item in matching_btbs[:3]
+            ]
+
+            legal_sources = [
+                LegalSource(
+                    source_type="TGTC_2026",
+                    reference_no=str(gtip),
+                    title=f"2026 TGTC Pozisyon {heading}",
+                    publication_date="2026-01-01",
+                    excerpt=str(hr.get("description") or ""),
+                ),
+                LegalSource(
+                    source_type="GIR",
+                    reference_no="GİR 1-6",
+                    title="Tarifenin Yorumu ile İlgili Genel Kurallar",
+                    publication_date="2026-01-01",
+                    excerpt="\n".join(str(rule) for rule in rules_db.get("yorum_kurallari", []))[:1600],
+                ),
+            ]
+            if chap_note:
+                legal_sources.append(LegalSource(
+                    source_type="IZAHNAME",
+                    reference_no=f"Fasıl {res_chap}",
+                    title=f"2026 TGTC Fasıl {res_chap} Notları ve İzahnamesi",
+                    publication_date="2026-01-01",
+                    excerpt=str(chap_note)[:1600],
+                ))
+            legal_sources.extend(_decision_source(item) for item in matching_btbs[:3])
+            legal_sources.extend(_decision_source(item) for item in matching_classifications[:3])
+            legal_sources.extend(LegalSource(source_type="GUMRUK_MEVZUATI", **item) for item in legislation_results)
+
+            btb_support = max((float(item.get("similarity_score") or 0.0) for item in matching_btbs), default=0.0)
+            classification_support = max(
+                (float(item.get("similarity_score") or 0.0) for item in matching_classifications),
+                default=0.0,
             )
-
-            # RAG Skoru (TGTC %60 + BTB %40)
-            tgtc_chap_score = 1.0 if (retained_chapters and res_chap in retained_chapters) else 0.65
-            combined_score = (sim * 0.70) + (tgtc_chap_score * 0.30)
+            combined_score = (sim * 0.70) + (btb_support * 0.18) + (classification_support * 0.12)
 
             candidate = GTIPCandidate(
-                gtip_code=item["gtip_code"],
-                description=item["description"],
+                gtip_code=str(gtip),
+                description=str(hr.get("description") or ""),
                 chapter=res_chap,
-                heading=item["heading"],
+                heading=heading,
                 score=round(min(0.98, max(0.50, combined_score)), 3),
-                precedents=[precedent]
+                precedents=precedents,
+                legal_sources=legal_sources,
+                consulted_sources=CONSULTED_SOURCE_LAYERS.copy(),
             )
             candidates.append(candidate)
 

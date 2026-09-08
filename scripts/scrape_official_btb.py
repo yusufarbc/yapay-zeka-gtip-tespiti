@@ -1,0 +1,228 @@
+"""T.C. Ticaret Bakanlığı geçerli BTB kayıtlarını Cloud SQL'e idempotent aktarır."""
+
+import argparse
+import datetime
+import logging
+import os
+import re
+import sys
+import time
+from typing import Any, Dict, Iterable, List, Optional
+
+import requests
+from bs4 import BeautifulSoup
+
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+
+from api.db.database import GumrukEmsalKararModel, SessionLocal, init_orm_tables
+
+
+logger = logging.getLogger("OfficialBTBSync")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+BTB_LIST_URL = "https://uygulama.gtb.gov.tr/BTBBasvuru/Btbler"
+GRID_ID = "ctl00_ContentPlaceHolder1_GridView1"
+HEADERS = {
+    "User-Agent": "GTIP-Mevzuat-Bot/3.0 (official-public-data; contact: system-admin)",
+    "Accept-Language": "tr-TR,tr;q=0.9",
+}
+
+
+def _hidden_fields(soup: BeautifulSoup) -> Dict[str, str]:
+    return {
+        element.get("name"): element.get("value", "")
+        for element in soup.select("input[type=hidden][name]")
+    }
+
+
+def _postback(
+    session: requests.Session,
+    soup: BeautifulSoup,
+    event_target: str,
+    event_argument: str = "",
+) -> BeautifulSoup:
+    payload = _hidden_fields(soup)
+    payload["__EVENTTARGET"] = event_target
+    payload["__EVENTARGUMENT"] = event_argument
+    response = session.post(BTB_LIST_URL, data=payload, headers=HEADERS, timeout=60)
+    response.raise_for_status()
+    return BeautifulSoup(response.text, "html.parser")
+
+
+def _page_rows(soup: BeautifulSoup) -> List[Dict[str, str]]:
+    grid = soup.select_one(f"#{GRID_ID}")
+    if grid is None:
+        return []
+
+    rows: List[Dict[str, str]] = []
+    for row in grid.select("tr"):
+        cells = row.select("td")
+        detail_link = row.select_one("a[href*='$btn']")
+        if len(cells) < 4 or detail_link is None:
+            continue
+        href = detail_link.get("href", "")
+        match = re.search(r"__doPostBack\('([^']+)'", href)
+        if not match:
+            continue
+        rows.append({
+            "event_target": match.group(1),
+            "btb_no": cells[0].get_text(" ", strip=True),
+            "gtip_code": cells[1].get_text(" ", strip=True),
+            "product_description": cells[2].get_text(" ", strip=True),
+            "issue_date": cells[3].get_text(" ", strip=True),
+        })
+    return rows
+
+
+def _text_by_id(soup: BeautifulSoup, element_id: str) -> str:
+    element = soup.select_one(f"#{element_id}")
+    return element.get_text(" ", strip=True) if element else ""
+
+
+def parse_btb_detail(soup: BeautifulSoup) -> Dict[str, str]:
+    """Portal detay görünümünü saf ve test edilebilir bir sözlüğe dönüştürür."""
+    return {
+        "btb_no": _text_by_id(soup, "ctl00_ContentPlaceHolder1_lblBtbNo"),
+        "gtip_code": _text_by_id(soup, "ctl00_ContentPlaceHolder1_lblGtip"),
+        "issue_date": _text_by_id(soup, "ctl00_ContentPlaceHolder1_lblGbastar"),
+        "legal_justification": _text_by_id(soup, "ctl00_ContentPlaceHolder1_lblSinger"),
+        "product_description": _text_by_id(soup, "ctl00_ContentPlaceHolder1_lblEstanim"),
+    }
+
+
+def _parse_date(value: str) -> Optional[datetime.date]:
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d.%m.%Y"):
+        try:
+            return datetime.datetime.strptime(value.strip(), fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _format_gtip(value: str) -> str:
+    digits = re.sub(r"[^0-9]", "", value)
+    if len(digits) == 12:
+        return f"{digits[:4]}.{digits[4:6]}.{digits[6:8]}.{digits[8:10]}.{digits[10:12]}"
+    return value.strip()
+
+
+def iter_official_btbs(max_pages: int = 1000, max_records: Optional[int] = None) -> Iterable[Dict[str, Any]]:
+    """Yeni kayıttan eskiye ilerler ve tam altı yıllık tarih sınırında durur."""
+    today = datetime.date.today()
+    try:
+        cutoff = today.replace(year=today.year - 6)
+    except ValueError:
+        cutoff = today.replace(year=today.year - 6, day=28)
+
+    session = requests.Session()
+    response = session.get(BTB_LIST_URL, headers=HEADERS, timeout=60)
+    response.raise_for_status()
+    page_soup = BeautifulSoup(response.text, "html.parser")
+    seen: set[str] = set()
+    yielded = 0
+
+    for page_number in range(1, max_pages + 1):
+        if page_number > 1:
+            try:
+                page_soup = _postback(
+                    session,
+                    page_soup,
+                    GRID_ID.replace("_", "$"),
+                    f"Page${page_number}",
+                )
+            except Exception as e_page:
+                logger.info("Sayfa %s yüklenirken son sayfaya ulaşıldı veya sunucu durdu: %s", page_number, e_page)
+                break
+
+        rows = _page_rows(page_soup)
+        if not rows:
+            break
+        page_new = 0
+
+        for row in rows:
+            if row["btb_no"] in seen:
+                continue
+            seen.add(row["btb_no"])
+            issue_date = _parse_date(row["issue_date"])
+            if issue_date and issue_date < cutoff:
+                return
+
+            detail_soup = _postback(session, page_soup, row["event_target"])
+            detail = parse_btb_detail(detail_soup)
+            if not detail["btb_no"] or not detail["gtip_code"] or not detail["product_description"]:
+                logger.warning("Eksik BTB detay kaydı atlandı: %s", row["btb_no"])
+                continue
+
+            parsed_date = _parse_date(detail["issue_date"]) or issue_date
+            yield {
+                "btb_no": detail["btb_no"],
+                "gtip_code": _format_gtip(detail["gtip_code"]),
+                "issue_date": parsed_date.isoformat() if parsed_date else detail["issue_date"],
+                "product_description": detail["product_description"],
+                "legal_justification": detail["legal_justification"],
+                "source_url": BTB_LIST_URL,
+            }
+            yielded += 1
+            page_new += 1
+            if max_records and yielded >= max_records:
+                return
+            time.sleep(0.05)
+
+        logger.info("BTB sayfa %s işlendi; %s yeni detay okundu.", page_number, page_new)
+        if page_new == 0:
+            break
+
+
+def upsert_btbs(records: Iterable[Dict[str, Any]]) -> Dict[str, int]:
+    inserted = 0
+    updated = 0
+    with SessionLocal() as db:
+        for item in records:
+            record = db.query(GumrukEmsalKararModel).filter(
+                GumrukEmsalKararModel.karar_tipi == "BTB",
+                GumrukEmsalKararModel.referans_no == item["btb_no"],
+            ).first()
+            if record is None:
+                record = GumrukEmsalKararModel(
+                    karar_tipi="BTB",
+                    referans_no=item["btb_no"],
+                    gtip_kodu=item["gtip_code"],
+                    chapter_code=re.sub(r"[^0-9]", "", item["gtip_code"])[:2],
+                    yayin_tarihi=item["issue_date"],
+                    esya_tanimi=item["product_description"],
+                    hukuki_gerekce=item["legal_justification"],
+                    kaynak_url=item["source_url"],
+                    valid_until="9999-12-31",
+                )
+                db.add(record)
+                inserted += 1
+            else:
+                record.gtip_kodu = item["gtip_code"]
+                record.chapter_code = re.sub(r"[^0-9]", "", item["gtip_code"])[:2]
+                record.yayin_tarihi = item["issue_date"]
+                record.esya_tanimi = item["product_description"]
+                record.hukuki_gerekce = item["legal_justification"]
+                record.kaynak_url = item["source_url"]
+                record.valid_until = "9999-12-31"
+                updated += 1
+            if (inserted + updated) % 100 == 0:
+                db.commit()
+        db.commit()
+    return {"inserted": inserted, "updated": updated}
+
+
+def run(max_pages: int = 1000, max_records: Optional[int] = None) -> Dict[str, int]:
+    init_orm_tables()
+    result = upsert_btbs(iter_official_btbs(max_pages=max_pages, max_records=max_records))
+    logger.info("Resmî BTB senkronu tamamlandı: %s", result)
+    return result
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Ticaret Bakanlığı resmî geçerli BTB senkronu")
+    parser.add_argument("--max-pages", type=int, default=1000)
+    parser.add_argument("--max-records", type=int, default=None)
+    args = parser.parse_args()
+    run(max_pages=args.max_pages, max_records=args.max_records)

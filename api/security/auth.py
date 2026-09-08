@@ -159,24 +159,11 @@ def get_current_user_session(request: Any) -> UserSession:
 def require_admin_user(request: Any) -> UserSession:
     """
     Yönetimsel işlemler (/api/v1/admin/*) için yetki denetleyicisi:
-    - Cloud Scheduler tarafından yapılan istekleri (X-CloudScheduler veya User-Agent) otomatik onaylar.
-    - Kullanıcı oturumu 'admin' veya 'senior_broker' rolünde değilse 403 Forbidden fırlatır.
-    """
-    # Cloud Scheduler veya dahili GCP otomasyon çağrısı kontrolü
-    user_agent = request.headers.get("User-Agent", "")
-    is_scheduler = (
-        request.headers.get("X-CloudScheduler") == "true" or
-        "Google-Cloud-Scheduler" in user_agent or
-        "AppEngine-Google" in user_agent
-    )
-    if is_scheduler:
-        return UserSession(
-            user_id="cloud_scheduler",
-            email="scheduler@gumruk-mevzuat.iam.gserviceaccount.com",
-            full_name="Cloud Scheduler",
-            role="admin"
-        )
+    Kullanıcı oturumu 'admin' veya 'senior_broker' rolünde değilse 403 Forbidden fırlatır.
 
+    Cloud Scheduler kolayca taklit edilebilen HTTP başlıklarıyla yönetici yetkisi alamaz.
+    Zamanlanmış ETL, OAuth ile doğrulanan Cloud Run Job API'sini doğrudan tetikler.
+    """
     session = get_current_user_session(request)
     if session.role not in ["admin", "senior_broker"]:
         raise HTTPException(
@@ -184,5 +171,4 @@ def require_admin_user(request: Any) -> UserSession:
             detail="Bu yönetimsel operasyon için 'admin' veya 'senior_broker' yetkisi gereklidir."
         )
     return session
-
 

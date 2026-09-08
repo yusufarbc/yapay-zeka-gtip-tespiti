@@ -215,6 +215,7 @@ def populate_gtip_tree(session: Session):
             obj = TgtcGtipModel(
                 gtip_code=code,
                 level=level,
+                chapter_code=code[:2],
                 parent_code=parent_code,
                 description=desc,
                 tax_rate=tax,
@@ -235,11 +236,9 @@ def wipe_bad_btbs(session: Session):
     print("Wiping bad RG-PDF records...")
     try:
         from api.db.database import GumrukEmsalKararModel
-        from api.db.gcp_emulator import OfficialBTBModel
-        b = session.query(OfficialBTBModel).filter(OfficialBTBModel.btb_no.like('RG-PDF-%')).delete(synchronize_session=False)
         e = session.query(GumrukEmsalKararModel).filter(GumrukEmsalKararModel.referans_no.like('RG-PDF-%')).delete(synchronize_session=False)
         session.commit()
-        print(f"Deleted {b} BTBs and {e} Emsal records.")
+        print(f"Deleted {e} obsolete unified Emsal records.")
     except Exception as ex:
         session.rollback()
         print(f"Error wiping bad records: {ex}")

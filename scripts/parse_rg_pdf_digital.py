@@ -205,7 +205,6 @@ def save_to_database_orm(parsed_records: List[Dict[str, Any]], kaynak_url: str, 
 
     try:
         from api.db.database import SessionLocal, GumrukEmsalKararModel
-        from api.db.gcp_emulator import OfficialBTBModel
 
         session = SessionLocal()
         saved_count = 0
@@ -222,28 +221,6 @@ def save_to_database_orm(parsed_records: List[Dict[str, Any]], kaynak_url: str, 
 
             btb_no = f"RG-PDF-{yayin_tarihi.replace('-', '')}-{clean}-P{page_no}-{idx}"
 
-            # Çakışma kontrolü ve kaydetme (OfficialBTBModel)
-            existing = session.query(OfficialBTBModel).filter(OfficialBTBModel.btb_no == btb_no).first()
-            if existing:
-                existing.product_description = rec["esyain_tanimi"][:500] if rec["esyain_tanimi"] else existing.product_description
-                existing.legal_justification = rec["hukuki_gerekce"][:1500] if rec["hukuki_gerekce"] else existing.legal_justification
-            else:
-                obj = OfficialBTBModel(
-                    btb_no=btb_no,
-                    gtip_code=gtip,
-                    hs6_code=hs6,
-                    cn8_code=cn8,
-                    chapter=chapter,
-                    heading=heading,
-                    issue_date=yayin_tarihi,
-                    product_description=rec["esyain_tanimi"][:500] if rec["esyain_tanimi"] else "Gümrük Sınıflandırma Kararı",
-                    legal_justification=f"Resmî Gazete PDF ({kaynak_url}) | GCS: {gcs_pdf_uri or '-'} | Gerekçe: {rec['hukuki_gerekce'][:1500]}",
-                    source="RG_PDF_DIGITAL",
-                    is_active=True
-                )
-                session.add(obj)
-                saved_count += 1
-
             # Çakışma kontrolü ve kaydetme (GumrukEmsalKararModel)
             existing_emsal = session.query(GumrukEmsalKararModel).filter(GumrukEmsalKararModel.referans_no == btb_no).first()
             if not existing_emsal:
@@ -258,6 +235,7 @@ def save_to_database_orm(parsed_records: List[Dict[str, Any]], kaynak_url: str, 
                     kaynak_url=gcs_pdf_uri or kaynak_url
                 )
                 session.add(emsal_obj)
+                saved_count += 1
 
         session.commit()
         session.close()
@@ -266,4 +244,3 @@ def save_to_database_orm(parsed_records: List[Dict[str, Any]], kaynak_url: str, 
     except Exception as e:
         logger.error(f"DB Kayıt Hatası: {e}")
         return 0
-

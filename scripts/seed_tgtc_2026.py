@@ -238,7 +238,7 @@ def seed_gtip_tree(session: Session, generate_embeddings: bool = False, max_embe
     """
     logger.info("--- 3. 2026 TGTC Tarife Ağacı Tohumlanıyor ---")
     session.query(TgtcGtipModel).delete()
-    session.commit()
+    session.flush()
 
     json_path = os.path.join(TGTC_DIR, "tgtc_2026_full_database.json")
     if not os.path.exists(json_path):
@@ -291,7 +291,7 @@ def seed_gtip_tree(session: Session, generate_embeddings: bool = False, max_embe
             level = "SUBHEADING"
             parent = clean_code[:4]
         else:
-            level = "NATIONAL_GTIP"
+            level = "GTIP"
             parent = clean_code[:6] if code_len >= 6 else clean_code[:4]
 
         if clean_code not in existing_codes:
@@ -334,9 +334,12 @@ def seed_gtip_tree(session: Session, generate_embeddings: bool = False, max_embe
                 is_active=r["is_active"],
                 embedding=r.get("embedding")
             ))
-        session.commit()
+        # Ara flush belleği sınırlar; transaction ancak tüm cetvel başarıyla
+        # yazıldıktan sonra commit edilir. Hata olursa eski cetvel rollback ile korunur.
+        session.flush()
         logger.info(f"Eklenen GTİP satırı: {min(idx + batch_size, len(rows_to_insert))} / {len(rows_to_insert)}")
 
+    session.commit()
     logger.info("2026 TGTC Tarife Ağacı başarıyla veritabanına aktarıldı.")
 
 
@@ -350,6 +353,9 @@ def run_full_seed(generate_embeddings: bool = False):
     logger.info(f"Hedef Cloud SQL : {settings.CLOUD_SQL_CONNECTION_NAME}")
     logger.info("==========================================================")
 
+    # Bu kontrollü job zaten tam seed yapacak; init sırasında ikinci bir otomatik
+    # seed başlatıp tabloyu iki kez yazma.
+    os.environ["SKIP_TGTC_AUTO_SEED"] = "true"
     init_orm_tables()
 
     with SessionLocal() as session:

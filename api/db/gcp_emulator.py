@@ -12,6 +12,9 @@ import json
 import math
 import sqlite3
 import logging
+import datetime
+import re
+import time
 from typing import Dict, List, Any, Optional
 
 logger = logging.getLogger("GCPEmulator")
@@ -142,9 +145,10 @@ class LocalVectorStore:
         self.index_path = index_path
         self.btb_path = btb_path
         self._docs_cache: Optional[List[Dict[str, Any]]] = None
+        self._docs_cache_loaded_at: float = 0.0
 
     def _load_documents(self) -> List[Dict[str, Any]]:
-        if self._docs_cache is not None:
+        if self._docs_cache is not None and time.monotonic() - self._docs_cache_loaded_at < 900:
             return self._docs_cache
 
         # Öncelik: Zenginleştirilmiş Hiyerarşik Tarife Ağacı Kataloğu
@@ -153,6 +157,7 @@ class LocalVectorStore:
             catalog = load_btb_catalog()
             if catalog:
                 self._docs_cache = catalog
+                self._docs_cache_loaded_at = time.monotonic()
                 logger.debug(f"[LocalVectorStore] Ana TGTC kütüphanesi başarıyla vektör deposuna yüklendi ({len(catalog)} kayıt).")
                 return self._docs_cache
         except Exception as e:
@@ -163,6 +168,7 @@ class LocalVectorStore:
                 with open(self.index_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     self._docs_cache = data.get("entries", [])
+                    self._docs_cache_loaded_at = time.monotonic()
                     return self._docs_cache
             except Exception as e:
                 logger.warning(f"[LocalVectorStore] Index okuma hatası: {e}")
@@ -171,6 +177,7 @@ class LocalVectorStore:
             try:
                 with open(self.btb_path, "r", encoding="utf-8") as f:
                     self._docs_cache = json.load(f)
+                    self._docs_cache_loaded_at = time.monotonic()
                     return self._docs_cache
             except Exception as e:
                 logger.warning(f"[LocalVectorStore] BTB DB okuma hatası: {e}")
@@ -180,22 +187,65 @@ class LocalVectorStore:
     def invalidate_cache(self):
         """Bellek içi döküman önbelleğini geçersiz kılar. Yeni kayıt eklendikten sonra çağrılır."""
         self._docs_cache = None
+        self._docs_cache_loaded_at = 0.0
         logger.info("[LocalVectorStore] Döküman önbelleği temizlendi, bir sonraki aramada yeniden yüklenecek.")
 
-    def search_btb(self, query_text: str, allowed_chapters: Optional[List[str]] = None, top_k: int = 5) -> List[Dict[str, Any]]:
-        return self.search_similar(query=query_text, top_k=top_k, allowed_chapters=allowed_chapters)
+    @staticmethod
+    def _parse_publication_date(value: Any) -> Optional[datetime.date]:
+        raw = str(value or "").strip()
+        for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%Y/%m/%d", "%d/%m/%Y"):
+            try:
+                return datetime.datetime.strptime(raw[:10], fmt).date()
+            except ValueError:
+                continue
+        year_match = re.search(r"(?:19|20)\d{2}", raw)
+        if year_match:
+            return datetime.date(int(year_match.group(0)), 1, 1)
+        return None
 
-    def search_similar(self, query: str, top_k: int = 5, allowed_chapters: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    def search_btb(
+        self,
+        query_text: str,
+        allowed_chapters: Optional[List[str]] = None,
+        top_k: int = 5,
+        source_types: Optional[List[str]] = None,
+        min_issue_date: Optional[datetime.date] = None,
+    ) -> List[Dict[str, Any]]:
+        return self.search_similar(
+            query=query_text,
+            top_k=top_k,
+            allowed_chapters=allowed_chapters,
+            source_types=source_types or ["BTB"],
+            min_issue_date=min_issue_date,
+        )
+
+    def search_similar(
+        self,
+        query: str,
+        top_k: int = 5,
+        allowed_chapters: Optional[List[str]] = None,
+        source_types: Optional[List[str]] = None,
+        min_issue_date: Optional[datetime.date] = None,
+    ) -> List[Dict[str, Any]]:
         docs = self._load_documents()
         if not docs:
             return []
 
+        # --- Strateji 1: text-embedding-005 ile Cosine Similarity (Vertex AI ADC veya Key) ---
         # 1. Hızlı Aday Ön Süzgeci: İzinli fasıllar ve kelime örtüşmesi (O(N) CPU filtresi)
+        today_iso = datetime.date.today().isoformat()
         query_tokens = set(query.lower().split())
         candidate_docs = []
+        normalized_source_types = {str(s).upper() for s in (source_types or [])}
         for doc in docs:
+            source_type = str(doc.get("source_type") or "BTB").upper()
+            if normalized_source_types and source_type not in normalized_source_types:
+                continue
+            issue_date = self._parse_publication_date(doc.get("issue_date"))
+            if min_issue_date and (issue_date is None or issue_date < min_issue_date):
+                continue
             valid_until = str(doc.get("valid_until") or "")
-            if valid_until and valid_until != "9999-12-31" and valid_until < "2026-01-01":
+            if valid_until and valid_until != "9999-12-31" and valid_until < today_iso:
                 continue  # Versiyonlanmış eski mevzuat zırhı: Süresi biten kayıtlar atlanır
             chap = str(doc.get("chapter", doc.get("gtip_code", "")[:2])).zfill(2)
             if allowed_chapters and chap not in allowed_chapters:
@@ -221,6 +271,7 @@ class LocalVectorStore:
         if query_embedding and any(query_embedding):
             scored_results = []
             for doc in top_candidates:
+                source_type = str(doc.get("source_type") or "BTB").upper()
                 chap = str(doc.get("chapter", doc.get("gtip_code", "")[:2])).zfill(2)
                 desc = doc.get("product_description", "")
                 doc_embedding = doc.get("embedding") or _get_embedding(desc, "")
@@ -234,6 +285,8 @@ class LocalVectorStore:
                         "issue_date": doc.get("issue_date", "2026-01-01"),
                         "product_description": doc.get("product_description"),
                         "legal_justification": doc.get("legal_justification"),
+                        "source_type": source_type,
+                        "source_url": doc.get("source_url"),
                         "similarity_score": round(similarity, 4)
                     })
 
@@ -263,6 +316,8 @@ class LocalVectorStore:
                     "issue_date": doc.get("issue_date", "2026-01-01"),
                     "product_description": doc.get("product_description"),
                     "legal_justification": doc.get("legal_justification"),
+                    "source_type": str(doc.get("source_type") or "BTB").upper(),
+                    "source_url": doc.get("source_url"),
                     "similarity_score": round(score, 4)
                 })
 

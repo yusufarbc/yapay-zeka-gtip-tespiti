@@ -674,9 +674,9 @@ function SyncTab({ syncStatus, isSyncing, onSync }) {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '11px' }}>
         {[
-          { label: 'Pipeline Tetikleyici', value: 'GCP Cloud Scheduler', note: 'Her gece 00:30, 08:00, 14:00' },
-          { label: 'Ham Dosya Deposu', value: 'Cloud Storage (GCS)', note: 'gs://gtip-evrak-bucket-gtip-tespit-projesi/' },
-          { label: 'Vektör Arama', value: 'Vertex AI Vector Search', note: '768-Dim text-embedding-005' },
+          { label: 'Pipeline Tetikleyici', value: 'GCP Cloud Scheduler', note: 'Resmî Gazete 02:00, BTB 03:00' },
+          { label: 'Ham Dosya Deposu', value: 'Cloud Storage (GCS)', note: 'gs://gumruk-mevzuat-storage-us-central1/' },
+          { label: 'Vektör Arama', value: 'Cloud SQL pgvector HNSW', note: '768-Dim text-embedding-005' },
         ].map((item, i) => (
           <div key={i} style={{ background: 'var(--bg-surface)', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
             <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', fontWeight: 600 }}>{item.label}</span>

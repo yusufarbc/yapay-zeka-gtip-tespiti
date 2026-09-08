@@ -129,7 +129,8 @@ class LLMFactVerifier:
         candidate_gtip: str,
         heading_desc: str,
         chapter_notes: str = "",
-        gir_rules: List[str] = None
+        gir_rules: List[str] = None,
+        evidence_context: str = "",
     ) -> TariffVerification:
         """
         Adım 4: Aday GTİP'i Pydantic TariffVerification Structured Output formatında doğrular.
@@ -145,6 +146,7 @@ class LLMFactVerifier:
                 f"POZİSYON RESMİ TANIMI: {heading_desc}\n"
                 f"FASIL İZAHNAME VE UYGULAMA NOTU: {chapter_notes[:800]}\n"
                 f"UYGULANAN GİR KURALLARI: {gir_rules or ['GIR 1']}\n\n"
+                f"SON 6 YILLIK BTB / SINIFLANDIRMA KARARLARI / GÜMRÜK MEVZUATI KANITLARI:\n{evidence_context[:8000]}\n\n"
                 f"ÜRÜN METNİ:\n\"\"\"{raw_text}\"\"\"\n\n"
                 f"GÖREVİN: Ürünün bu GTİP pozisyonu için malzeme ve işlev uygunluğunu denetle.\n"
                 f"Yanıtını SADECE geçerli bir JSON olarak ver:\n"
@@ -213,7 +215,8 @@ class LLMFactVerifier:
         self, 
         raw_text: str, 
         predicates: List[LegalPredicate],
-        allowed_chapters: List[str] = None
+        allowed_chapters: List[str] = None,
+        evidence_context: str = "",
     ) -> List[PredicateVerificationResult]:
         """
         Kullanıcı metnini yasal kural ağacı (predicates) ve Dinamik Fasıl Önbelleği karşısında doğrular.
@@ -234,6 +237,7 @@ class LLMFactVerifier:
                 "Sen Türk Gümrük Mevzuatı Hakem ve Doğrulama Ajanısın (Legal Fact Verifier).\n"
                 "GÖREVİN: Aşağıda verilen ürün metnini dikkatle incele ve Yasal Koşul Listesindeki her soruyu değerlendir.\n\n"
                 f"DİNAMİK YASAL FASIL BAĞLAMI:\n{scoped_context}\n\n"
+                f"SON 6 YILLIK BTB / SINIFLANDIRMA KARARLARI / GÜMRÜK MEVZUATI KANITLARI:\n{evidence_context[:8000]}\n\n"
                 f"ÜRÜN METNİ:\n\"\"\"{raw_text}\"\"\"\n\n"
                 f"DOĞRULANACAK YASAL KOŞULLAR:\n{json.dumps(predicates_payload, ensure_ascii=False, indent=2)}\n\n"
                 "ÇOK KATI KURALLAR:\n"

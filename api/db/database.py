@@ -9,10 +9,11 @@ import uuid
 import json
 import logging
 import math
+import re
 from typing import Generator, List, Dict, Any, Optional, Tuple
 from sqlalchemy import (
     create_engine, Column, Integer, String, Float, Boolean,
-    Text, DateTime, func, text, UniqueConstraint, Index
+    Text, DateTime, func, text, UniqueConstraint, Index, or_
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from sqlalchemy.types import TypeDecorator
@@ -294,6 +295,9 @@ def init_orm_tables():
                     conn.execute(text("ALTER TABLE gumruk_emsal_kararlar ADD COLUMN IF NOT EXISTS chapter_code VARCHAR(10);"))
                     conn.execute(text("ALTER TABLE gumruk_emsal_kararlar ADD COLUMN IF NOT EXISTS valid_until VARCHAR(20) DEFAULT '9999-12-31';"))
                     conn.execute(text("ALTER TABLE gumruk_emsal_kararlar ADD COLUMN IF NOT EXISTS embedding vector(768);"))
+
+                    # Eski kurulumlarda 12 haneli noktalı GTİP değerlerini kesen VARCHAR(14) kolonunu genişlet.
+                    conn.execute(text("ALTER TABLE gtip_rules ALTER COLUMN target_gtip TYPE VARCHAR(30);"))
                     conn.commit()
                     logger.info("[SQLAlchemy ORM] PostgreSQL şema kolonları (ALTER TABLE IF NOT EXISTS) doğrulandı.")
             except Exception as ex_pg_mig:
@@ -367,39 +371,22 @@ def init_orm_tables():
             except Exception as ex_idx:
                 logger.debug(f"[SQLAlchemy ORM] HNSW index uyarısı: {ex_idx}")
 
-        # 🚨 OTOMATİK MOCK VERİ TEMİZLEYİCİ (Zero-Hallucination Koruması) 🚨
-        try:
-            with SessionLocal() as session:
-                d2 = session.query(GumrukEmsalKararModel).filter(
-                    GumrukEmsalKararModel.referans_no.like("Gumruk Genel Tebligi%") | 
-                    GumrukEmsalKararModel.referans_no.like("Teblig Takip%") |
-                    GumrukEmsalKararModel.referans_no.like("TR-BTB-%")
-                ).delete(synchronize_session=False)
-
-                d3 = session.query(GumrukSiniflandirmaKarariModel).filter(
-                    GumrukSiniflandirmaKarariModel.resmi_gazete_sayisi.like("%Mükerrer%") & 
-                    GumrukSiniflandirmaKarariModel.kaynak_url.like("https://www.resmigazete.gov.tr")
-                ).delete(synchronize_session=False)
-
-                session.commit()
-                if (d2 or 0) > 0 or (d3 or 0) > 0:
-                    logger.info(f"[SQLAlchemy ORM] {(d2 or 0) + (d3 or 0)} adet tohum/sahte karar Cloud SQL'den kalıcı olarak SİLİNDİ!")
-        except Exception as ex_mock:
-            logger.warning(f"[SQLAlchemy ORM] Mock silme uyarısı: {ex_mock}")
-
         # 🚀 OTOMATİK CLOUD SQL TOHUMLAYICI (2026 TGTC Tarife Ağacı) 🚀
         try:
             with SessionLocal() as session:
                 count_gtip = session.query(TgtcGtipModel).count()
-                if count_gtip == 0:
+                auto_seed_enabled = os.getenv("SKIP_TGTC_AUTO_SEED", "false").lower() != "true"
+                if count_gtip == 0 and auto_seed_enabled:
                     logger.info("[SQLAlchemy ORM] Cloud SQL Tarife Ağacı boş! '2026 TGTC' dizininden 01-99 Fasıllar ve GTİP tohumlaması başlatılıyor...")
                     from scripts.populate_tgtc_cloudsql import extract_gir_rules, extract_chapter_notes, populate_gtip_tree
                     extract_gir_rules(session)
                     extract_chapter_notes(session)
                     populate_gtip_tree(session)
                     logger.info("[SQLAlchemy ORM] 2026 TGTC Tarife Ağacı (01-99 Fasıllar) başarıyla Cloud SQL'e yüklendi!")
-                else:
+                elif count_gtip > 0:
                     logger.info(f"[SQLAlchemy ORM] 2026 TGTC Tarife Ağacı mevcut ({count_gtip} kayıt aktif).")
+                else:
+                    logger.info("[SQLAlchemy ORM] TGTC otomatik seed kontrollü yıllık job için atlandı.")
         except Exception as ex_seed:
             logger.warning(f"[SQLAlchemy ORM] TGTC Tohumlama uyarısı: {ex_seed}")
 
@@ -482,6 +469,14 @@ def compute_rrf_score(ranks: List[int], k: int = 60) -> float:
             score += 1.0 / (k + r)
     return score
 
+
+def _normalize_search_text(value: Any) -> str:
+    """Türkçe aramada ASCII/Türkçe klavye farklarını aynı sözcüğe indirger."""
+    return str(value or "").lower().translate(str.maketrans({
+        "ı": "i", "İ": "i", "ş": "s", "Ş": "s", "ğ": "g", "Ğ": "g",
+        "ü": "u", "Ü": "u", "ö": "o", "Ö": "o", "ç": "c", "Ç": "c",
+    }))
+
 def search_chapter_notes_and_exclusions(
     session: Session, 
     chapter_codes: List[str]
@@ -541,6 +536,49 @@ def search_chapter_notes_and_exclusions(
 
     return result
 
+
+def search_recent_customs_legislation(
+    session: Session,
+    query_text: str,
+    min_date: str,
+    top_k: int = 5,
+) -> List[Dict[str, Any]]:
+    """Son altı yıllık gümrük mevzuatı maddelerinde açıklanabilir sözcük araması yapar."""
+    tokens = list(dict.fromkeys(
+        token for token in re.findall(r"[0-9a-zA-ZçğıöşüÇĞİÖŞÜ]+", query_text.lower())
+        if len(token) >= 4
+    ))[:8]
+    if not tokens:
+        return []
+
+    try:
+        query = session.query(GumrukMevzuatMaddesiModel).filter(
+            GumrukMevzuatMaddesiModel.tarih >= min_date,
+            or_(*[GumrukMevzuatMaddesiModel.madde_metni.ilike(f"%{token}%") for token in tokens]),
+        )
+        records = query.order_by(GumrukMevzuatMaddesiModel.tarih.desc()).limit(100).all()
+    except Exception as exc:
+        logger.warning(f"[Mevzuat Search] Son altı yıllık mevzuat sorgusu başarısız: {exc}")
+        return []
+
+    scored = []
+    for record in records:
+        searchable = f"{record.kanun_no} {record.madde_kodu} {record.madde_metni}".lower()
+        overlap = sum(1 for token in tokens if token in searchable)
+        scored.append((overlap, str(record.tarih), record))
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+
+    return [
+        {
+            "reference_no": f"{record.kanun_no}/{record.madde_kodu}",
+            "title": f"{record.kanun_no} - {record.madde_kodu}",
+            "publication_date": str(record.tarih),
+            "excerpt": str(record.madde_metni)[:1200],
+            "source_url": record.kaynak_url,
+        }
+        for _, _, record in scored[:top_k]
+    ]
+
 def hybrid_search_headings_and_gtip(
     session: Session,
     query_text: str,
@@ -553,7 +591,7 @@ def hybrid_search_headings_and_gtip(
     Cloud SQL PostgreSQL / SQLite üzerinde Hibrit Arama (Dense pgvector + Sparse Text Search)
     ve Reciprocal Rank Fusion (RRF) uygulayarak en uygun TGTC pozisyonlarını ve 12-haneli GTİP'leri döner.
     """
-    clean_query = query_text.strip().lower()
+    clean_query = _normalize_search_text(query_text.strip())
     query_tokens = [w for w in clean_query.split() if len(w) > 2]
     clean_chaps = [str(c).zfill(2) for c in (allowed_chapters or []) if str(c).strip()]
     # 1. SQL Aday Kümesi ve TGTC 4-Haneli Pozisyonlar
@@ -602,14 +640,33 @@ def hybrid_search_headings_and_gtip(
         return []
 
     # 2. Sparse (BM25 / Token Overlap & GIR 3a Specificity) Sıralaması
+    token_document_frequency = {
+        token: sum(
+            1 for item in candidate_records
+            if token in _normalize_search_text(item.get("description"))
+        )
+        for token in query_tokens
+    }
+    token_weights = {
+        token: 1.0 + math.log((len(candidate_records) + 1) / (frequency + 1))
+        for token, frequency in token_document_frequency.items()
+    }
+
     sparse_scores: List[Tuple[float, Any]] = []
     for item in candidate_records:
-        desc_lower = (item["description"] or "").lower()
-        match_count = sum(2.0 for token in query_tokens if token in desc_lower)
+        desc_lower = _normalize_search_text(item["description"])
+        # Nadir ve ayırt edici terimler (örn. "kettle") genel terimlerden
+        # (örn. "elektrikli") daha yüksek ağırlık alır.
+        match_count = sum(token_weights[token] for token in query_tokens if token in desc_lower)
         if match_count > 0:
             # GİR 3(a) Özellik İlkesi: "Diğer ..." genel artık pozisyonlar özel pozisyonların gerisinde kalmalıdır
-            is_residual = desc_lower.startswith("diğer") or desc_lower.startswith("diger")
-            specificity_factor = 0.5 if is_residual else 1.0
+            normalized_desc = desc_lower.lstrip("-–— ")
+            is_residual = normalized_desc.startswith("diğer") or normalized_desc.startswith("diger")
+            digit_count = len(re.sub(r"[^0-9]", "", str(item["gtip_code"])))
+            # Aynı kelimeleri taşıyan 4 haneli başlık ile 12 haneli özel açılım
+            # eşleştiğinde GİR 3(a) uyarınca özel açılım öne geçer.
+            code_specificity = 1.0 + max(0, digit_count - 4) * 0.08
+            specificity_factor = code_specificity * (0.5 if is_residual else 1.0)
             score = (match_count * specificity_factor) / (len(query_tokens) + 1.0)
             sparse_scores.append((score, item))
 

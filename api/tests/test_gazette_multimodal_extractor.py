@@ -115,8 +115,13 @@ def test_electric_kettle_multimodal_table_extraction():
         assert "GİR 1" in item.hukuki_gerekce
 
 
-def test_etl_checkpoint_save_and_load(tmp_path):
+def test_etl_checkpoint_save_and_load(tmp_path, monkeypatch):
     """ETL checkpoint kaydetme ve okuma mekanizmasını test eder."""
+    import scripts.spider_resmi_gazete_archive as spider
+    checkpoint_path = tmp_path / "archive_checkpoint.json"
+    monkeypatch.setattr(spider, "LOCAL_CHECKPOINT_PATH", str(checkpoint_path))
+    monkeypatch.setattr(spider, "_use_gcs_checkpoint", lambda: False)
+
     test_state = {
         "last_processed_date": "2023-05-15",
         "total_processed_days": 150,

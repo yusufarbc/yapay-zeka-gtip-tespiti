@@ -5,6 +5,15 @@ from api.db.tgtc_knowledge_base import match_chapters_from_cache, load_tgtc_chap
 # Katı Fasıl Kilit Matrisi (Hard Rules Matrix) - Sıfır Halüsinasyon Güvencesi
 HARD_RULES_MATRIX = [
     {
+        "keywords": [
+            "elektrikli su ısıtıcı", "elektrikli su isitici", "su ısıtıcısı",
+            "su isiticisi", "kettle", "electric kettle", "rezistanslı su"
+        ],
+        "materials": [],
+        "locked_chapter": "85",
+        "description": "Elektrikli su ısıtıcıları ve kettle tipi elektrotermik ev cihazları (Fasıl 85) katı kural kilidi."
+    },
+    {
         "keywords": ["ayakkabı", "footwear", "bot ", "terlik", "babet", "çizme", "sneaker"],
         "materials": ["deri", "leather", "kauçuk", "tekstil", "sentetik", "plastik"],
         "locked_chapter": "64",
@@ -111,4 +120,3 @@ class RuleEngine:
         return allowed_chapters, applied_rules
 
 rule_engine = RuleEngine()
-

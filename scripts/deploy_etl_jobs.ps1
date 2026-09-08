@@ -1,119 +1,117 @@
-# ==============================================================================
-# GTİP Tespit - Cloud Run Jobs & Cloud Scheduler Dağıtım Betiği (PowerShell)
-# ==============================================================================
 $ErrorActionPreference = "Stop"
 
-$PROJECT_ID = "gtip-tespit-projesi"
-$REGION = "europe-west4"
+$PROJECT_ID = "gumruk-mevzuat"
+$REGION = "us-central1"
 $REPO_NAME = "gtip-repo"
-$IMAGE_URI = "$($REGION)-docker.pkg.dev/$($PROJECT_ID)/$($REPO_NAME)/backend:latest"
-$CLOUD_SQL_INSTANCE = "$($PROJECT_ID):europe-west4:gtip-sql-postgres-west4"
-$GCS_BUCKET = "gtip-storage-west4"
-$SERVICE_ACCOUNT = "gtip-backend-sa@$($PROJECT_ID).iam.gserviceaccount.com"
+$IMAGE_URI = "$REGION-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/backend:latest"
+$CLOUD_SQL_INSTANCE = "$PROJECT_ID`:$REGION`:gumruk-db"
+$GCS_BUCKET = "gumruk-mevzuat-storage-us-central1"
+$SERVICE_ACCOUNT = "gtip-backend-sa@$PROJECT_ID.iam.gserviceaccount.com"
+$ARCHIVE_JOB = "gtip-archive-backfill"
+$DAILY_JOB = "gtip-daily-sync"
+$BTB_JOB = "gtip-official-btb-sync"
+$SCHEDULER_JOB = "resmi-gazete-daily-sync"
+$BTB_SCHEDULER_JOB = "official-btb-daily-sync"
+$ENV_VARS = "GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,ENVIRONMENT=production,GCS_BUCKET_NAME=$GCS_BUCKET,CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_INSTANCE,DB_USER=postgres,DB_NAME=gtip_db,USE_GCP_EMULATOR=false,CORS_ALLOWED_ORIGINS=https://gtip-web-gu6pxpqefa-uc.a.run.app,EXTRACTOR_LLM_MODEL=gemini-2.5-flash-lite,EMBEDDING_MODEL=text-embedding-005"
 
-Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host "🚀 RESMÎ GAZETE ETL CLOUD RUN JOBS & SCHEDULER DAĞITIMI" -ForegroundColor Green
-Write-Host "   Proje ID:     $PROJECT_ID"
-Write-Host "   Bölge:        $REGION (Hollanda / Eemshaven)"
-Write-Host "   Docker İmajı: $IMAGE_URI"
-Write-Host "   Cloud SQL:    $CLOUD_SQL_INSTANCE"
-Write-Host "   GCS Kova:     $GCS_BUCKET"
-Write-Host "=========================================================="
-
-# 1. 6 Yıllık Arşiv Taraması İşi (Batch Job - 2020-01-01 - 2026-08-19)
-Write-Host "`n📦 [1/3] gtip-archive-backfill-job Cloud Run Job oluşturuluyor/güncelleniyor..." -ForegroundColor Yellow
-gcloud run jobs create gtip-archive-backfill-job `
-  --image="$IMAGE_URI" `
-  --region="$REGION" `
-  --project="$PROJECT_ID" `
-  --tasks=1 `
-  --task-timeout="86400s" `
-  --memory="4Gi" `
-  --cpu="2" `
-  --service-account="$SERVICE_ACCOUNT" `
-  --set-cloudsql-instances="$CLOUD_SQL_INSTANCE" `
-  --set-env-vars="GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,GCS_BUCKET_NAME=$GCS_BUCKET,CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_INSTANCE,DB_USER=postgres,DB_NAME=gtip_db,EMULATOR_MODE=false" `
-  --set-secrets="DB_PASS=gtip-db-password:latest,GEMINI_API_KEY=gtip-gemini-api-key:latest" `
-  --command="python" `
-  --args="scripts/spider_resmi_gazete_archive.py,--start-date,2020-01-01,--end-date,2026-08-19,--batch-size,30" `
-  2>$null
-if ($LASTEXITCODE -ne 0) {
-    gcloud run jobs update gtip-archive-backfill-job `
-      --image="$IMAGE_URI" `
-      --region="$REGION" `
-      --project="$PROJECT_ID" `
-      --tasks=1 `
-      --task-timeout="86400s" `
-      --memory="4Gi" `
-      --cpu="2" `
-      --service-account="$SERVICE_ACCOUNT" `
-      --set-cloudsql-instances="$CLOUD_SQL_INSTANCE" `
-      --set-env-vars="GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,GCS_BUCKET_NAME=$GCS_BUCKET,CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_INSTANCE,DB_USER=postgres,DB_NAME=gtip_db,EMULATOR_MODE=false" `
-      --set-secrets="DB_PASS=gtip-db-password:latest,GEMINI_API_KEY=gtip-gemini-api-key:latest" `
-      --command="python" `
-      --args="scripts/spider_resmi_gazete_archive.py,--start-date,2020-01-01,--end-date,2026-08-19,--batch-size,30"
+function Assert-LastExitCode([string]$Message) {
+    if ($LASTEXITCODE -ne 0) { throw $Message }
 }
 
-# 2. Günlük Gece Yarısı Senkronizasyon İşi (Daily Cron Job)
-Write-Host "`n📦 [2/3] gtip-daily-sync-job Cloud Run Job oluşturuluyor/güncelleniyor..." -ForegroundColor Yellow
-gcloud run jobs create gtip-daily-sync-job `
-  --image="$IMAGE_URI" `
-  --region="$REGION" `
-  --project="$PROJECT_ID" `
-  --tasks=1 `
-  --task-timeout="1800s" `
-  --memory="2Gi" `
-  --cpu="1" `
-  --service-account="$SERVICE_ACCOUNT" `
-  --set-cloudsql-instances="$CLOUD_SQL_INSTANCE" `
-  --set-env-vars="GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,GCS_BUCKET_NAME=$GCS_BUCKET,CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_INSTANCE,DB_USER=postgres,DB_NAME=gtip_db,EMULATOR_MODE=false" `
-  --set-secrets="DB_PASS=gtip-db-password:latest,GEMINI_API_KEY=gtip-gemini-api-key:latest" `
-  --command="python" `
-  --args="scripts/spider_resmi_gazete_archive.py,--mode,daily,--days-back,2" `
-  2>$null
-if ($LASTEXITCODE -ne 0) {
-    gcloud run jobs update gtip-daily-sync-job `
-      --image="$IMAGE_URI" `
-      --region="$REGION" `
-      --project="$PROJECT_ID" `
-      --tasks=1 `
-      --task-timeout="1800s" `
-      --memory="2Gi" `
-      --cpu="1" `
-      --service-account="$SERVICE_ACCOUNT" `
-      --set-cloudsql-instances="$CLOUD_SQL_INSTANCE" `
-      --set-env-vars="GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,GCS_BUCKET_NAME=$GCS_BUCKET,CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_INSTANCE,DB_USER=postgres,DB_NAME=gtip_db,EMULATOR_MODE=false" `
-      --set-secrets="DB_PASS=gtip-db-password:latest,GEMINI_API_KEY=gtip-gemini-api-key:latest" `
-      --command="python" `
-      --args="scripts/spider_resmi_gazete_archive.py,--mode,daily,--days-back,2"
+function Deploy-EtlJob([string]$Name, [string]$ContainerArgs, [string]$Timeout, [string]$Memory, [string]$Cpu) {
+    $existingJob = & gcloud.cmd run jobs list --region $REGION --project $PROJECT_ID --filter="metadata.name=$Name" --format="value(metadata.name)"
+    Assert-LastExitCode "Cloud Run Job listesi okunamadı."
+    $action = if (($existingJob | Out-String).Trim()) { "update" } else { "create" }
+
+    & gcloud.cmd run jobs $action $Name `
+        --image $IMAGE_URI `
+        --region $REGION `
+        --project $PROJECT_ID `
+        --tasks 1 `
+        --max-retries 3 `
+        --task-timeout $Timeout `
+        --memory $Memory `
+        --cpu $Cpu `
+        --service-account $SERVICE_ACCOUNT `
+        --set-cloudsql-instances $CLOUD_SQL_INSTANCE `
+        --set-env-vars $ENV_VARS `
+        --set-secrets "DB_PASS=gtip-db-password:latest" `
+        --command python `
+        "--args=$ContainerArgs" `
+        --quiet
+    Assert-LastExitCode "Cloud Run Job dağıtımı başarısız: $Name"
 }
 
-# 3. Cloud Scheduler Tetikleyicisi
-Write-Host "`n⏰ [3/3] gtip-daily-sync-trigger Cloud Scheduler yapılandırılıyor..." -ForegroundColor Yellow
-$JOB_URI = "https://$REGION-run.googleapis.com/v1/namespaces/$PROJECT_ID/jobs/gtip-daily-sync-job:run"
-try {
-    gcloud scheduler jobs create http gtip-daily-sync-trigger `
-      --location="$REGION" `
-      --project="$PROJECT_ID" `
-      --schedule="0 2 * * *" `
-      --time-zone="Europe/Istanbul" `
-      --uri="$JOB_URI" `
-      --http-method="POST" `
-      --oauth-service-account-email="$SERVICE_ACCOUNT"
-} catch {
-    Write-Host "Scheduler mevcut, güncelleniyor..." -ForegroundColor DarkYellow
-    gcloud scheduler jobs update http gtip-daily-sync-trigger `
-      --location="$REGION" `
-      --project="$PROJECT_ID" `
-      --schedule="0 2 * * *" `
-      --time-zone="Europe/Istanbul" `
-      --uri="$JOB_URI" `
-      --http-method="POST" `
-      --oauth-service-account-email="$SERVICE_ACCOUNT"
+Write-Host "GCP API'leri ve secret doğrulanıyor..."
+& gcloud.cmd services enable run.googleapis.com cloudscheduler.googleapis.com sqladmin.googleapis.com secretmanager.googleapis.com --project $PROJECT_ID --quiet
+Assert-LastExitCode "Gerekli GCP API'leri etkinleştirilemedi."
+& gcloud.cmd secrets describe gtip-db-password --project $PROJECT_ID *> $null
+Assert-LastExitCode "gtip-db-password Secret Manager'da bulunamadı."
+
+Write-Host "6 yıllık arşiv ve günlük ETL işleri dağıtılıyor..."
+Deploy-EtlJob $ARCHIVE_JOB "scripts/spider_resmi_gazete_archive.py,--mode,archive" "86400s" "4Gi" "2"
+Deploy-EtlJob $DAILY_JOB "scripts/spider_resmi_gazete_archive.py,--mode,daily,--days-back,3" "3600s" "2Gi" "1"
+Deploy-EtlJob $BTB_JOB "-m,scripts.scrape_official_btb" "21600s" "2Gi" "1"
+
+Write-Host "Servis hesabına yalnızca ETL Job çağırma yetkisi veriliyor..."
+foreach ($jobName in @($ARCHIVE_JOB, $DAILY_JOB, $BTB_JOB)) {
+    & gcloud.cmd run jobs add-iam-policy-binding $jobName `
+        --region $REGION `
+        --project $PROJECT_ID `
+        --member "serviceAccount:$SERVICE_ACCOUNT" `
+        --role "roles/run.invoker" `
+        --quiet
+    Assert-LastExitCode "Cloud Run Job invoker yetkisi verilemedi: $jobName"
 }
 
-Write-Host "`n==========================================================" -ForegroundColor Green
-Write-Host "✅ TÜM JOBS & SCHEDULER BAŞARIYLA DAĞITILDI!" -ForegroundColor Green
-Write-Host "   - Toplu Arşiv İşi Çalıştırma: gcloud run jobs execute gtip-archive-backfill-job --region=$REGION"
-Write-Host "   - Günlük Gece İşi Çalıştırma: gcloud run jobs execute gtip-daily-sync-job --region=$REGION"
-Write-Host "==========================================================" -ForegroundColor Green
+$JOB_URI = "https://run.googleapis.com/v2/projects/$PROJECT_ID/locations/$REGION/jobs/$DAILY_JOB`:run"
+$existingScheduler = & gcloud.cmd scheduler jobs list --location $REGION --project $PROJECT_ID --filter="name:$SCHEDULER_JOB" --format="value(name)"
+Assert-LastExitCode "Cloud Scheduler listesi okunamadı."
+$schedulerAction = if (($existingScheduler | Out-String).Trim()) { "update" } else { "create" }
+$headerFlag = if ($schedulerAction -eq "update") {
+    "--update-headers=Content-Type=application/json"
+} else {
+    "--headers=Content-Type=application/json"
+}
+
+& gcloud.cmd scheduler jobs $schedulerAction http $SCHEDULER_JOB `
+    --location $REGION `
+    --project $PROJECT_ID `
+    --schedule "0 2 * * *" `
+    --time-zone "Europe/Istanbul" `
+    --uri $JOB_URI `
+    --http-method POST `
+    --oauth-service-account-email $SERVICE_ACCOUNT `
+    --oauth-token-scope "https://www.googleapis.com/auth/cloud-platform" `
+    $headerFlag `
+    --message-body "{}" `
+    --quiet
+Assert-LastExitCode "Cloud Scheduler yapılandırılamadı."
+
+Write-Host "ETL hazır: $ARCHIVE_JOB, $DAILY_JOB; her gece 02:00 Europe/Istanbul."
+
+$BTB_JOB_URI = "https://run.googleapis.com/v2/projects/$PROJECT_ID/locations/$REGION/jobs/$BTB_JOB`:run"
+$existingBtbScheduler = & gcloud.cmd scheduler jobs list --location $REGION --project $PROJECT_ID --filter="name:$BTB_SCHEDULER_JOB" --format="value(name)"
+Assert-LastExitCode "BTB Scheduler listesi okunamadı."
+$btbSchedulerAction = if (($existingBtbScheduler | Out-String).Trim()) { "update" } else { "create" }
+$btbHeaderFlag = if ($btbSchedulerAction -eq "update") {
+    "--update-headers=Content-Type=application/json"
+} else {
+    "--headers=Content-Type=application/json"
+}
+
+& gcloud.cmd scheduler jobs $btbSchedulerAction http $BTB_SCHEDULER_JOB `
+    --location $REGION `
+    --project $PROJECT_ID `
+    --schedule "0 3 * * *" `
+    --time-zone "Europe/Istanbul" `
+    --uri $BTB_JOB_URI `
+    --http-method POST `
+    --oauth-service-account-email $SERVICE_ACCOUNT `
+    --oauth-token-scope "https://www.googleapis.com/auth/cloud-platform" `
+    $btbHeaderFlag `
+    --message-body "{}" `
+    --quiet
+Assert-LastExitCode "Resmî BTB Scheduler yapılandırılamadı."
+
+Write-Host "Resmî BTB işi hazır: $BTB_JOB; her gece 03:00 Europe/Istanbul."

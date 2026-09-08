@@ -20,8 +20,10 @@ import datetime
 import logging
 import requests
 import urllib3
+from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
 from typing import List, Dict, Any, Optional
+from urllib.parse import urljoin
 
 # Root directory path
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -43,6 +45,16 @@ HEADERS = {
 RG_BASE = "https://www.resmigazete.gov.tr"
 CHECKPOINT_BLOB_PATH = "etl_state/archive_checkpoint.json"
 LOCAL_CHECKPOINT_PATH = os.path.join(root_dir, ".etl_checkpoint.json")
+TURKEY_TZ = ZoneInfo("Europe/Istanbul")
+
+
+def today_in_turkey() -> datetime.date:
+    """Cloud Run UTC kullansa da Resmî Gazete iş gününü Türkiye saatine göre hesaplar."""
+    return datetime.datetime.now(TURKEY_TZ).date()
+
+
+def _use_gcs_checkpoint() -> bool:
+    return settings.ENVIRONMENT == "production" and not settings.USE_GCP_EMULATOR
 
 
 # ==============================================================================
@@ -58,19 +70,20 @@ def load_checkpoint() -> Dict[str, Any]:
         "last_updated_at": None
     }
     
-    # 1. GCS'den oku
-    bucket_name = getattr(settings, "GCS_BUCKET_NAME", "gumruk-mevzuat-storage-us-central1")
-    try:
-        from google.cloud import storage
-        client = storage.Client()
-        bucket = client.bucket(bucket_name)
-        blob = bucket.blob(CHECKPOINT_BLOB_PATH)
-        if blob.exists():
-            data = json.loads(blob.download_as_text(encoding="utf-8"))
-            logger.info(f"[Checkpoint] GCS'den okundu: Son işlenen tarih = {data.get('last_processed_date')}")
-            return data
-    except Exception as e:
-        logger.debug(f"[Checkpoint] GCS okuma atlandı/hata: {e}")
+    # 1. GCS'den oku (yalnızca production; test ve yerel import ağa çıkmaz)
+    if _use_gcs_checkpoint():
+        bucket_name = getattr(settings, "GCS_BUCKET_NAME", "gumruk-mevzuat-storage-us-central1")
+        try:
+            from google.cloud import storage
+            client = storage.Client()
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob(CHECKPOINT_BLOB_PATH)
+            if blob.exists():
+                data = json.loads(blob.download_as_text(encoding="utf-8"))
+                logger.info(f"[Checkpoint] GCS'den okundu: Son işlenen tarih = {data.get('last_processed_date')}")
+                return data
+        except Exception as e:
+            logger.debug(f"[Checkpoint] GCS okuma atlandı/hata: {e}")
 
     # 2. Yerel fallback oku
     if os.path.exists(LOCAL_CHECKPOINT_PATH):
@@ -98,16 +111,17 @@ def save_checkpoint(state: Dict[str, Any]):
         pass
 
     # 2. GCS'e kaydet
-    bucket_name = getattr(settings, "GCS_BUCKET_NAME", "gumruk-mevzuat-storage-us-central1")
-    try:
-        from google.cloud import storage
-        client = storage.Client()
-        bucket = client.bucket(bucket_name)
-        blob = bucket.blob(CHECKPOINT_BLOB_PATH)
-        blob.upload_from_string(state_json, content_type="application/json")
-        logger.debug(f"[Checkpoint] GCS'e yazıldı: {state.get('last_processed_date')}")
-    except Exception as e:
-        logger.debug(f"[Checkpoint] GCS yazma hatası: {e}")
+    if _use_gcs_checkpoint():
+        bucket_name = getattr(settings, "GCS_BUCKET_NAME", "gumruk-mevzuat-storage-us-central1")
+        try:
+            from google.cloud import storage
+            client = storage.Client()
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob(CHECKPOINT_BLOB_PATH)
+            blob.upload_from_string(state_json, content_type="application/json")
+            logger.debug(f"[Checkpoint] GCS'e yazıldı: {state.get('last_processed_date')}")
+        except Exception as e:
+            logger.debug(f"[Checkpoint] GCS yazma hatası: {e}")
 
 
 def upload_pdf_to_gcs(pdf_bytes: bytes, filename: str) -> Optional[str]:
@@ -185,7 +199,7 @@ def save_decisions_to_cloud_sql(
                 continue
 
             chapter = clean[:2]
-            yayin_tarihi = it.yayin_tarihi or datetime.date.today().strftime("%Y-%m-%d")
+            yayin_tarihi = it.yayin_tarihi or today_in_turkey().strftime("%Y-%m-%d")
             ref_no = f"RG-DEC-{yayin_tarihi.replace('-', '')}-{clean}-N{it.karar_no or idx}"
             sinif_key = (gtip, yayin_tarihi)
 
@@ -277,6 +291,7 @@ def scan_and_process_gazette_day(year: int, month: int, day: int, skip_embedding
     """
     date_str = f"{year}{month:02d}{day:02d}"
     pub_date = f"{year}-{month:02d}-{day:02d}"
+    from scripts.scraper_function import ingest_gazette_document, is_customs_related
     
     # Asıl baskı ve mükerrer baskılar (m1, m2, m3)
     sub_editions = ["", "m1", "m2", "m3"]
@@ -287,7 +302,7 @@ def scan_and_process_gazette_day(year: int, month: int, day: int, skip_embedding
         index_url = f"{RG_BASE}/eskiler/{year}/{month:02d}/{sub_key}.htm"
         
         try:
-            resp = requests.get(index_url, headers=HEADERS, verify=False, timeout=12)
+            resp = requests.get(index_url, headers=HEADERS, timeout=12)
             if resp.status_code != 200:
                 continue
 
@@ -305,37 +320,53 @@ def scan_and_process_gazette_day(year: int, month: int, day: int, skip_embedding
                 gazette_no = f"Mükerrer {sub_ed[1:]}"
 
             pdf_candidates = set()
+            related_html_documents: Dict[str, str] = {}
 
             # Fihristteki linkleri tara
             for a in soup.find_all("a", href=True):
                 href = a.get("href", "").strip()
-                link_text = a.get_text(strip=True).lower()
+                link_context = a.parent.get_text(" ", strip=True) if a.parent else a.get_text(" ", strip=True)
 
                 if href.lower().endswith(".pdf"):
-                    full_pdf = href if href.startswith("http") else f"{RG_BASE}/eskiler/{year}/{month:02d}/{href}"
-                    pdf_candidates.add(full_pdf)
+                    # Fihristteki ilgisiz yüzlerce PDF'i Gemini'ye göndermemek için bağlam filtresi uygula.
+                    if is_customs_related(link_context):
+                        pdf_candidates.add(urljoin(index_url, href))
 
-                elif href.lower().endswith(".htm") and href != f"{sub_key}.htm":
-                    full_htm = href if href.startswith("http") else f"{RG_BASE}/eskiler/{year}/{month:02d}/{href}"
-                    # İlgili gümrük tebliği anahtar kelimeleri
-                    if any(k in link_text for k in ["gümrük", "tarife", "sınıflandırma", "ithalatta haksız rekabet", "tebliğ", "karar", "cetvel"]):
+                elif href.lower().endswith((".htm", ".html")) and href != f"{sub_key}.htm":
+                    full_htm = urljoin(index_url, href)
+                    if is_customs_related(link_context):
                         try:
-                            sub_resp = requests.get(full_htm, headers=HEADERS, verify=False, timeout=8)
+                            sub_resp = requests.get(full_htm, headers=HEADERS, timeout=12)
                             if sub_resp.status_code == 200:
                                 sub_resp.encoding = "windows-1254"
+                                related_html_documents[full_htm] = sub_resp.text
                                 sub_soup = BeautifulSoup(sub_resp.text, "html.parser")
                                 for sub_a in sub_soup.find_all("a", href=True):
                                     sub_href = sub_a.get("href", "").strip()
                                     if sub_href.lower().endswith(".pdf"):
-                                        full_sub_pdf = sub_href if sub_href.startswith("http") else f"{RG_BASE}/eskiler/{year}/{month:02d}/{sub_href}"
-                                        pdf_candidates.add(full_sub_pdf)
-                        except Exception:
-                            pass
+                                        pdf_candidates.add(urljoin(full_htm, sub_href))
+                        except Exception as html_fetch_error:
+                            logger.debug(f"Mevzuat HTML indirme hatası [{full_htm}]: {html_fetch_error}")
+
+            # Gümrük mevzuatını yalnızca sınıflandırma kararı olarak değil,
+            # MADDE hiyerarşisiyle de idempotent biçimde Cloud SQL'e kaydet.
+            for document_url, raw_html in related_html_documents.items():
+                try:
+                    ingest_result = ingest_gazette_document(
+                        raw_html=raw_html,
+                        source_url=document_url,
+                        pub_date=pub_date,
+                        gazette_no=gazette_no,
+                        skip_embedding=skip_embedding,
+                    )
+                    total_saved += int(ingest_result.get("inserted_articles", 0))
+                except Exception as article_error:
+                    logger.warning(f"Mevzuat maddeleri kaydedilemedi [{document_url}]: {article_error}")
 
             # Tespit edilen PDF'leri Multimodal olarak ayrıştır
             for pdf_url in pdf_candidates:
                 try:
-                    pdf_resp = requests.get(pdf_url, headers=HEADERS, verify=False, timeout=20)
+                    pdf_resp = requests.get(pdf_url, headers=HEADERS, timeout=30)
                     if pdf_resp.status_code == 200 and len(pdf_resp.content) > 1000:
                         # 1. Multimodal Ayrıştırma
                         extracted_items = extract_tables_from_gazette_pdf(
@@ -387,13 +418,16 @@ def run_archive_backfill(
     if end_date_str:
         end_date = datetime.datetime.strptime(end_date_str, "%Y-%m-%d").date()
     else:
-        end_date = datetime.date.today()
+        end_date = today_in_turkey()
 
     if start_date_str:
         start_date = datetime.datetime.strptime(start_date_str, "%Y-%m-%d").date()
     else:
-        # Son 6 yıl (rolling 6-year window)
-        start_date = end_date - datetime.timedelta(days=6 * 365)
+        # Tam takvim yılı hesabı: artık yılları 6*365 yaklaşımıyla eksik bırakma.
+        try:
+            start_date = end_date.replace(year=end_date.year - 6)
+        except ValueError:  # 29 Şubat -> hedef yılda 28 Şubat
+            start_date = end_date.replace(year=end_date.year - 6, day=28)
 
     checkpoint = load_checkpoint()
     last_processed = checkpoint.get("last_processed_date")
@@ -444,15 +478,17 @@ def run_archive_backfill(
         except Exception as e_day:
             logger.error(f"❌ [{current_date}] Tarama günü hatası: {e_day}")
             consecutive_errors += 1
-            if consecutive_errors >= 10:
-                logger.critical(f"10 ardışık gün hatası alındı. Checkpoint {current_date - delta} konumunda güvenli şekilde durduruluyor.")
-                break
-            # Hata durumunda o günü atlamadan önce bekle
+            if consecutive_errors >= 3:
+                # Tarihi ilerletmek checkpoint'in hatalı günü sonsuza kadar atlamasına yol açar.
+                # Job başarısız olsun; Cloud Run retry aynı günü son checkpoint'ten yeniden işler.
+                raise RuntimeError(
+                    f"{current_date} tarihi 3 denemede işlenemedi; eksik gün bırakmamak için arşiv durduruldu."
+                ) from e_day
             time.sleep(2.0)
-            current_date += delta
+            continue
 
     logger.info("=" * 70)
-    logger.info(f"🎉 ARŞİV TARAMASI TAMAMLANDI! Toplam {grand_total} sınıflandırma kararı veritabanına aktarıldı.")
+    logger.info(f"🎉 ARŞİV TARAMASI TAMAMLANDI! Toplam {grand_total} mevzuat/karar kaydı veritabanına aktarıldı.")
     logger.info("=" * 70)
 
 
@@ -465,8 +501,9 @@ def run_daily_sync(days_back: int = 3, skip_embedding: bool = False) -> int:
     logger.info(f"⏰ GÜNLÜK RESMÎ GAZETE SENKRONİZASYONU BAŞLATILIYOR (Son {days_back} Gün - Asıl + Mükerrer)")
     logger.info("=" * 70)
 
-    end_date = datetime.date.today()
-    start_date = end_date - datetime.timedelta(days=days_back)
+    end_date = today_in_turkey()
+    requested_days = max(1, days_back)
+    start_date = end_date - datetime.timedelta(days=requested_days - 1)
     delta = datetime.timedelta(days=1)
 
     current_date = start_date
@@ -487,7 +524,7 @@ def run_daily_sync(days_back: int = 3, skip_embedding: bool = False) -> int:
 
         current_date += delta
 
-    logger.info(f"✅ Günlük tarama bitti. {total_saved} yeni sınıflandırma kararı işlendi.")
+    logger.info(f"✅ Günlük tarama bitti. {total_saved} yeni mevzuat/karar kaydı işlendi.")
     return total_saved
 
 

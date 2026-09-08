@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://gtip-backend-141090733173.us-central1.run.app/api/v1';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://gtip-backend-gu6pxpqefa-uc.a.run.app/api/v1';
 
 export const getUploadUrl = async (filename) => {
   const response = await axios.get(`${API_BASE_URL}/generate-upload-url`, {

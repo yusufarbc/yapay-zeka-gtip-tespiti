@@ -2,6 +2,12 @@
 
 Bu belge; Türkiye Gümrük Mevzuatı, Türk Gümrük Tarife Cetveli (TGTC) ve Bağlayıcı Tarife Bilgisi (BTB) kararlarını temel alarak, sıfır halüsinasyon (Zero-Hallucination) prensibiyle 12 haneli GTİP tespiti ve mevzuat danışmanlığı yapan kurumsal bilişim sisteminin nihai mimari şartnamesidir. Sistem; **Resmi Gazete Otomasyonu**, **AlloyDB AI Tabanlı Birleşik Veri Katmanı**, **Dinamik Kural Motoru**, **İki Aşamalı FastMCP Sorgulama Protokolü** ve **Human-in-the-Loop (HITL) Ajan Mimarisi** bileşenlerinden oluşur.
 
+> **Canlı uygulama profili (2026-09-08):** Maliyet ve işletim sadeliği nedeniyle mevcut üretim kurulumu `gumruk-mevzuat/us-central1` üzerinde **Cloud SQL for PostgreSQL + pgvector/HNSW**, **Cloud Run Backend/Web**, **Cloud Run Jobs** ve **Cloud Scheduler** kullanır. AlloyDB/ScaNN ve Firebase bu belgedeki hedef mimari seçenekleridir; canlı sistem bunlara geçirilmiş gibi varsayılmamalıdır.
+
+GTİP karar sırası zorunludur: aday kod yalnızca yürürlükteki **2026 TGTC** ağacından üretilir; **GİR 1-6**, ilgili fasıl notları/izahnameler, son altı yıldaki **BTB kararları**, **sınıflandırma kararları** ve diğer gümrük mevzuatı ayrı kaynak katmanları olarak sorgulanır. Eski bir BTB veya karar, 2026 cetvelinde bulunmayan bir kodu nihai aday haline getiremez.
+
+Yıllık TGTC yenilemesi günlük Resmî Gazete senkronundan ayrıdır. Yeni yıl dizini doğrulandıktan sonra `gtip-seed-tgtc-2026` işi kontrollü olarak bir kez çalıştırılır; günlük iş yalnızca Resmî Gazete mevzuat/karar değişikliklerini idempotent biçimde işler.
+
 ---
 
 ## 1. YÜKSEK SEVİYE MİMARİ VE ÇALIŞMA DÖNGÜSÜ
@@ -202,7 +208,7 @@ CREATE TABLE gumruk_mevzuat_maddeleri (
 CREATE TABLE gtip_rules (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     parent_heading VARCHAR(10),             -- 4 haneli pozisyon (Örn: '8471')
-    target_gtip VARCHAR(14),                -- 12 haneli kod (Örn: '8471.30.00.00.11')
+    target_gtip VARCHAR(30),                -- 12 haneli noktalı kod (Örn: '8471.30.00.00.11')
     parametre_adi VARCHAR(50) NOT NULL,     -- 'weight', 'power', 'composition'
     kosul_operatoru VARCHAR(10) NOT NULL,   -- '<=', '>', '==', 'contains'
     esik_deger VARCHAR(50) NOT NULL,        -- '10kg', '200g/m2'
@@ -468,7 +474,7 @@ Müşavir ekranında LLM çıktısı ile veritabanından çekilen resmi hukuki k
 
 2. **Kural Tablosunun ve BTB Arşivinin Yüklenmesi:**
 * Ticaret Bakanlığı'nın güncel TGTC yapısını `gtip_rules` tablosuna hiyerarşik (Parent-Child) formatta işleyin.
-* Kamuya açık son 5 yılın BTB kararlarını `text-embedding-005` ile vektörleştirerek `emsal_btb_kararlari` tablosuna aktarın.
+* Kamuya açık son 6 yılın BTB ve sınıflandırma kararlarını `text-embedding-005` ile vektörleştirerek kaynak türü ve yayın tarihiyle birlikte `emsal_btb_kararlari` tablosuna aktarın.
 
 
 

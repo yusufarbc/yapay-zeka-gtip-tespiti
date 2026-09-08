@@ -6,6 +6,7 @@ $IMAGE_URI = "$REGION-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/backend:latest"
 $CLOUD_SQL_INSTANCE = 'gumruk-mevzuat:us-central1:gumruk-db'
 $GCS_BUCKET = 'gumruk-mevzuat-storage-us-central1'
 $SERVICE_ACCOUNT = "gtip-backend-sa@$PROJECT_ID.iam.gserviceaccount.com"
+$ErrorActionPreference = 'Stop'
 
 Write-Host "=========================================================="
 Write-Host "  DEPLOYING CLOUD RUN JOB: $JOB_NAME ($PROJECT_ID)"
@@ -15,27 +16,25 @@ Write-Host "=========================================================="
 & "gcloud.cmd" config set project $PROJECT_ID
 & "gcloud.cmd" config set compute/region $REGION
 
-# 2. Secret Manager kontrolü
+# 2. Secret Manager kontrolü. Parola bu betikte asla üretilmez veya kaynak koda yazılmaz.
 Write-Host "  Secret Manager kontrol ediliyor (gtip-db-password)..."
 $secretCheck = & "gcloud.cmd" secrets describe gtip-db-password --project $PROJECT_ID 2>&1
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "  Secret oluşturuluyor: gtip-db-password..."
-    & "gcloud.cmd" secrets create gtip-db-password --replication-policy="automatic" --project $PROJECT_ID
-    $dbPass = "GtipSecure2026!Db"
-    [System.Text.Encoding]::UTF8.GetBytes($dbPass) | & "gcloud.cmd" secrets versions add gtip-db-password --data-file=- --project $PROJECT_ID
+    throw "gtip-db-password Secret Manager'da bulunamadı. Cloud SQL parolasıyla aynı değeri güvenli bir kanaldan secret olarak oluşturun."
 }
 
 # 3. Cloud Run Job Oluştur / Güncelle
 Write-Host "  Cloud Run Job kontrol ediliyor: $JOB_NAME..."
 $jobExists = & "gcloud.cmd" run jobs describe $JOB_NAME --region $REGION 2>&1
 
-$ENV_VARS = "GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,ENVIRONMENT=production,PRIMARY_AI_MODEL=gemini-2.5-flash,EXTRACTOR_LLM_MODEL=gemini-2.5-flash-lite,REASONING_LLM_MODEL=gemini-2.5-flash,EMBEDDING_MODEL=text-embedding-005,GCS_BUCKET_NAME=$GCS_BUCKET,CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_INSTANCE"
+$ENV_VARS = "GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,ENVIRONMENT=production,PRIMARY_AI_MODEL=gemini-2.5-flash,EXTRACTOR_LLM_MODEL=gemini-2.5-flash-lite,REASONING_LLM_MODEL=gemini-2.5-flash,EMBEDDING_MODEL=text-embedding-005,GCS_BUCKET_NAME=$GCS_BUCKET,CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_INSTANCE,DB_USER=postgres,DB_NAME=gtip_db,EMULATOR_MODE=false"
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "  Mevcut Cloud Run Job güncelleniyor..."
     & "gcloud.cmd" run jobs update $JOB_NAME `
         --image $IMAGE_URI `
         --region $REGION `
+        --project $PROJECT_ID `
         --command "python" `
         --args "scripts/spider_resmi_gazete_archive.py,--mode,archive" `
         --max-retries 3 `
@@ -51,6 +50,7 @@ if ($LASTEXITCODE -eq 0) {
     & "gcloud.cmd" run jobs create $JOB_NAME `
         --image $IMAGE_URI `
         --region $REGION `
+        --project $PROJECT_ID `
         --command "python" `
         --args "scripts/spider_resmi_gazete_archive.py,--mode,archive" `
         --max-retries 3 `
@@ -73,4 +73,3 @@ Write-Host "  ✅ Cloud Run Job $JOB_NAME başarıyla hazırlandı!"
 Write-Host "  İşi tetiklemek için:"
 Write-Host "    gcloud run jobs execute $JOB_NAME --region $REGION"
 Write-Host "=========================================================="
-

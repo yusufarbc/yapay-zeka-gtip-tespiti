@@ -9,6 +9,7 @@ import re
 import json
 import logging
 import datetime
+import time
 from typing import Dict, List, Any
 
 logger = logging.getLogger("TGTCKnowledgeBase")
@@ -41,9 +42,6 @@ def get_local_tgtc_headings() -> Dict[str, str]:
         db_path = os.path.join(base_dir, "2026 TGTC", "tgtc_2026_full_database.json")
         if not os.path.exists(db_path):
             db_path = "/app/2026 TGTC/tgtc_2026_full_database.json"
-        if not os.path.exists(db_path):
-            db_path = r"c:\Users\yusuf\Github\yapay-zeka-gtip-tespiti\2026 TGTC\tgtc_2026_full_database.json"
-            
         if os.path.exists(db_path):
             with open(db_path, "r", encoding="utf-8") as f:
                 raw_data = json.load(f)
@@ -70,12 +68,15 @@ def load_tgtc_chapters() -> Dict[str, str]:
     return result
 
 _BTB_CATALOG_CACHE: List[Dict[str, Any]] = None
+_BTB_CACHE_LOADED_AT: float = 0.0
+_BTB_CACHE_TTL_SECONDS = 900
 _RULES_AND_NOTES_CACHE: Dict[str, Any] = None
 
 def invalidate_catalog_cache():
     """Mevzuat güncellendiğinde katalog, pozisyon ve izahname önbelleklerini temizler."""
-    global _BTB_CATALOG_CACHE, _LOCAL_POS_CACHE, _RULES_AND_NOTES_CACHE
+    global _BTB_CATALOG_CACHE, _BTB_CACHE_LOADED_AT, _LOCAL_POS_CACHE, _RULES_AND_NOTES_CACHE
     _BTB_CATALOG_CACHE = None
+    _BTB_CACHE_LOADED_AT = 0.0
     _LOCAL_POS_CACHE = None
     _RULES_AND_NOTES_CACHE = None
     logger.info("[TGTC Catalog] Bellek içi katalog, pozisyon ve izahname önbellekleri temizlendi.")
@@ -169,8 +170,11 @@ def _auto_fix_description(desc: str, legal: str, gtip: str = "") -> str:
 
 def load_btb_catalog() -> List[Dict[str, Any]]:
     """Resmi BTB Emsal Kararlar Kataloğunu GCP Cloud SQL, GCS Bucket veya /tmp üzerinden okur ve hiyerarşik ağaç breadcrumb ile standartlaştırır."""
-    global _BTB_CATALOG_CACHE
-    if _BTB_CATALOG_CACHE is not None:
+    global _BTB_CATALOG_CACHE, _BTB_CACHE_LOADED_AT
+    if (
+        _BTB_CATALOG_CACHE is not None
+        and time.monotonic() - _BTB_CACHE_LOADED_AT < _BTB_CACHE_TTL_SECONDS
+    ):
         return _BTB_CATALOG_CACHE
 
     def _count_dashes_and_clean(text: str) -> int:
@@ -307,7 +311,13 @@ def load_btb_catalog() -> List[Dict[str, Any]]:
                 "issue_date": str(date_val),
                 "product_description": desc,
                 "legal_justification": legal,
-                "source_url": s_url
+                "source_url": s_url,
+                "source_type": str(
+                    item.get("source_type")
+                    or item.get("karar_tipi")
+                    or ("TGTC_2026" if btb_id.startswith("TGTC2026-") else "BTB")
+                ).upper(),
+                "valid_until": str(item.get("valid_until") or item.get("gecerlilik_tarihi") or "9999-12-31"),
             })
         return enriched_list
 
@@ -317,8 +327,6 @@ def load_btb_catalog() -> List[Dict[str, Any]]:
     try:
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         tgtc_path = os.path.join(base_dir, "2026 TGTC", "tgtc_2026_full_database.json")
-        if not os.path.exists(tgtc_path):
-            tgtc_path = r"c:\Users\yusuf\Github\yapay-zeka-gtip-tespiti\2026 TGTC\tgtc_2026_full_database.json"
         if os.path.exists(tgtc_path):
             with open(tgtc_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -327,6 +335,19 @@ def load_btb_catalog() -> List[Dict[str, Any]]:
                     logger.info(f"[TGTC Catalog] Yerel TGTC 2026 hazinesi okundu ({len(data)} satır).")
     except Exception as e:
         logger.warning(f"[TGTC Catalog] Yerel TGTC kütüphanesi okuma uyarısı: {e}")
+
+    # Test/emülatör ve yerel geliştirme sırasında GCS ADC token yenilemesi ile
+    # Cloud SQL'a ağ erişimi yapma. Yerel TGTC kataloğu bu ortamlar için yeterlidir.
+    cloud_runtime = bool(os.getenv("K_SERVICE") or os.getenv("CLOUD_RUN_JOB"))
+    remote_sources_enabled = (
+        os.getenv("ENVIRONMENT", "production") == "production"
+        and os.getenv("USE_GCP_EMULATOR", "false").lower() != "true"
+        and cloud_runtime
+    )
+    if not remote_sources_enabled:
+        _BTB_CATALOG_CACHE = _process_and_enrich_catalog(all_raw_items) if all_raw_items else []
+        _BTB_CACHE_LOADED_AT = time.monotonic()
+        return _BTB_CATALOG_CACHE
 
     # 2. GCS Bucket Canlı Emsal Karar Okuma Kontrolü (Bakanlık Kazıma Verileri)
     try:
@@ -348,27 +369,37 @@ def load_btb_catalog() -> List[Dict[str, Any]]:
 
     # 3. Veritabanı (SQLAlchemy ORM) Emsal Kararları Kontrolü
     try:
-        from api.db.database import init_orm_tables
-        init_orm_tables()
         session = SessionLocal()
-
-
-        
         try:
-            emsal_recs = session.query(GumrukEmsalKararModel).all()
-            for er in emsal_recs:
+            emsal_rows = session.query(
+                GumrukEmsalKararModel.referans_no,
+                GumrukEmsalKararModel.id,
+                GumrukEmsalKararModel.gtip_kodu,
+                GumrukEmsalKararModel.yayin_tarihi,
+                GumrukEmsalKararModel.esya_tanimi,
+                GumrukEmsalKararModel.karar_tipi,
+                GumrukEmsalKararModel.hukuki_gerekce,
+                GumrukEmsalKararModel.resmi_gazete_sayisi,
+                GumrukEmsalKararModel.kaynak_url,
+                GumrukEmsalKararModel.valid_until,
+            ).limit(2500).all()
+            for ref_no, er_id, gtip_kodu, pub_date, esya_tanimi, karar_tipi, hukuki_gerekce, rg_sayisi, kaynak_url, valid_until in emsal_rows:
                 all_raw_items.append({
-                    "btb_no": er.referans_no or f"EMS-{er.id}",
-                    "gtip_code": er.gtip_kodu,
-                    "chapter": er.gtip_kodu[:2] if er.gtip_kodu else "",
-                    "heading": er.gtip_kodu[:4] if er.gtip_kodu else "",
-                    "issue_date": er.yayin_tarihi or "2026-01-01",
-                    "product_description": er.esya_tanimi,
-                    "legal_justification": f"[{er.karar_tipi}] {er.hukuki_gerekce or ''} (Resmi Gazete: {er.resmi_gazete_sayisi or '-'})"
+                    "btb_no": ref_no or f"EMS-{er_id}",
+                    "gtip_code": gtip_kodu,
+                    "chapter": gtip_kodu[:2] if gtip_kodu else "",
+                    "heading": gtip_kodu[:4] if gtip_kodu else "",
+                    "issue_date": pub_date or "2026-01-01",
+                    "product_description": esya_tanimi,
+                    "legal_justification": f"[{karar_tipi}] {hukuki_gerekce or ''} (Resmi Gazete: {rg_sayisi or '-'})",
+                    "source_type": karar_tipi,
+                    "source_url": kaynak_url,
+                    "valid_until": valid_until,
                 })
         except Exception as ex_emsal:
             logger.warning(f"[TGTC Catalog] GumrukEmsalKararModel okuma uyarısı: {ex_emsal}")
-        session.close()
+        finally:
+            session.close()
     except Exception as e:
         logger.warning(f"[TGTC Catalog] SQLAlchemy ORM BTB okuma uyarısı: {e}")
 
@@ -391,8 +422,11 @@ def load_btb_catalog() -> List[Dict[str, Any]]:
 
     if all_raw_items:
         _BTB_CATALOG_CACHE = _process_and_enrich_catalog(all_raw_items)
+        _BTB_CACHE_LOADED_AT = time.monotonic()
         return _BTB_CATALOG_CACHE
 
+    _BTB_CACHE_LOADED_AT = time.monotonic()
+    _BTB_CATALOG_CACHE = []
     return []
 
 def load_tgtc_rules_and_notes() -> Dict[str, Any]:
@@ -405,8 +439,6 @@ def load_tgtc_rules_and_notes() -> Dict[str, Any]:
         rules_path = os.path.join(base_dir, "2026 TGTC", "tgtc_2026_rules_and_notes.json")
         if not os.path.exists(rules_path):
             rules_path = "/app/2026 TGTC/tgtc_2026_rules_and_notes.json"
-        if not os.path.exists(rules_path):
-            rules_path = r"c:\Users\yusuf\Github\yapay-zeka-gtip-tespiti\2026 TGTC\tgtc_2026_rules_and_notes.json"
         if os.path.exists(rules_path):
             with open(rules_path, "r", encoding="utf-8") as f:
                 _RULES_AND_NOTES_CACHE = json.load(f)
@@ -418,7 +450,9 @@ def load_tgtc_rules_and_notes() -> Dict[str, Any]:
 
 # Dynamic property wrappers for backward compatibility
 TGTC_CHAPTERS = load_tgtc_chapters()
-TGTC_KNOWLEDGE_BASE_CATALOG = load_btb_catalog()
+# BTB kataloğu GCS ve Cloud SQL erişimi yapabildiğinden import anında yüklenmez.
+# İlk gerçek aramada `load_btb_catalog()` tarafından doldurulur ve önbelleklenir.
+TGTC_KNOWLEDGE_BASE_CATALOG: List[Dict[str, Any]] = []
 TGTC_RULES_AND_NOTES = load_tgtc_rules_and_notes()
 
 TURKISH_STOP_WORDS = {
@@ -477,4 +511,3 @@ def get_chapter_title(chapter_code: str) -> str:
     chaps = load_tgtc_chapters() or TGTC_CHAPTERS
     code_z = str(chapter_code).zfill(2)
     return chaps.get(code_z, "Genel Gümrük Tarife Cetveli Eşyası")
-

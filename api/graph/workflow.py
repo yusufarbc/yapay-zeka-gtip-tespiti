@@ -23,6 +23,23 @@ from api.db.gcp_emulator import local_state_store
 
 logger = logging.getLogger("GTIPWorkflowEngine")
 
+
+def _format_evidence_context(candidate: GTIPCandidate) -> str:
+    """Modele yalnızca veritabanından gelen, kaynak türü belirtilmiş kanıtları verir."""
+    parts = []
+    for source in candidate.legal_sources:
+        parts.append(
+            f"[{source.source_type}] {source.reference_no} | {source.publication_date or '-'} | "
+            f"{source.title}\n{source.excerpt}"
+        )
+    return "\n\n".join(parts)
+
+
+def _bind_legal_sources(decision: GTIPDecision, candidate: GTIPCandidate) -> GTIPDecision:
+    decision.legal_sources = list(candidate.legal_sources)
+    decision.consulted_sources = list(candidate.consulted_sources)
+    return decision
+
 def check_dynamic_gtip_rules(heading: str, specs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     gcp_architecture_report.md Bölüm 6:
@@ -104,6 +121,9 @@ class GTIPWorkflowEngine:
                 confidence_score=0.75,
                 hitl_question=hitl_q,
                 applied_gir_rules=gir_rules,
+                precedent_btbs=top_candidate.precedents,
+                legal_sources=top_candidate.legal_sources,
+                consulted_sources=top_candidate.consulted_sources,
                 audit_notes=[f"Dinamik Kural Motoru: '{rule_check['missing_parameter']}' parametresi eksik. Müşavire soru yöneltildi."]
             )
             state_dict: Dict[str, Any] = {
@@ -125,13 +145,15 @@ class GTIPWorkflowEngine:
 
         # 4. Aşama: Yasal Yüklem ve Yapılandırılmış Doğrulama (Deep Reasoning - Gemini 2.5 Pro / 3.6 Flash)
         predicates = predicate_registry.get_predicates_for_gtip(top_candidate.gtip_code)
+        evidence_context = _format_evidence_context(top_candidate)
         
         verification_results = None
         if predicates:
             verification_results = llm_verifier.verify_predicates(
                 raw_text=raw_text,
                 predicates=predicates,
-                allowed_chapters=allowed_chapters
+                allowed_chapters=allowed_chapters,
+                evidence_context=evidence_context,
             )
         else:
             # Predikat kaydı yoksa doğrudan TariffVerification yapılandırılmış çıktısı al
@@ -139,8 +161,12 @@ class GTIPWorkflowEngine:
                 raw_text=raw_text,
                 candidate_gtip=top_candidate.gtip_code,
                 heading_desc=top_candidate.description,
-                chapter_notes=top_candidate.precedents[0].legal_justification if top_candidate.precedents else "",
-                gir_rules=gir_rules
+                chapter_notes=next(
+                    (s.excerpt for s in top_candidate.legal_sources if s.source_type == "IZAHNAME"),
+                    "",
+                ),
+                gir_rules=gir_rules,
+                evidence_context=evidence_context,
             )
 
         # 5. Aşama: Deterministik Sembolik Karar Motoru (%5 Eşik Kuralı & No-AI Output Binding)
@@ -150,6 +176,7 @@ class GTIPWorkflowEngine:
             verification_results=verification_results,
             candidates=candidates
         )
+        decision = _bind_legal_sources(decision, top_candidate)
 
         # State kaydet
         state_dict: Dict[str, Any] = {
@@ -237,23 +264,30 @@ class GTIPWorkflowEngine:
         }
         await asyncio.sleep(0.05)
         predicates = await asyncio.to_thread(predicate_registry.get_predicates_for_gtip, top_candidate.gtip_code)
+        evidence_context = _format_evidence_context(top_candidate)
         
         verification_results = None
         if predicates:
             verification_results = await asyncio.to_thread(
-                llm_verifier.verify_predicates, raw_text, predicates, allowed_chapters
+                llm_verifier.verify_predicates,
+                raw_text,
+                predicates,
+                allowed_chapters,
+                evidence_context,
             )
         else:
             verification_results = await asyncio.to_thread(
                 llm_verifier.verify_tariff_candidate,
                 raw_text, top_candidate.gtip_code, top_candidate.description,
-                top_candidate.precedents[0].legal_justification if top_candidate.precedents else "",
-                gir_rules
+                next((s.excerpt for s in top_candidate.legal_sources if s.source_type == "IZAHNAME"), ""),
+                gir_rules,
+                evidence_context,
             )
 
         decision = await asyncio.to_thread(
             deterministic_engine.evaluate_decision, session_id, top_candidate, verification_results, candidates
         )
+        decision = _bind_legal_sources(decision, top_candidate)
 
         state_dict: Dict[str, Any] = {
             "session_id": session_id,
@@ -374,6 +408,8 @@ class GTIPWorkflowEngine:
             legal_justification=official_statute_text,
             applied_gir_rules=gir_rules,
             precedent_btbs=precedents,
+            legal_sources=top_candidate.legal_sources,
+            consulted_sources=top_candidate.consulted_sources,
             audit_notes=["Gümrük Müşaviri yanıtı alındı. Akış başarıyla tamamlandı."]
         )
 
@@ -457,4 +493,3 @@ def build_customs_workflow(checkpointer=None):
     except Exception as e:
         logger.warning(f"build_customs_workflow fallback: {e}")
         return None
-

@@ -7,10 +7,11 @@ gcp_architecture_report.md Bölüm 5 Şartnamesi:
 """
 
 import logging
+import re
 from typing import List, Dict, Any, Optional
 from google.genai import types
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import or_, text
 from api.modules.vertex_client import generate_embedding
 from api.db.database import GumrukMevzuatMaddesiModel, SessionLocal
 
@@ -59,13 +60,13 @@ def execute_search_customs_articles(query: str, session: Optional[Session] = Non
         query_vector = generate_embedding(query)
         
         # 1. PostgreSQL pgvector / AlloyDB ScaNN ortamı
-        if session.bind.dialect.name == "postgresql":
+        if session.bind.dialect.name == "postgresql" and query_vector and any(query_vector):
             sql_query = text("""
                 SELECT id, kanun_no, madde_kodu, tarih,
-                       1 - (icerik_vektor <=> :vector::vector) AS similarity
+                       1 - (icerik_vektor <=> CAST(:vector AS vector)) AS similarity
                 FROM gumruk_mevzuat_maddeleri
                 WHERE icerik_vektor IS NOT NULL
-                ORDER BY icerik_vektor <=> :vector::vector
+                ORDER BY icerik_vektor <=> CAST(:vector AS vector)
                 LIMIT 3;
             """)
             result = session.execute(sql_query, {"vector": str(query_vector)}).fetchall()
@@ -79,10 +80,21 @@ def execute_search_customs_articles(query: str, session: Optional[Session] = Non
                     for r in result
                 ]
 
-        # 2. SQLite / Geliştirme Fallback
-        items = session.query(GumrukMevzuatMaddesiModel).filter(
-            GumrukMevzuatMaddesiModel.madde_metni.ilike(f"%{query[:30]}%")
-        ).limit(3).all()
+        # 2. Embedding yoksa PostgreSQL ve SQLite için deterministik metin araması.
+        search_terms = [
+            term for term in re.findall(r"[\wçğıöşüÇĞİÖŞÜ]+", query)
+            if len(term) >= 3
+        ][:6]
+        if not search_terms:
+            return []
+        conditions = []
+        for term in search_terms:
+            conditions.extend([
+                GumrukMevzuatMaddesiModel.madde_metni.ilike(f"%{term}%"),
+                GumrukMevzuatMaddesiModel.madde_kodu.ilike(f"%{term}%"),
+                GumrukMevzuatMaddesiModel.kanun_no.ilike(f"%{term}%"),
+            ])
+        items = session.query(GumrukMevzuatMaddesiModel).filter(or_(*conditions)).limit(3).all()
         
         if items:
             return [

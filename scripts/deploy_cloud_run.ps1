@@ -51,7 +51,8 @@ if ($LASTEXITCODE -ne 0) {
         --tier db-f1-micro `
         --storage-type SSD `
         --storage-size 10GB `
-        --no-backup
+        --backup-start-time 00:00 `
+        --enable-point-in-time-recovery
     if ($LASTEXITCODE -ne 0) { Write-Error "Cloud SQL instance oluşturma hatası!"; exit 1 }
 
     # Veritabanı ve kullanıcı oluştur
@@ -59,6 +60,18 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "  Cloud SQL instance hazır: ${PROJECT_ID}:${REGION}:${SQL_INSTANCE_NAME}"
 } else {
     Write-Host "  Cloud SQL instance zaten mevcut: $SQL_INSTANCE_NAME"
+}
+
+# Kaynak koda parola yazılmasını veya Cloud SQL ile secret'ın ayrışmasını engelle.
+gcloud.cmd secrets describe gtip-db-password --project $PROJECT_ID 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "gtip-db-password bulunamadı. Önce güvenli bir parola üretip Cloud SQL postgres kullanıcısına ve Secret Manager'a aynı değeri atayın."
+    exit 1
+}
+gcloud.cmd secrets describe gtip-jwt-secret --project $PROJECT_ID 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "gtip-jwt-secret bulunamadı. Production deploy için güçlü bir JWT secret oluşturun."
+    exit 1
 }
 
 Write-Host "=========================================================="
@@ -83,8 +96,8 @@ gcloud.cmd run deploy gtip-backend `
     --timeout 300s `
     --service-account $SERVICE_ACCOUNT `
     --add-cloudsql-instances $CLOUD_SQL_INSTANCE `
-    --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,ENVIRONMENT=production,PRIMARY_AI_MODEL=gemini-2.5-flash,EXTRACTOR_LLM_MODEL=gemini-2.5-flash-lite,REASONING_LLM_MODEL=gemini-2.5-flash,AUDITOR_LLM_MODEL=gemini-2.5-flash,EMBEDDING_MODEL=text-embedding-005,GCS_BUCKET_NAME=$GCS_BUCKET,CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_INSTANCE,WEB_CONCURRENCY=2,CORS_ALLOWED_ORIGINS=*" `
-    --set-secrets "DB_PASS=gtip-db-password:latest"
+    --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,ENVIRONMENT=production,PRIMARY_AI_MODEL=gemini-2.5-flash,EXTRACTOR_LLM_MODEL=gemini-2.5-flash-lite,REASONING_LLM_MODEL=gemini-2.5-flash,AUDITOR_LLM_MODEL=gemini-2.5-flash,EMBEDDING_MODEL=text-embedding-005,GCS_BUCKET_NAME=$GCS_BUCKET,CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_INSTANCE,WEB_CONCURRENCY=2,CORS_ALLOWED_ORIGINS=https://gtip-web-gu6pxpqefa-uc.a.run.app" `
+    --set-secrets "DB_PASS=gtip-db-password:latest,JWT_SECRET_KEY=gtip-jwt-secret:latest"
 
 if ($LASTEXITCODE -ne 0) { Write-Error "Backend deploy hatası!"; exit 1 }
 

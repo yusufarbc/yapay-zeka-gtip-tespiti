@@ -738,12 +738,7 @@ def update_cloud_sql_versioned(data: List[Dict[str, Any]]) -> int:
     - Yeni kayıt → INSERT
     - Geçerliliği biten kayıtlar → is_active=False, valid_until=today
     """
-    try:
-        from api.db.database import SessionLocal
-        from api.db.gcp_emulator import OfficialBTBModel
-    except ImportError as e:
-        logger.error(f"[SQL] ORM import hatası: {e}")
-        return 0
+    from api.db.database import GumrukEmsalKararModel, SessionLocal
 
     logger.info(f"[SQL] {len(data)} kayıt Cloud SQL'e yazılıyor...")
     upserted = 0
@@ -755,43 +750,31 @@ def update_cloud_sql_versioned(data: List[Dict[str, Any]]) -> int:
             if not btb_no:
                 continue
             try:
-                record = session.query(OfficialBTBModel).filter_by(btb_no=btb_no).first()
+                record = session.query(GumrukEmsalKararModel).filter_by(
+                    karar_tipi="BTB",
+                    referans_no=btb_no,
+                ).first()
                 if record:
-                    # Güncelle
-                    record.gtip_code = item.get("gtip_code", record.gtip_code)
-                    record.chapter = item.get("chapter", record.chapter)
-                    record.heading = item.get("heading", record.heading)
-                    record.issue_date = item.get("issue_date", record.issue_date)
-                    record.product_description = item.get("product_description", record.product_description)
-                    record.legal_justification = item.get("legal_justification", record.legal_justification)
-                    # Genişletilmiş alanlar (varsa)
-                    if hasattr(record, "source"):
-                        record.source = item.get("source", record.source)
-                    if hasattr(record, "hs6_code"):
-                        record.hs6_code = item.get("hs6_code", record.hs6_code)
-                    if hasattr(record, "valid_until") and item.get("valid_until"):
-                        record.valid_until = item.get("valid_until")
-                    if hasattr(record, "is_active"):
-                        record.is_active = item.get("is_active", True)
+                    record.gtip_kodu = item.get("gtip_code", record.gtip_kodu)
+                    record.chapter_code = item.get("chapter", record.chapter_code)
+                    record.yayin_tarihi = item.get("issue_date", record.yayin_tarihi)
+                    record.esya_tanimi = item.get("product_description", record.esya_tanimi)
+                    record.hukuki_gerekce = item.get("legal_justification", record.hukuki_gerekce)
+                    record.kaynak_url = item.get("source_url", record.kaynak_url)
+                    if item.get("valid_until"):
+                        record.valid_until = item["valid_until"]
                 else:
-                    # Yeni kayıt oluştur — sadece mevcut sütunları kullan
-                    kwargs = {
-                        "btb_no": btb_no,
-                        "gtip_code": item.get("gtip_code", ""),
-                        "chapter": item.get("chapter", ""),
-                        "heading": item.get("heading", ""),
-                        "issue_date": item.get("issue_date", ""),
-                        "product_description": item.get("product_description", ""),
-                        "legal_justification": item.get("legal_justification", ""),
-                    }
-                    # Genişletilmiş sütunlar varsa ekle
-                    model_cols = {c.key for c in OfficialBTBModel.__table__.columns}
-                    extra_fields = ["source", "hs6_code", "cn8_code", "valid_until", "is_active"]
-                    for f in extra_fields:
-                        if f in model_cols and f in item:
-                            kwargs[f] = item[f]
-
-                    record = OfficialBTBModel(**kwargs)
+                    record = GumrukEmsalKararModel(
+                        karar_tipi="BTB",
+                        referans_no=btb_no,
+                        gtip_kodu=item.get("gtip_code", ""),
+                        chapter_code=item.get("chapter", ""),
+                        yayin_tarihi=item.get("issue_date", ""),
+                        esya_tanimi=item.get("product_description", ""),
+                        hukuki_gerekce=item.get("legal_justification", ""),
+                        kaynak_url=item.get("source_url") or item.get("source", ""),
+                        valid_until=item.get("valid_until", "9999-12-31"),
+                    )
                     session.add(record)
                 upserted += 1
             except Exception as row_e:
@@ -919,13 +902,10 @@ def get_etl_sync_status() -> Dict[str, Any]:
     record_count = 0
     last_sources: List[str] = []
     try:
-        from api.db.database import SessionLocal
-        from api.db.gcp_emulator import OfficialBTBModel
+        from api.db.database import GumrukEmsalKararModel, SessionLocal
         session = SessionLocal()
-        record_count = session.query(OfficialBTBModel).count()
-        # Benzersiz kaynak listesi
-        sources = session.query(OfficialBTBModel.source).distinct().all() \
-            if hasattr(OfficialBTBModel, "source") else []
+        record_count = session.query(GumrukEmsalKararModel).count()
+        sources = session.query(GumrukEmsalKararModel.karar_tipi).distinct().all()
         last_sources = [s[0] for s in sources if s[0]]
         session.close()
     except Exception:
