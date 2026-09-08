@@ -89,11 +89,6 @@ export const getETLSyncStatus = async () => {
   return response.data;
 };
 
-export const triggerETLSync = async () => {
-  const response = await axios.post(`${API_BASE_URL}/customs-data/trigger-sync`);
-  return response.data;
-};
-
 export const getTGTCHeadingItems = async (headingCode) => {
   try {
     const response = await axios.get(`${API_BASE_URL}/customs-data/heading/${headingCode}`);

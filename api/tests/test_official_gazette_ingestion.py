@@ -1,6 +1,12 @@
 from bs4 import BeautifulSoup
 
 from scripts.scraper_function import extract_customs_articles, is_customs_related
+from unittest.mock import Mock
+
+import pytest
+import requests
+
+from scripts import scrape_official_btb
 from scripts.scrape_official_btb import _page_rows, parse_btb_detail
 
 
@@ -47,3 +53,46 @@ def test_official_btb_list_and_detail_parser():
     detail = parse_btb_detail(BeautifulSoup(detail_html, "html.parser"))
     assert detail["legal_justification"].startswith("GİR 1")
     assert detail["product_description"] == "Elektrikli su kaynatma kabı"
+
+
+def test_official_btb_existing_reference_skips_detail_request(monkeypatch):
+    list_html = """
+    <table id="ctl00_ContentPlaceHolder1_GridView1">
+      <tr><td><a href="javascript:__doPostBack('ctl00$ContentPlaceHolder1$GridView1$ctl02$btn','')">TR060000260016</a></td>
+          <td>851610800012</td><td>Su kaynatma kabı</td><td>07/09/2026</td></tr>
+    </table>
+    """
+    response = Mock(text=list_html)
+    response.raise_for_status.return_value = None
+    session = Mock()
+    session.get.return_value = response
+    monkeypatch.setattr(scrape_official_btb, "_build_session", lambda: session)
+    postback = Mock(side_effect=AssertionError("mevcut kayıt için detay çağrılmamalı"))
+    monkeypatch.setattr(scrape_official_btb, "_postback", postback)
+
+    records = list(scrape_official_btb.iter_official_btbs(max_pages=1, existing_refs={"TR060000260016"}))
+
+    assert records == []
+    postback.assert_not_called()
+
+
+def test_official_btb_page_failure_is_not_reported_as_success(monkeypatch):
+    list_html = """
+    <table id="ctl00_ContentPlaceHolder1_GridView1">
+      <tr><td><a href="javascript:__doPostBack('ctl00$ContentPlaceHolder1$GridView1$ctl02$btn','')">TR060000260016</a></td>
+          <td>851610800012</td><td>Su kaynatma kabı</td><td>07/09/2026</td></tr>
+    </table>
+    """
+    response = Mock(text=list_html)
+    response.raise_for_status.return_value = None
+    session = Mock()
+    session.get.return_value = response
+    monkeypatch.setattr(scrape_official_btb, "_build_session", lambda: session)
+    monkeypatch.setattr(
+        scrape_official_btb,
+        "_postback",
+        Mock(side_effect=requests.HTTPError("portal unavailable")),
+    )
+
+    with pytest.raises(requests.HTTPError):
+        list(scrape_official_btb.iter_official_btbs(max_pages=2, existing_refs={"TR060000260016"}))

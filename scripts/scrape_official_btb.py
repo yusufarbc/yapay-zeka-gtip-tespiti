@@ -11,6 +11,8 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import requests
 from bs4 import BeautifulSoup
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
@@ -28,6 +30,26 @@ HEADERS = {
     "User-Agent": "GTIP-Mevzuat-Bot/3.0 (official-public-data; contact: system-admin)",
     "Accept-Language": "tr-TR,tr;q=0.9",
 }
+
+
+def _build_session() -> requests.Session:
+    """Portalın geçici 429/5xx cevaplarını üstel gecikmeyle yeniden dener."""
+    retry = Retry(
+        total=6,
+        connect=4,
+        read=4,
+        status=6,
+        backoff_factor=1.0,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET", "POST"}),
+        respect_retry_after_header=True,
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry, pool_connections=2, pool_maxsize=2)
+    session = requests.Session()
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
 
 
 def _hidden_fields(soup: BeautifulSoup) -> Dict[str, str]:
@@ -108,7 +130,11 @@ def _format_gtip(value: str) -> str:
     return value.strip()
 
 
-def iter_official_btbs(max_pages: int = 1000, max_records: Optional[int] = None) -> Iterable[Dict[str, Any]]:
+def iter_official_btbs(
+    max_pages: int = 1000,
+    max_records: Optional[int] = None,
+    existing_refs: Optional[set[str]] = None,
+) -> Iterable[Dict[str, Any]]:
     """Yeni kayıttan eskiye ilerler ve tam altı yıllık tarih sınırında durur."""
     today = datetime.date.today()
     try:
@@ -116,7 +142,8 @@ def iter_official_btbs(max_pages: int = 1000, max_records: Optional[int] = None)
     except ValueError:
         cutoff = today.replace(year=today.year - 6, day=28)
 
-    session = requests.Session()
+    known_refs = existing_refs or set()
+    session = _build_session()
     response = session.get(BTB_LIST_URL, headers=HEADERS, timeout=60)
     response.raise_for_status()
     page_soup = BeautifulSoup(response.text, "html.parser")
@@ -132,14 +159,15 @@ def iter_official_btbs(max_pages: int = 1000, max_records: Optional[int] = None)
                     GRID_ID.replace("_", "$"),
                     f"Page${page_number}",
                 )
-            except Exception as e_page:
-                logger.info("Sayfa %s yüklenirken son sayfaya ulaşıldı veya sunucu durdu: %s", page_number, e_page)
-                break
+            except Exception:
+                logger.exception("BTB sayfa %s tüm yeniden denemelere rağmen yüklenemedi", page_number)
+                raise
 
         rows = _page_rows(page_soup)
         if not rows:
             break
         page_new = 0
+        page_existing = 0
 
         for row in rows:
             if row["btb_no"] in seen:
@@ -148,6 +176,12 @@ def iter_official_btbs(max_pages: int = 1000, max_records: Optional[int] = None)
             issue_date = _parse_date(row["issue_date"])
             if issue_date and issue_date < cutoff:
                 return
+
+            # Önceki çalışmada kaydedilmiş kararlar için pahalı detay postback'ini
+            # tekrarlama; sayfalar hızlıca geçilerek kaldığı yere ulaşılır.
+            if row["btb_no"] in known_refs:
+                page_existing += 1
+                continue
 
             detail_soup = _postback(session, page_soup, row["event_target"])
             detail = parse_btb_detail(detail_soup)
@@ -170,9 +204,12 @@ def iter_official_btbs(max_pages: int = 1000, max_records: Optional[int] = None)
                 return
             time.sleep(0.05)
 
-        logger.info("BTB sayfa %s işlendi; %s yeni detay okundu.", page_number, page_new)
-        if page_new == 0:
-            break
+        logger.info(
+            "BTB sayfa %s işlendi; %s yeni detay, %s mevcut kayıt atlandı.",
+            page_number,
+            page_new,
+            page_existing,
+        )
 
 
 def upsert_btbs(records: Iterable[Dict[str, Any]]) -> Dict[str, int]:
@@ -207,7 +244,7 @@ def upsert_btbs(records: Iterable[Dict[str, Any]]) -> Dict[str, int]:
                 record.kaynak_url = item["source_url"]
                 record.valid_until = "9999-12-31"
                 updated += 1
-            if (inserted + updated) % 100 == 0:
+            if (inserted + updated) % 25 == 0:
                 db.commit()
         db.commit()
     return {"inserted": inserted, "updated": updated}
@@ -215,7 +252,23 @@ def upsert_btbs(records: Iterable[Dict[str, Any]]) -> Dict[str, int]:
 
 def run(max_pages: int = 1000, max_records: Optional[int] = None) -> Dict[str, int]:
     init_orm_tables()
-    result = upsert_btbs(iter_official_btbs(max_pages=max_pages, max_records=max_records))
+    with SessionLocal() as db:
+        existing_refs = {
+            ref
+            for (ref,) in db.query(GumrukEmsalKararModel.referans_no).filter(
+                GumrukEmsalKararModel.karar_tipi == "BTB",
+                GumrukEmsalKararModel.referans_no.isnot(None),
+            )
+            if ref
+        }
+    logger.info("Cloud SQL'de %s mevcut BTB referansı bulundu.", len(existing_refs))
+    result = upsert_btbs(
+        iter_official_btbs(
+            max_pages=max_pages,
+            max_records=max_records,
+            existing_refs=existing_refs,
+        )
+    )
     logger.info("Resmî BTB senkronu tamamlandı: %s", result)
     return result
 

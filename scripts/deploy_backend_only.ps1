@@ -26,13 +26,13 @@ Write-Host "Backend Cloud Run'a dağıtılıyor..."
     --allow-unauthenticated `
     --memory 4Gi `
     --cpu 2 `
-    --concurrency 80 `
+    --concurrency 20 `
     --min-instances 0 `
-    --max-instances 10 `
+    --max-instances 3 `
     --timeout 300s `
     --service-account $SERVICE_ACCOUNT `
     --set-cloudsql-instances $CLOUD_SQL_INSTANCE `
-    --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,ENVIRONMENT=production,GCS_BUCKET_NAME=$GCS_BUCKET,CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_INSTANCE,DB_USER=postgres,DB_NAME=gtip_db,WEB_CONCURRENCY=2,CORS_ALLOWED_ORIGINS=$WEB_ORIGIN" `
+    --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,ENVIRONMENT=production,GCS_BUCKET_NAME=$GCS_BUCKET,CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_INSTANCE,DB_USER=postgres,DB_NAME=gtip_db,DB_POOL_SIZE=1,DB_MAX_OVERFLOW=1,WEB_CONCURRENCY=2,CORS_ALLOWED_ORIGINS=$WEB_ORIGIN,ALLOW_PUBLIC_DEMO_ACCESS=true,PUBLIC_DEMO_RATE_LIMIT_PER_MINUTE=10,PUBLIC_DEMO_UPLOAD_LIMIT_PER_MINUTE=5,MAX_BATCH_ITEMS=10,BATCH_CONCURRENCY=4,SKIP_TGTC_AUTO_SEED=true" `
     --set-secrets "DB_PASS=gtip-db-password:latest,JWT_SECRET_KEY=gtip-jwt-secret:latest" `
     --quiet
 if ($LASTEXITCODE -ne 0) { throw "Backend Cloud Run dağıtımı başarısız." }

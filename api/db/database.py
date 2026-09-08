@@ -16,6 +16,7 @@ from sqlalchemy import (
     Text, DateTime, func, text, UniqueConstraint, Index, or_
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from sqlalchemy.engine import URL
 from sqlalchemy.types import TypeDecorator
 
 logger = logging.getLogger(__name__)
@@ -238,7 +239,13 @@ def get_database_url() -> str:
 
     if os.getenv("ENVIRONMENT") == "production" or os.getenv("CLOUD_SQL_CONNECTION_NAME"):
         # GCP Cloud Run Cloud SQL Auth Proxy Unix Socket bağlantısı
-        return f"postgresql+psycopg2://{db_user}:{db_pass}@/{db_name}?host=/cloudsql/{cloud_sql_conn}"
+        return URL.create(
+            "postgresql+psycopg2",
+            username=db_user,
+            password=db_pass,
+            database=db_name,
+            query={"host": f"/cloudsql/{cloud_sql_conn}"},
+        ).render_as_string(hide_password=False)
     else:
         # Geliştirme / Test ortamı fallback
         import tempfile
@@ -253,8 +260,8 @@ connect_args = {"connect_timeout": 5} if DATABASE_URL.startswith("postgresql") e
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
-    pool_size=2,        # Cloud Run instance başına düşük pool size (serverless optimization)
-    max_overflow=3,     # Yoğun yükte max +3 connection
+    pool_size=int(os.getenv("DB_POOL_SIZE", "1")),
+    max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "1")),
     pool_recycle=600,   # Cloud SQL connection reuse lifetime (10 dakika)
     pool_timeout=30,    # Max wait time for a connection
     connect_args=connect_args

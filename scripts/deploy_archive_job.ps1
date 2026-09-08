@@ -27,7 +27,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "  Cloud Run Job kontrol ediliyor: $JOB_NAME..."
 $jobExists = & "gcloud.cmd" run jobs describe $JOB_NAME --region $REGION 2>&1
 
-$ENV_VARS = "GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,ENVIRONMENT=production,PRIMARY_AI_MODEL=gemini-2.5-flash,EXTRACTOR_LLM_MODEL=gemini-2.5-flash-lite,REASONING_LLM_MODEL=gemini-2.5-flash,EMBEDDING_MODEL=text-embedding-005,GCS_BUCKET_NAME=$GCS_BUCKET,CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_INSTANCE,DB_USER=postgres,DB_NAME=gtip_db,EMULATOR_MODE=false"
+$ENV_VARS = "GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,ENVIRONMENT=production,PRIMARY_AI_MODEL=gemini-2.5-flash,EXTRACTOR_LLM_MODEL=gemini-2.5-flash-lite,REASONING_LLM_MODEL=gemini-2.5-flash,EMBEDDING_MODEL=text-embedding-005,GCS_BUCKET_NAME=$GCS_BUCKET,CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_INSTANCE,DB_USER=postgres,DB_NAME=gtip_db,DB_POOL_SIZE=1,DB_MAX_OVERFLOW=1,USE_GCP_EMULATOR=false,SKIP_TGTC_AUTO_SEED=true"
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "  Mevcut Cloud Run Job güncelleniyor..."

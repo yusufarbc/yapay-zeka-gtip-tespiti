@@ -1,3 +1,8 @@
+from unittest.mock import MagicMock
+
+import pytest
+from fastapi import HTTPException
+
 from api.schemas.product import ProductFeatures
 from api.modules.rule_engine import rule_engine
 from api.graph.workflow import workflow_engine
@@ -26,7 +31,6 @@ def test_workflow_end_to_end():
     assert len(pdf_bytes) > 50
 
 def test_security_auth_production_header_rejection():
-    from unittest.mock import MagicMock
     from api.security.auth import get_current_user_session
     import pytest
     from fastapi import HTTPException
@@ -56,7 +60,6 @@ def test_security_auth_production_header_rejection():
         settings.ALLOW_PUBLIC_DEMO_ACCESS = old_demo
 
 def test_scheduler_header_cannot_bypass_admin_auth():
-    from unittest.mock import MagicMock
     from api.security.auth import require_admin_user
     import pytest
     from fastapi import HTTPException
@@ -71,6 +74,66 @@ def test_scheduler_header_cannot_bypass_admin_auth():
     with pytest.raises(HTTPException) as exc_info:
         require_admin_user(req)
     assert exc_info.value.status_code == 403
+
+
+def test_google_tokens_require_configured_audience(monkeypatch):
+    from api.security.auth import decode_access_token
+    from google.oauth2 import id_token
+
+    verifier = MagicMock(return_value={"email": "user@example.com", "email_verified": True})
+    monkeypatch.setattr(id_token, "verify_oauth2_token", verifier)
+    monkeypatch.setattr(settings, "GOOGLE_OAUTH_CLIENT_ID", "")
+
+    assert decode_access_token("not-an-internal-token") is None
+    verifier.assert_not_called()
+
+
+def test_google_token_audience_domain_and_admin_allowlist(monkeypatch):
+    from api.security.auth import decode_access_token
+    from google.oauth2 import id_token
+
+    def verify(_token, _request, audience):
+        assert audience == "expected-client-id"
+        return {
+            "sub": "google-user-1",
+            "email": "admin@example.com",
+            "email_verified": True,
+            "hd": "example.com",
+            "name": "Admin User",
+        }
+
+    monkeypatch.setattr(id_token, "verify_oauth2_token", verify)
+    monkeypatch.setattr(settings, "GOOGLE_OAUTH_CLIENT_ID", "expected-client-id")
+    monkeypatch.setattr(settings, "GOOGLE_WORKSPACE_DOMAINS", "example.com")
+    monkeypatch.setattr(settings, "ADMIN_EMAILS", "admin@example.com")
+
+    session = decode_access_token("google-token")
+
+    assert session is not None
+    assert session.role == "admin"
+    assert session.domain == "example.com"
+
+
+def test_demo_rate_limiter_uses_trusted_forwarded_client_position(monkeypatch):
+    from api.security.auth import UserSession
+    from api.security.rate_limit import SlidingWindowRateLimiter
+
+    request = MagicMock()
+    request.headers = {"x-forwarded-for": "spoofed, 203.0.113.7, 10.0.0.1"}
+    user = UserSession(
+        user_id="demo_203_0_113_7",
+        email="demo-musavir@gtip.gov.tr",
+        full_name="Demo",
+        role="customs_broker",
+    )
+    limiter = SlidingWindowRateLimiter()
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+
+    assert limiter._client_key(request) == "203.0.113.7"
+    limiter.check(request, user, "analysis", 1)
+    with pytest.raises(HTTPException) as exc_info:
+        limiter.check(request, user, "analysis", 1)
+    assert exc_info.value.status_code == 429
 
 def test_hard_rules_matrix_lock():
     features = ProductFeatures(

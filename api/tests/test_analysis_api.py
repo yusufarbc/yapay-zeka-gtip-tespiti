@@ -32,6 +32,37 @@ def test_analysis_endpoints_preserve_unauthorized_status(client, monkeypatch, en
     assert client.request(method, endpoint, **kwargs).status_code == 401
 
 
+@pytest.mark.parametrize("method,endpoint", [
+    ("POST", "/api/v1/customs-data/trigger-sync"),
+    ("POST", "/api/v1/admin/clean-bad-btbs"),
+    ("POST", "/api/v1/admin/sync-gcp-official-gazette-bulk"),
+    ("POST", "/api/v1/admin/seed-tgtc-tree"),
+    ("GET", "/api/v1/admin/sync-gcp-official-gazette-status"),
+    ("GET", "/api/v1/admin/db-stats"),
+    ("GET", "/api/v1/audit/logs"),
+])
+def test_public_demo_cannot_access_admin_or_operational_endpoints(client, monkeypatch, method, endpoint):
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr(settings, "ALLOW_PUBLIC_DEMO_ACCESS", True)
+
+    response = client.request(method, endpoint)
+
+    assert response.status_code == 403
+
+
+def test_foreign_gcs_image_uri_is_rejected_before_analysis(client, monkeypatch):
+    start = AsyncMock()
+    monkeypatch.setattr(workflow_engine, "start_analysis_async", start)
+
+    response = client.post(
+        "/api/v1/analyze-json",
+        json={"product_description": "valid product", "image_uri": "gs://foreign-bucket/private.png"},
+    )
+
+    assert response.status_code == 422
+    start.assert_not_called()
+
+
 @pytest.mark.parametrize("description", ["   ", "ab", "x" * 5001])
 @pytest.mark.parametrize("mode", ["json", "multipart", "batch", "stream"])
 def test_invalid_description_never_starts_analysis(client, monkeypatch, description, mode):

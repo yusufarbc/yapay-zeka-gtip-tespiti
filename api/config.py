@@ -34,6 +34,20 @@ class Settings(BaseSettings):
     USE_GCP_EMULATOR: bool = os.getenv("USE_GCP_EMULATOR", "false").lower() == "true"
     ALLOW_PUBLIC_DEMO_ACCESS: bool = os.getenv("ALLOW_PUBLIC_DEMO_ACCESS", "true").lower() == "true"
 
+    # Kimlik doğrulama. Google token'ları yalnızca beklenen OAuth client audience'i
+    # ile kabul edilir; yönetici rolleri e-posta allowlist'iyle verilir.
+    GOOGLE_OAUTH_CLIENT_ID: str = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+    GOOGLE_WORKSPACE_DOMAINS: str = os.getenv("GOOGLE_WORKSPACE_DOMAINS", "").strip()
+    ADMIN_EMAILS: str = os.getenv("ADMIN_EMAILS", "").strip()
+    SENIOR_BROKER_EMAILS: str = os.getenv("SENIOR_BROKER_EMAILS", "").strip()
+    IAP_AUDIENCE: str = os.getenv("IAP_AUDIENCE", "").strip()
+
+    # Herkese açık demo yüzeyinde maliyet/kaynak tüketimini sınırla.
+    PUBLIC_DEMO_RATE_LIMIT_PER_MINUTE: int = int(os.getenv("PUBLIC_DEMO_RATE_LIMIT_PER_MINUTE", "10"))
+    PUBLIC_DEMO_UPLOAD_LIMIT_PER_MINUTE: int = int(os.getenv("PUBLIC_DEMO_UPLOAD_LIMIT_PER_MINUTE", "5"))
+    MAX_BATCH_ITEMS: int = int(os.getenv("MAX_BATCH_ITEMS", "10"))
+    BATCH_CONCURRENCY: int = int(os.getenv("BATCH_CONCURRENCY", "4"))
+
     # GCP Configurations - us-central1 (Iowa) ve gumruk-mevzuat Standartlaştırması
     GCP_PROJECT_ID: str = os.getenv("GCP_PROJECT_ID", "gumruk-mevzuat")
     GCP_REGION: str = os.getenv("GCP_REGION", "us-central1")  # us-central1 primary Vertex AI region

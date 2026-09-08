@@ -18,7 +18,7 @@ Sistem iki temel çalışma döngüsü üzerinden yürütülür:
 ┌──────────────────────────────────────────────────────────────────────────────────────────┐
 │ DÖNGÜ 1: OTOMATİK RESMİ GAZETE VE MEVZUAT RADARI (ETL PIPELINE)                         │
 │                                                                                          │
-│  [resmigazete.gov.tr] ──► [Cloud Scheduler (02:00)] ──► [Cloud Run Functions]           │
+│  [resmigazete.gov.tr] ──► [Cloud Scheduler (02:00)] ──► [Cloud Run Jobs]                │
 │                                                                  │                       │
 │        ┌─────────────────────────────────────────────────────────┘                       │
 │        ▼                                                                                 │
@@ -27,14 +27,14 @@ Sistem iki temel çalışma döngüsü üzerinden yürütülür:
 │        ├─► Ham Metin, Başlık, Link, Tarih ───────────────┐       │                       │
 │        └─► Embedding (Vertex AI text-embedding-005) ──┐  │       │                       │
 │                                                       ▼  ▼       │                       │
-│  [AlloyDB AI for PostgreSQL (pgvector + ScaNN İndeksi + İlişkisel Metadata)]             │
+│  [Cloud SQL for PostgreSQL 15 (pgvector + HNSW + İlişkisel Metadata)]                    │
 └──────────────────────────────────────┬───────────────────────────────────────────────────┘
                                        │
                                        ▼
 ┌──────────────────────────────────────────────────────────────────────────────────────────┐
 │ DÖNGÜ 2: ETKİLEŞİMLİ GTİP VE MEVZUAT DANIŞMANI (LANGGRAPH + MCP)                         │
 │                                                                                          │
-│  [Müşavir UI (Firebase Hosting)] ◄──► [Cloud Run Backend: FastAPI + LangGraph]           │
+│  [React/Vite UI (Cloud Run)] ◄──────► [Cloud Run Backend: FastAPI + LangGraph]           │
 │                                                    │                                     │
 │        ┌───────────────────────────────────────────┴─────────────────────────────┐       │
 │        ▼                                                                         ▼       │
@@ -56,31 +56,31 @@ Sistem iki temel çalışma döngüsü üzerinden yürütülür:
 
 | Mimari Katman | Seçilen GCP Servisi / Bileşeni | Yapılandırma ve Mimari Rolü |
 | --- | --- | --- |
-| **Bölge (Primary Region)** | **`us-central1` (Iowa)** veya **`europe-west4` (Hollanda)** | Vertex AI Gemini model güncellemelerine ve en yüksek TPM/RPM kotalarına doğrudan erişim.
+| **Bölge (Primary Region)** | **`us-central1` (Iowa)** | Cloud Run, Cloud SQL, Scheduler ve Vertex AI aynı bölgede çalışır.
 
  |
-| **Büyük Dil Modeli** | **Vertex AI (`gemini-2.5-flash-lite` / `gemini-3.5-flash-lite`)** | Düşük gecikme süresi, ekonomik token maliyeti, katı Pydantic JSON Structured Output üretimi.
+| **Büyük Dil Modeli** | **Vertex AI (`gemini-2.5-flash` / `gemini-2.5-flash-lite`)** | Çıkarım, doğrulama ve yapılandırılmış çıktı üretimi.
 
  |
-| **Embedding Modeli** | **Vertex AI `text-embedding-005**` | 768 boyutlu vektörleştirme; mevzuat maddeleri ve emsal BTB metinlerinin indekslenmesi.
+| **Embedding Modeli** | **Vertex AI `text-embedding-005`** | 768 boyutlu vektörleştirme; mevzuat maddeleri ve emsal BTB metinlerinin indekslenmesi.
 
  |
 | **Önbellekleme** | **Vertex AI Context Caching** | TGTC fasıl izahnameleri ve Genel Yorum Kuralları (GİR) önbelleğe alınarak girdi maliyeti %75 düşürülür.
 
  |
-| **Birleşik Veritabanı** | **AlloyDB AI for PostgreSQL** | İlişkisel gümrük tabloları, `ScaNN` vektör indeksi ve LangGraph `PostgresSaver` oturum hafızasını tek kümede toplar.
+| **Birleşik Veritabanı** | **Cloud SQL for PostgreSQL 15** | İlişkisel tablolar ve `pgvector` HNSW indeksleri; Cloud SQL Auth Proxy socket bağlantısı kullanılır.
 
  |
 | **İşlem Katmanı** | **Cloud Run (Docker Container)** | Python 3.11+, FastAPI, LangGraph durum makinesi ve FastMCP sunucusu. İstek olmadığında sıfıra ölçeklenir (`min-instances: 0`).
 
  |
-| **Zamanlanmış Tetikleyici** | **Cloud Scheduler** | Her gece saat 02:00'de Resmi Gazete tarayıcı servisini tetikler.
+| **Zamanlanmış Tetikleyici** | **Cloud Scheduler** | Resmî Gazete işi 02:00, resmî BTB işi 03:00 Europe/Istanbul saatinde çalışır.
 
  |
-| **Sunucusuz ETL** | **Cloud Run Functions (2nd Gen)** | Resmi Gazete HTML temizliği, regex tabanlı madde ayrıştırma ve AlloyDB yükleme hattı.
+| **Sunucusuz ETL** | **Cloud Run Jobs** | Günlük tarama, BTB senkronu, arşiv backfill ve yıllık TGTC seed işleri ayrı çalıştırılır.
 
  |
-| **Frontend Barındırma** | **Firebase Hosting** | Next.js tabanlı Split-View (Açıklama + Hukuki Belge Kartı) kullanıcı arayüzü.
+| **Frontend Barındırma** | **Cloud Run** | React 18/Vite arayüzü Nginx tabanlı ayrı container olarak yayınlanır.
 
  |
 
@@ -182,9 +182,9 @@ def ingest_daily_gazette(date_str: str, gazette_no: int = 1, db_conn = None):
 
 ---
 
-## 4. VERİTABANI MİMARİSİ VE ŞEMA TASARIMI (ALLOYDB AI)
+## 4. VERİTABANI MİMARİSİ VE ŞEMA TASARIMI (CLOUD SQL + PGVECTOR)
 
-Dağınık veritabanı kullanımından doğabilecek gecikmeleri ve senkronizasyon hatalarını önlemek için ilişkisel veriler, vektör indeksleri ve LangGraph durum hafızası **AlloyDB for PostgreSQL** kümesinde birleştirilir.
+İlişkisel veriler ve vektör indeksleri **Cloud SQL for PostgreSQL 15** üzerinde birleştirilir. Canlı sistem `pgvector` ve HNSW kullanır; aşağıdaki ScaNN ifadeleri yalnızca olası AlloyDB geçişi için hedef tasarım notlarıdır.
 
 ```sql
 -- Gerekli eklentileri aktif et
@@ -461,41 +461,10 @@ Müşavir ekranında LLM çıktısı ile veritabanından çekilen resmi hukuki k
 
 ---
 
-## 8. ÜRETİM ORTAMI (PRODUCTION) UYGULAMA YOL HARİTASI
+## 8. ÜRETİM ORTAMI (PRODUCTION) MEVCUT DURUM VE YOL HARİTASI
 
-1. **AlloyDB AI Kümesinin Başlatılması:**
-* GCP Console veya Terraform ile `europe-west4` bölgesinde bir AlloyDB AI kümesi oluşturun.
-
-
-* Veritabanında `CREATE EXTENSION vector;` ve `CREATE EXTENSION scann;` komutlarını çalıştırın.
-
-
-
-
-2. **Kural Tablosunun ve BTB Arşivinin Yüklenmesi:**
-* Ticaret Bakanlığı'nın güncel TGTC yapısını `gtip_rules` tablosuna hiyerarşik (Parent-Child) formatta işleyin.
-* Kamuya açık son 6 yılın BTB ve sınıflandırma kararlarını `text-embedding-005` ile vektörleştirerek kaynak türü ve yayın tarihiyle birlikte `emsal_btb_kararlari` tablosuna aktarın.
-
-
-
-
-3. **Resmi Gazete Takipçisinin Canlıya Alınması:**
-* Scraper fonksiyonunu Cloud Run Functions üzerine dağıtın.
-
-
-* Cloud Scheduler'a `0 2 * * *` CRON ifadesiyle her gece çalışma emri verin.
-
-
-
-
-4. **FastMCP ve LangGraph Backend Dağıtımı:**
-* FastAPI ve LangGraph kodunu Dockerfile ile paketleyip Cloud Run'a yükleyin (`--min-instances=0`, `--concurrency=80`).
-
-
-* AlloyDB bağlantısını Private Service Connect (PSC) üzerinden güvenli iç IP ile kurun.
-
-
-
-
-5. **Context Caching Optimizasyonunun Açılması:**
-* Değişmeyen 6 Genel Yorum Kuralı (GİR) ve Fasılların genel notlarını Vertex AI Context Cache üzerinde sabitleyin. Gecikme süresini 400 ms bandına indirin.
+1. **Mevcut:** Cloud SQL PostgreSQL 15, pgvector/HNSW, iki Cloud Run servisi, dört Cloud Run Job ve iki Scheduler görevi `us-central1` bölgesinde çalışır.
+2. **Güvenlik:** Yönetim ve veri değiştiren uçlar kimlik doğrulamalıdır. Google tokenları audience/domain ve yönetici e-posta allowlist'i ile doğrulanır; demo analiz trafiği hız sınırlıdır.
+3. **Dayanıklılık:** BTB portalının geçici 429/5xx cevapları yeniden denenir; daha önce kaydedilmiş referansların detay sayfaları tekrar indirilmez.
+4. **Kapasite:** Backend `concurrency=20`, `max-instances=3` ve worker başına en fazla iki DB bağlantısıyla `db-f1-micro` bağlantı bütçesini korur.
+5. **İleri aşama:** Trafik ve SLA gerektirirse Cloud SQL HA/private IP veya AlloyDB geçişi ayrı maliyet ve kapasite çalışmasıyla değerlendirilir.

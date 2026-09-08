@@ -6,7 +6,7 @@ $JOB_NAME = "gtip-seed-tgtc-2026"
 $IMAGE_URI = "$REGION-docker.pkg.dev/$PROJECT_ID/gtip-repo/backend:latest"
 $CLOUD_SQL_INSTANCE = "$PROJECT_ID`:$REGION`:gumruk-db"
 $SERVICE_ACCOUNT = "gtip-backend-sa@$PROJECT_ID.iam.gserviceaccount.com"
-$ENV_VARS = "GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,ENVIRONMENT=production,CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_INSTANCE,DB_USER=postgres,DB_NAME=gtip_db,USE_GCP_EMULATOR=false"
+$ENV_VARS = "GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,ENVIRONMENT=production,CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_INSTANCE,DB_USER=postgres,DB_NAME=gtip_db,DB_POOL_SIZE=1,DB_MAX_OVERFLOW=1,USE_GCP_EMULATOR=false,SKIP_TGTC_AUTO_SEED=true"
 
 $existing = & gcloud.cmd run jobs list `
     --region $REGION `

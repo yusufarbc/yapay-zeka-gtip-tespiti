@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   BookOpen, Search, Layers, Award, RefreshCw,
-  ExternalLink, CheckCircle2, Play, ChevronRight, ChevronDown,
+  ExternalLink, CheckCircle2, ChevronRight, ChevronDown,
   FileText, Scale, AlertCircle, Loader2
 } from 'lucide-react';
 import {
   getCustomsBTBs, getTGTCChapters, getETLSyncStatus,
-  triggerETLSync, getTGTCRulesAndNotes, getTGTCHeadingItems
+  getTGTCRulesAndNotes, getTGTCHeadingItems
 } from '../api/client';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -632,7 +632,7 @@ function RulesTab({ rules, isLoading }) {
 
 // ─── ETL Sync Tab ─────────────────────────────────────────────────────────
 
-function SyncTab({ syncStatus, isSyncing, onSync }) {
+function SyncTab({ syncStatus }) {
   return (
     <div style={{ background: 'var(--bg-primary)', padding: '18px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px', flexWrap: 'wrap', gap: '12px', background: 'var(--bg-surface)', padding: '13px 16px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
@@ -642,12 +642,8 @@ function SyncTab({ syncStatus, isSyncing, onSync }) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span style={{ background: 'rgba(16,185,129,0.12)', color: '#059669', padding: '4px 10px', borderRadius: '20px', fontSize: '0.77rem', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-            <CheckCircle2 size={13} /> 2/2 Boru Hattı Aktif
+            <CheckCircle2 size={13} /> {syncStatus?.pipeline_status || 'UNKNOWN'}
           </span>
-          <button onClick={onSync} disabled={isSyncing}
-            style={{ background: 'var(--primary-brand)', color: '#fff', border: 'none', padding: '7px 14px', borderRadius: '6px', fontWeight: 700, fontSize: '0.81rem', cursor: isSyncing ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', opacity: isSyncing ? 0.6 : 1 }}>
-            <Play size={13} /> {isSyncing ? 'Çekiliyor...' : 'Senkronizasyonu Tetikle'}
-          </button>
         </div>
       </div>
 
@@ -698,7 +694,6 @@ export const CustomsKnowledgeExplorer = () => {
   const [headings, setHeadings] = useState([]);
   const [rules, setRules] = useState(null);
   const [syncStatus, setSyncStatus] = useState(null);
-  const [isSyncing, setIsSyncing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -720,17 +715,6 @@ export const CustomsKnowledgeExplorer = () => {
       finally { setIsLoading(false); }
     })();
   }, []);
-
-  const handleSync = async () => {
-    setIsSyncing(true);
-    try {
-      await triggerETLSync();
-      const [btbData, syncData] = await Promise.all([getCustomsBTBs(), getETLSyncStatus()]);
-      setBtbs(btbData || []);
-      setSyncStatus(syncData);
-    } catch (e) { console.error('Sync err:', e); }
-    finally { setIsSyncing(false); }
-  };
 
   const cleanCount = useMemo(() => btbs.filter(isCleanBTB).length, [btbs]);
 
@@ -767,7 +751,7 @@ export const CustomsKnowledgeExplorer = () => {
       {activeTab === 'tree'  && <TariffTreeTab chapters={chapters} headings={headings} isLoading={isLoading} />}
       {activeTab === 'btbs'  && <BTBTab btbs={btbs} chapters={chapters} isLoading={isLoading} />}
       {activeTab === 'rules' && <RulesTab rules={rules} isLoading={isLoading} />}
-      {activeTab === 'sync'  && <SyncTab syncStatus={syncStatus} isSyncing={isSyncing} onSync={handleSync} />}
+      {activeTab === 'sync'  && <SyncTab syncStatus={syncStatus} />}
     </div>
   );
 };

@@ -35,6 +35,10 @@ if ($LASTEXITCODE -ne 0) {
 } else {
     Write-Host "  Bucket zaten mevcut: gs://$GCS_BUCKET"
 }
+gcloud.cmd storage buckets update "gs://$GCS_BUCKET" `
+    --public-access-prevention=enforced `
+    --lifecycle-file=scripts/gcs_lifecycle.json
+if ($LASTEXITCODE -ne 0) { Write-Error "GCS güvenlik/lifecycle ayarı başarısız!"; exit 1 }
 
 Write-Host "=========================================================="
 Write-Host "  0b. CLOUD SQL API VE INSTANCE KONTROL EDİLİYOR..."
@@ -90,13 +94,13 @@ gcloud.cmd run deploy gtip-backend `
     --allow-unauthenticated `
     --memory 4Gi `
     --cpu 2 `
-    --concurrency 80 `
+    --concurrency 20 `
     --min-instances 0 `
-    --max-instances 10 `
+    --max-instances 3 `
     --timeout 300s `
     --service-account $SERVICE_ACCOUNT `
     --add-cloudsql-instances $CLOUD_SQL_INSTANCE `
-    --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,ENVIRONMENT=production,PRIMARY_AI_MODEL=gemini-2.5-flash,EXTRACTOR_LLM_MODEL=gemini-2.5-flash-lite,REASONING_LLM_MODEL=gemini-2.5-flash,AUDITOR_LLM_MODEL=gemini-2.5-flash,EMBEDDING_MODEL=text-embedding-005,GCS_BUCKET_NAME=$GCS_BUCKET,CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_INSTANCE,WEB_CONCURRENCY=2,CORS_ALLOWED_ORIGINS=https://gtip-web-gu6pxpqefa-uc.a.run.app" `
+    --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,ENVIRONMENT=production,PRIMARY_AI_MODEL=gemini-2.5-flash,EXTRACTOR_LLM_MODEL=gemini-2.5-flash-lite,REASONING_LLM_MODEL=gemini-2.5-flash,AUDITOR_LLM_MODEL=gemini-2.5-flash,EMBEDDING_MODEL=text-embedding-005,GCS_BUCKET_NAME=$GCS_BUCKET,CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_INSTANCE,DB_POOL_SIZE=1,DB_MAX_OVERFLOW=1,WEB_CONCURRENCY=2,CORS_ALLOWED_ORIGINS=https://gtip-web-gu6pxpqefa-uc.a.run.app,ALLOW_PUBLIC_DEMO_ACCESS=true,PUBLIC_DEMO_RATE_LIMIT_PER_MINUTE=10,PUBLIC_DEMO_UPLOAD_LIMIT_PER_MINUTE=5,MAX_BATCH_ITEMS=10,BATCH_CONCURRENCY=4,SKIP_TGTC_AUTO_SEED=true" `
     --set-secrets "DB_PASS=gtip-db-password:latest,JWT_SECRET_KEY=gtip-jwt-secret:latest"
 
 if ($LASTEXITCODE -ne 0) { Write-Error "Backend deploy hatası!"; exit 1 }

@@ -12,7 +12,7 @@ $DAILY_JOB = "gtip-daily-sync"
 $BTB_JOB = "gtip-official-btb-sync"
 $SCHEDULER_JOB = "resmi-gazete-daily-sync"
 $BTB_SCHEDULER_JOB = "official-btb-daily-sync"
-$ENV_VARS = "GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,ENVIRONMENT=production,GCS_BUCKET_NAME=$GCS_BUCKET,CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_INSTANCE,DB_USER=postgres,DB_NAME=gtip_db,USE_GCP_EMULATOR=false,CORS_ALLOWED_ORIGINS=https://gtip-web-gu6pxpqefa-uc.a.run.app,EXTRACTOR_LLM_MODEL=gemini-2.5-flash-lite,EMBEDDING_MODEL=text-embedding-005"
+$ENV_VARS = "GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,ENVIRONMENT=production,GCS_BUCKET_NAME=$GCS_BUCKET,CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_INSTANCE,DB_USER=postgres,DB_NAME=gtip_db,DB_POOL_SIZE=1,DB_MAX_OVERFLOW=1,USE_GCP_EMULATOR=false,SKIP_TGTC_AUTO_SEED=true,CORS_ALLOWED_ORIGINS=https://gtip-web-gu6pxpqefa-uc.a.run.app,EXTRACTOR_LLM_MODEL=gemini-2.5-flash-lite,EMBEDDING_MODEL=text-embedding-005"
 
 function Assert-LastExitCode([string]$Message) {
     if ($LASTEXITCODE -ne 0) { throw $Message }

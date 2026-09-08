@@ -138,7 +138,9 @@ from fastapi.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 import re
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, field_validator
+
+from api.security.rate_limit import demo_rate_limiter
 
 ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/jpg", "application/pdf"}
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
@@ -149,8 +151,20 @@ class AnalyzeJSONRequest(BaseModel):
     product_description: ProductDescription = Field(..., description="Ürün tanımı veya fatura metni")
     image_uri: Optional[str] = Field(default=None, max_length=1000)
 
+    @field_validator("image_uri")
+    @classmethod
+    def validate_image_uri(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        expected_prefix = f"gs://{settings.GCS_BUCKET_NAME}/uploads/"
+        if not value.startswith(expected_prefix):
+            raise ValueError("Görsel yalnızca uygulamanın güvenli yükleme alanından seçilebilir.")
+        return value
+
 class BatchAnalyzeRequest(BaseModel):
-    product_descriptions: List[ProductDescription] = Field(..., min_length=1, max_length=50)
+    product_descriptions: List[ProductDescription] = Field(
+        ..., min_length=1, max_length=settings.MAX_BATCH_ITEMS
+    )
 
 async def _validate_and_sanitize_upload(file: UploadFile) -> str:
     """
@@ -202,11 +216,23 @@ async def _upload_file_to_gcs(file: UploadFile, destination_blob_name: str) -> s
         return gcs_uri
 
 @app.get("/api/v1/generate-upload-url")
-async def generate_upload_url(request: Request, filename: str = Query(...)):
+async def generate_upload_url(
+    request: Request,
+    filename: str = Query(..., min_length=1, max_length=255),
+):
     """GCS Signed URL oluşturur. İstemci doğrudan Google Storage'a dosya yükleyebilir."""
-    get_current_user_session(request)
+    user_session = get_current_user_session(request)
+    demo_rate_limiter.check(
+        request,
+        user_session,
+        "upload-url",
+        settings.PUBLIC_DEMO_UPLOAD_LIMIT_PER_MINUTE,
+    )
         
     safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', filename)
+    extension = os.path.splitext(safe_name)[1].lower()
+    if extension not in {".jpg", ".jpeg", ".png", ".webp", ".pdf"}:
+        raise HTTPException(status_code=400, detail="Desteklenmeyen dosya uzantısı.")
     import uuid
     destination = f"uploads/{time.strftime('%Y/%m/%d')}/{uuid.uuid4().hex}_{safe_name}"
     
@@ -224,8 +250,9 @@ async def generate_upload_url(request: Request, filename: str = Query(...)):
             method="PUT"
         )
         return {"upload_url": url, "destination": f"gs://{settings.GCS_BUCKET_NAME}/{destination}"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Signed URL oluşturulamadı: {e}")
+    except Exception:
+        logger.exception("Signed URL oluşturulamadı")
+        raise HTTPException(status_code=503, detail="Yükleme bağlantısı şu anda oluşturulamıyor.")
 
 
 def append_continuous_learning_record(session_id: str, product_name: str, gtip_code: str):
@@ -310,6 +337,12 @@ async def analyze_product(
     start_time = time.time()
     try:
         user_session = get_current_user_session(request)
+        demo_rate_limiter.check(
+            request,
+            user_session,
+            "analysis",
+            settings.PUBLIC_DEMO_RATE_LIMIT_PER_MINUTE,
+        )
         import uuid as _uuid
         _upload_session_id = _uuid.uuid4().hex[:8]
         if image and image.filename:
@@ -339,8 +372,9 @@ async def analyze_product(
         return decision
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"GTİP Analiz Hatası: {str(e)}")
+    except Exception:
+        logger.exception("GTİP multipart analizi başarısız")
+        raise HTTPException(status_code=500, detail="GTİP analizi tamamlanamadı.")
 
 
 @app.get("/api/v1/analyze/stream")
@@ -349,7 +383,13 @@ async def analyze_product_stream(product_description: Annotated[ProductDescripti
     Canlı Akışlı Karar Takibi (Server-Sent Events / SSE) Endpoint'i.
     4 aşamalı karar akışının her bir aşamasını istemciye anlık akış (text/event-stream) olarak iletir.
     """
-    get_current_user_session(request)
+    user_session = get_current_user_session(request)
+    demo_rate_limiter.check(
+        request,
+        user_session,
+        "analysis",
+        settings.PUBLIC_DEMO_RATE_LIMIT_PER_MINUTE,
+    )
     if not product_description or not product_description.strip():
         raise HTTPException(status_code=400, detail="Geçerli bir ürün açıklaması girmelisiniz.")
 
@@ -364,6 +404,12 @@ async def analyze_product_json(payload: AnalyzeJSONRequest, request: Request, ba
     start_time = time.time()
     try:
         user_session = get_current_user_session(request)
+        demo_rate_limiter.check(
+            request,
+            user_session,
+            "analysis",
+            settings.PUBLIC_DEMO_RATE_LIMIT_PER_MINUTE,
+        )
         decision = await workflow_engine.start_analysis_async(raw_text=payload.product_description, image_uri=payload.image_uri)
         execution_ms = (time.time() - start_time) * 1000
 
@@ -385,8 +431,9 @@ async def analyze_product_json(payload: AnalyzeJSONRequest, request: Request, ba
         return decision
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"GTİP Analiz Hatası: {str(e)}")
+    except Exception:
+        logger.exception("GTİP JSON analizi başarısız")
+        raise HTTPException(status_code=500, detail="GTİP analizi tamamlanamadı.")
 
 
 @app.post("/api/v1/analyze/batch", response_model=List[GTIPDecision])
@@ -398,15 +445,26 @@ async def analyze_product_batch(payload: BatchAnalyzeRequest, request: Request, 
     if not payload.product_descriptions:
         raise HTTPException(status_code=400, detail="En az bir ürün tanımı gönderilmelidir.")
 
-    clean_descs = [d.strip() for d in payload.product_descriptions[:50] if d.strip()]
+    clean_descs = [d.strip() for d in payload.product_descriptions if d.strip()]
     if not clean_descs:
         raise HTTPException(status_code=400, detail="Geçerli ürün tanımı bulunamadı.")
 
     batch_start = time.time()
     user_session = get_current_user_session(request)
+    demo_rate_limiter.check(
+        request,
+        user_session,
+        "batch-analysis",
+        max(1, settings.PUBLIC_DEMO_RATE_LIMIT_PER_MINUTE // 2),
+    )
 
-    # asyncio.gather ile tüm analizleri concurrent olarak başlat
-    tasks = [workflow_engine.start_analysis_async(desc) for desc in clean_descs]
+    semaphore = asyncio.Semaphore(max(1, settings.BATCH_CONCURRENCY))
+
+    async def analyze_one(description: str):
+        async with semaphore:
+            return await workflow_engine.start_analysis_async(description)
+
+    tasks = [analyze_one(desc) for desc in clean_descs]
     results = await asyncio.gather(*tasks, return_exceptions=False)
     elapsed_ms = round((time.time() - batch_start) * 1000 / max(len(results), 1), 2)
 
@@ -551,7 +609,9 @@ async def get_bulk_pdf_report(payload: BulkPDFRequest, request: Request):
 
 @app.get("/api/v1/audit/logs", response_model=AuditLogQueryResponse)
 async def get_audit_logs(request: Request, limit: int = Query(default=50, ge=1, le=200)):
-    user_session = get_current_user_session(request)
+    from api.security.auth import require_admin_user
+
+    require_admin_user(request)
     logs = audit_logger.get_all_logs(limit=limit)
     return AuditLogQueryResponse(total_count=len(logs), entries=logs)
 
@@ -838,24 +898,28 @@ async def get_sync_status():
     from scripts.sync_customs_data import get_etl_sync_status
     return get_etl_sync_status()
 
-@app.post("/api/v1/customs-data/trigger-sync")
-async def trigger_manual_sync():
-    """
-    Manuel Canlı Web Kazıma ve ETL Senkronizasyonu Tetikler.
-    """
+@app.post("/api/v1/customs-data/trigger-sync", status_code=202)
+async def trigger_manual_sync(request: Request):
+    """Yetkili kullanıcı için günlük ETL Cloud Run Job'unu tetikler."""
+    from api.security.auth import require_admin_user
+
+    require_admin_user(request)
     try:
-        from scripts.sync_customs_data import run_sync
-        run_sync(dry_run=False)
-        return {"status": "SUCCESS", "message": "Canlı ETL senkronizasyon boru hattı başarıyla çalıştırıldı."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Senkronizasyon hatası: {str(e)}")
+        operation = _trigger_cloud_run_job("gtip-daily-sync")
+        return {"status": "ACCEPTED", "message": "Günlük ETL işi başlatıldı.", "operation": operation}
+    except Exception:
+        logger.exception("Günlük ETL işi tetiklenemedi")
+        raise HTTPException(status_code=503, detail="Günlük ETL işi tetiklenemedi.")
 
 
 @app.post("/api/v1/admin/clean-bad-btbs")
-async def clean_bad_btbs(db: Session = Depends(get_db)):
+async def clean_bad_btbs(request: Request, db: Session = Depends(get_db)):
     """
     Hatalı parse edilmiş veya eksik ürün açıklamasına sahip BTB kayıtlarını veritabanından temizler.
     """
+    from api.security.auth import require_admin_user
+
+    require_admin_user(request)
     try:
         from api.db.database import GumrukEmsalKararModel, GumrukSiniflandirmaKarariModel
         bad_count = 0
@@ -869,13 +933,14 @@ async def clean_bad_btbs(db: Session = Depends(get_db)):
                 
         db.commit()
         return {"status": "SUCCESS", "deleted_count": bad_count, "message": f"{bad_count} adet hatalı BTB kaydı başarıyla silindi."}
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Temizleme hatası: {str(e)}")
+        logger.exception("Hatalı BTB temizleme işlemi başarısız")
+        raise HTTPException(status_code=500, detail="Temizleme işlemi tamamlanamadı.")
 
-@app.post("/api/v1/admin/sync-gcp-official-gazette-bulk")
+@app.post("/api/v1/admin/sync-gcp-official-gazette-bulk", status_code=202)
 async def trigger_gcp_official_gazette_bulk_sync(
-    background_tasks: BackgroundTasks,
+    request: Request,
     start_year: int = Query(default=2020, ge=2020, le=2026),
     end_year: int = Query(default=2026, ge=2020, le=2026),
     limit_days: Optional[int] = Query(default=None, ge=1)
@@ -884,30 +949,35 @@ async def trigger_gcp_official_gazette_bulk_sync(
     GCP Cloud Run / Cloud Scheduler üzerinden 2020-2026 yılları arasındaki tüm Resmî Gazete BTB ve Sınıflandırma Kararlarını
     Vertex AI (Gemini 3.6 Flash) ile harfi harfine (exact-match) süzüp Cloud SQL'e aktaran bulk senkronizasyon endpointi.
     """
-    try:
-        from scripts.gcp_bulk_extractor_2020_2026 import run_gcp_bulk_extraction
-        background_tasks.add_task(
-            run_gcp_bulk_extraction,
-            start_year=start_year,
-            end_year=end_year,
-            limit_days=limit_days
+    from api.security.auth import require_admin_user
+
+    require_admin_user(request)
+    if start_year != 2020 or end_year != 2026 or limit_days is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="Cloud Run arşiv işi yalnızca tam 2020-2026 aralığını destekler.",
         )
+    try:
+        operation = _trigger_cloud_run_job("gtip-archive-backfill")
         return {
-            "status": "SUCCESS",
-            "message": f"GCP Vertex AI Bulk Extraction boru hattı {start_year}-{end_year} aralığı için arka planda başlatıldı.",
+            "status": "ACCEPTED",
+            "message": "Resmî Gazete arşiv Cloud Run işi başlatıldı.",
             "target_years": f"{start_year}-{end_year}",
-            "limit_days": limit_days
+            "operation": operation,
         }
-    except Exception as e:
-        logger.error(f"GCP Bulk Extractor başlatma hatası: {e}")
-        raise HTTPException(status_code=500, detail=f"GCP Bulk Extractor hatası: {str(e)}")
+    except Exception:
+        logger.exception("Arşiv Cloud Run işi tetiklenemedi")
+        raise HTTPException(status_code=503, detail="Arşiv işi tetiklenemedi.")
 
 
 @app.get("/api/v1/admin/sync-gcp-official-gazette-status")
-async def get_gcp_official_gazette_sync_status(db: Session = Depends(get_db)):
+async def get_gcp_official_gazette_sync_status(request: Request, db: Session = Depends(get_db)):
     """
     Cloud SQL üzerindeki harfi harfine süzülmüş Resmî Gazete Sınıflandırma Kararları metriklerini döndürür.
     """
+    from api.security.auth import require_admin_user
+
+    require_admin_user(request)
     try:
         from api.db.database import GumrukSiniflandirmaKarariModel, GumrukEmsalKararModel
         total_siniflandirma = db.query(GumrukSiniflandirmaKarariModel).count()
@@ -927,10 +997,13 @@ async def get_gcp_official_gazette_sync_status(db: Session = Depends(get_db)):
 
 
 @app.get("/api/v1/admin/db-stats")
-def get_db_stats(db: Session = Depends(get_db)):
+def get_db_stats(request: Request, db: Session = Depends(get_db)):
     """
     Cloud SQL veritabanındaki tüm tabloların güncel satır sayılarını ve sağlık durumunu döndürür.
     """
+    from api.security.auth import require_admin_user
+
+    require_admin_user(request)
     try:
         from api.db.database import (
             GumrukSiniflandirmaKarariModel,
@@ -995,32 +1068,25 @@ def get_db_stats(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"DB Stats hatası: {str(e)}")
 
 
-@app.post("/api/v1/admin/seed-tgtc-tree")
-async def seed_tgtc_tree_admin(db: Session = Depends(get_db)):
+@app.post("/api/v1/admin/seed-tgtc-tree", status_code=202)
+async def seed_tgtc_tree_admin(request: Request):
     """
     2026 TGTC dizinindeki sabit Tarife Ağacını (01-99 Fasıllar, GTİP Kümeleri, GİR Kuralları ve Fasıl Notları)
     Cloud SQL veritabanına yeniden yükler ve eşitler. Resmi Gazete verilerinden tamamen bağımsızdır.
     """
+    from api.security.auth import require_admin_user
+
+    require_admin_user(request)
     try:
-        from scripts.populate_tgtc_cloudsql import extract_gir_rules, extract_chapter_notes, populate_gtip_tree
-        from api.db.database import TgtcGtipModel, TgtcRuleModel, TgtcNoteModel
-
-        extract_gir_rules(db)
-        extract_chapter_notes(db)
-        populate_gtip_tree(db)
-
-        chapter_count = db.query(TgtcGtipModel).filter_by(level="CHAPTER").count()
-        total_gtips = db.query(TgtcGtipModel).count()
-
+        operation = _trigger_cloud_run_job("gtip-seed-tgtc-2026")
         return {
-            "status": "SUCCESS",
-            "message": "2026 TGTC Sabit Tarife Ağacı başarıyla veritabanına yüklendi.",
-            "chapter_count": chapter_count,
-            "total_gtip_count": total_gtips
+            "status": "ACCEPTED",
+            "message": "2026 TGTC seed Cloud Run işi başlatıldı.",
+            "operation": operation,
         }
-    except Exception as e:
-        logger.error(f"TGTC Tohumlama Hatası: {e}")
-        raise HTTPException(status_code=500, detail=f"TGTC Tohumlama Hatası: {str(e)}")
+    except Exception:
+        logger.exception("TGTC seed Cloud Run işi tetiklenemedi")
+        raise HTTPException(status_code=503, detail="TGTC seed işi tetiklenemedi.")
 
 
 if __name__ == "__main__":

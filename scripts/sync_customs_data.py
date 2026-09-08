@@ -896,25 +896,67 @@ def get_etl_sync_status() -> Dict[str, Any]:
     ETL Senkronizasyon Durumu ve 4 Boru Hattı Servisinin Sağlık Raporu.
     FastAPI /api/v1/etl/status endpoint'i tarafından kullanılır.
     """
-    now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-
-    # Cloud SQL'den son kayıt sayısını çek
+    now = datetime.datetime.now(datetime.timezone.utc)
+    observed_at = now.strftime("%Y-%m-%d %H:%M:%S UTC")
     record_count = 0
     last_sources: List[str] = []
+    source_counts: Dict[str, int] = {}
+    latest_ingestion = None
+    error_message = None
     try:
-        from api.db.database import GumrukEmsalKararModel, SessionLocal
-        session = SessionLocal()
-        record_count = session.query(GumrukEmsalKararModel).count()
-        sources = session.query(GumrukEmsalKararModel.karar_tipi).distinct().all()
-        last_sources = [s[0] for s in sources if s[0]]
-        session.close()
-    except Exception:
-        pass
+        from sqlalchemy import func
+        from api.db.database import (
+            GumrukEmsalKararModel,
+            GumrukMevzuatMaddesiModel,
+            GumrukSiniflandirmaKarariModel,
+            SessionLocal,
+        )
+
+        with SessionLocal() as session:
+            grouped = session.query(
+                GumrukEmsalKararModel.karar_tipi,
+                func.count(GumrukEmsalKararModel.id),
+            ).group_by(GumrukEmsalKararModel.karar_tipi).all()
+            source_counts = {str(source): int(count) for source, count in grouped if source}
+            last_sources = sorted(source_counts)
+            record_count = sum(source_counts.values())
+            candidates = [
+                session.query(func.max(GumrukEmsalKararModel.created_at)).scalar(),
+                session.query(func.max(GumrukSiniflandirmaKarariModel.created_at)).scalar(),
+                session.query(func.max(GumrukMevzuatMaddesiModel.created_at)).scalar(),
+            ]
+            latest_ingestion = max((value for value in candidates if value is not None), default=None)
+    except Exception as exc:
+        logger.exception("ETL durum metrikleri okunamadı")
+        error_message = type(exc).__name__
+
+    freshness_hours = None
+    if latest_ingestion is not None:
+        if latest_ingestion.tzinfo is None:
+            latest_ingestion = latest_ingestion.replace(tzinfo=datetime.timezone.utc)
+        else:
+            latest_ingestion = latest_ingestion.astimezone(datetime.timezone.utc)
+        freshness_hours = round(max(0.0, (now - latest_ingestion).total_seconds() / 3600), 2)
+
+    if error_message:
+        pipeline_status = "ERROR"
+    elif record_count == 0:
+        pipeline_status = "EMPTY"
+    elif freshness_hours is not None and freshness_hours > 48:
+        pipeline_status = "STALE"
+    else:
+        pipeline_status = "ACTIVE"
+
+    latest_text = latest_ingestion.strftime("%Y-%m-%d %H:%M:%S UTC") if latest_ingestion else None
 
     return {
-        "last_sync_time": now_str,
-        "pipeline_status": "ACTIVE",
+        "last_sync_time": latest_text,
+        "observed_at": observed_at,
+        "data_freshness_hours": freshness_hours,
+        "pipeline_status": pipeline_status,
+        "error": error_message,
         "total_records_in_db": record_count,
+        "source_counts": source_counts,
         "active_sources": last_sources or ["RESMI_GAZETE", "TGTC_2026"],
         "services": [
             {
@@ -922,8 +964,8 @@ def get_etl_sync_status() -> Dict[str, Any]:
                 "name": "1. T.C. Resmî Gazete Sınıflandırma ve Emsal Karar Havuzu",
                 "url": "https://www.resmigazete.gov.tr",
                 "method": "Bir Kez 2020-2026 Taraması + Düzenli Günlük İdempotent Mükerrer Akış Monitörü",
-                "status": "ACTIVE",
-                "last_sync": now_str,
+                "status": pipeline_status,
+                "last_sync": latest_text,
                 "records_processed": "Son 6 Yıl Sınıflandırma Kararları & İthalat Rejimi Tebliğleri",
             },
             {
@@ -931,8 +973,8 @@ def get_etl_sync_status() -> Dict[str, Any]:
                 "name": "2. 2026 T.C. Ticaret Bakanlığı TGTC Kütüphanesi & İzahnameler",
                 "url": "https://www.ticaret.gov.tr/gumruk-islemleri/gumruk-tarifesi/gumruk-tarife-cetveli",
                 "method": "Yerleşik 2026 TGTC Dizini + GİR 1-6 Yorum Kuralları & İzahname (İnternetten Çekim Gerektirmez)",
-                "status": "ACTIVE",
-                "last_sync": now_str,
+                "status": pipeline_status,
+                "last_sync": latest_text,
                 "records_processed": "964 Tarife Pozisyonu (4-Hane) ve 12-Haneli Tam Gümrük Tarife Cetveli",
             }
         ],

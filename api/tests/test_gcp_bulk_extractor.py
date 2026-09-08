@@ -36,7 +36,10 @@ def test_run_gcp_bulk_extraction_limit_days():
 
 def test_gcp_sync_status_endpoint():
     """GET /api/v1/admin/sync-gcp-official-gazette-status endpointini doğrular."""
-    response = client.get("/api/v1/admin/sync-gcp-official-gazette-status")
+    response = client.get(
+        "/api/v1/admin/sync-gcp-official-gazette-status",
+        headers={"X-User-Email": "admin@example.com", "X-User-Role": "admin"},
+    )
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "HEALTHY"

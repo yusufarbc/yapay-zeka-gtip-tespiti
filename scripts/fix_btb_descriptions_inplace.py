@@ -8,6 +8,7 @@ Cloud SQL In-Place esya_tanimi Duzeltici
 - Sadece UPDATE -- hicbir kayit silinmez
 
 Kullanim:
+  $env:DATABASE_URL = '<Cloud SQL Proxy uzerinden baglanti dizesi>'
   python scripts/fix_btb_descriptions_inplace.py            # dry-run (yazar olmadan gosterir)
   python scripts/fix_btb_descriptions_inplace.py --apply    # gercekten yazar
 """
@@ -15,17 +16,23 @@ Kullanim:
 import re
 import sys
 import logging
+import os
+from pathlib import Path
 
-sys.path.insert(0, r'c:\Users\yusuf\Github\yapay-zeka-gtip-tespiti')
+ROOT_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT_DIR))
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("BTBDescriptionFixer")
 
-DB_URL = 'postgresql+psycopg2://postgres:GtipProd_Secure2026!@127.0.0.1:5433/gtip_db'
-engine = create_engine(DB_URL, connect_args={"connect_timeout": 10})
+if not os.getenv("DATABASE_URL"):
+    raise SystemExit(
+        "Guvenlik nedeniyle DATABASE_URL acikca verilmelidir. Parola kaynak koda yazilmamalidir."
+    )
+
+from api.db.database import engine
 
 # Jenerik / bozuk aciklama kaliplari
 JENERIK_KALIPLAR = [
