@@ -6,8 +6,8 @@ export const ProductInputForm = ({ onStartAnalysis, isLoading }) => {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!description.trim()) return;
-    onStartAnalysis(description);
+    if (isLoading || description.trim().length < 3) return;
+    onStartAnalysis(description.trim());
   };
 
   return (
@@ -20,6 +20,9 @@ export const ProductInputForm = ({ onStartAnalysis, isLoading }) => {
           </label>
           
           <textarea
+            required
+            minLength={3}
+            maxLength={5000}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Ürün adı, ticari tanımı, hammadde oranı veya kullanım amacını giriniz..."
@@ -42,7 +45,7 @@ export const ProductInputForm = ({ onStartAnalysis, isLoading }) => {
 
         {/* Buton */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', borderTop: '1px solid var(--border-subtle)', paddingTop: '16px' }}>
-          <button type="submit" className="btn-primary" disabled={isLoading || !description.trim()}>
+          <button type="submit" className="btn-primary" disabled={isLoading || description.trim().length < 3}>
             <Sparkles size={18} />
             <span>{isLoading ? 'GTİP Analiz Ediliyor...' : 'GTİP Analizini Başlat'}</span>
           </button>
@@ -53,5 +56,4 @@ export const ProductInputForm = ({ onStartAnalysis, isLoading }) => {
 };
 
 export const FileUploader = ProductInputForm;
-
 

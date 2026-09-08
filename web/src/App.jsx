@@ -3,12 +3,13 @@ import { Header } from './components/Header';
 import { FileUploader } from './components/FileUploader';
 import { HITLQuestionModal } from './components/HITLQuestionModal';
 import { GTIPResultCard } from './components/GTIPResultCard';
+import { ManualReviewCard } from './components/ManualReviewCard';
 import { AuditHistoryTable } from './components/AuditHistoryTable';
 import { CustomsKnowledgeExplorer } from './components/CustomsKnowledgeExplorer';
 import ErrorBoundary from './components/ErrorBoundary';
 import { SkeletonLoader } from './components/SkeletonLoader';
 import { PipelineStatus } from './components/PipelineStatus';
-import { analyzeProduct, respondHITL, getAuditLogs } from './api/client';
+import { analyzeProduct, respondHITL, getAuditLogs, getAPIErrorMessage } from './api/client';
 import { useToast } from './components/ToastContext';
 
 export function App() {
@@ -54,7 +55,7 @@ export function App() {
       setDecision(result);
     } catch (err) {
       console.error(err);
-      addToast(err.response?.data?.detail || err.message || "GTİP analizi sırasında beklenmeyen bir hata oluştu.", "error");
+      addToast(getAPIErrorMessage(err, "GTİP analizi sırasında beklenmeyen bir hata oluştu."), "error");
     } finally {
       setIsAnalyzing(false);
       fetchLogs();
@@ -70,7 +71,7 @@ export function App() {
       setDecision(result);
     } catch (err) {
       console.error(err);
-      addToast(err.response?.data?.detail || err.message || "Müşavir teyit yanıtı iletilirken hata oluştu.", "error");
+      addToast(getAPIErrorMessage(err, "Müşavir teyit yanıtı iletilirken hata oluştu."), "error");
     } finally {
       setIsSubmittingHITL(false);
       fetchLogs();
@@ -86,7 +87,7 @@ export function App() {
 
           {activeNav === 'analysis' ? (
             <>
-              <FileUploader onStartAnalysis={handleStartAnalysis} isLoading={isAnalyzing} />
+              <FileUploader onStartAnalysis={handleStartAnalysis} isLoading={isAnalyzing || isSubmittingHITL} />
 
               {isAnalyzing && (
                 <>
@@ -98,6 +99,7 @@ export function App() {
               {/* Müşavir Teyidi Bekleyen Durumda Sadece Soru Kartı Gösterilir */}
               {decision && decision.status === 'WAITING_FOR_USER' && (
                 <HITLQuestionModal
+                  key={`${decision.session_id}:${decision.hitl_question?.question_id}`}
                   question={decision.hitl_question}
                   onRespond={handleHITLRespond}
                   isSubmitting={isSubmittingHITL}
@@ -107,6 +109,10 @@ export function App() {
               {/* Karar Kesinleştiğinde Sonuç Kartı Gösterilir */}
               {decision && decision.status === 'COMPLETED' && (
                 <GTIPResultCard decision={decision} />
+              )}
+
+              {decision && decision.status === 'MANUAL_REVIEW_REQUIRED' && (
+                <ManualReviewCard decision={decision} />
               )}
 
               <AuditHistoryTable logs={auditLogs} />

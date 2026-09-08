@@ -23,3 +23,4 @@ Write-Host "Frontend Cloud Run'a dağıtılıyor..."
 if ($LASTEXITCODE -ne 0) { throw "Web Cloud Run dağıtımı başarısız." }
 
 & gcloud.cmd run services describe gtip-web --region $REGION --project $PROJECT_ID --format="value(status.url)"
+

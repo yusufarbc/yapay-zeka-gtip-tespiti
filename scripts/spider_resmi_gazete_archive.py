@@ -48,6 +48,24 @@ LOCAL_CHECKPOINT_PATH = os.path.join(root_dir, ".etl_checkpoint.json")
 TURKEY_TZ = ZoneInfo("Europe/Istanbul")
 
 
+def safe_http_get(url: str, timeout: int = 15) -> Optional[requests.Response]:
+    """Gerektiğinde SSL verification fallback (verify=False) ile güvenilir GET isteği."""
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=timeout)
+        if resp.status_code == 200:
+            return resp
+    except requests.exceptions.SSLError:
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=timeout, verify=False)
+            if resp.status_code == 200:
+                return resp
+        except Exception as e_ssl:
+            logger.debug(f"[HTTP] SSL fallback hatası ({url}): {e_ssl}")
+    except Exception as e_get:
+        logger.debug(f"[HTTP] GET hatası ({url}): {e_get}")
+    return None
+
+
 def today_in_turkey() -> datetime.date:
     """Cloud Run UTC kullansa da Resmî Gazete iş gününü Türkiye saatine göre hesaplar."""
     return datetime.datetime.now(TURKEY_TZ).date()
@@ -55,6 +73,18 @@ def today_in_turkey() -> datetime.date:
 
 def _use_gcs_checkpoint() -> bool:
     return settings.ENVIRONMENT == "production" and not settings.USE_GCP_EMULATOR
+
+
+def reset_checkpoint():
+    """Checkpoint durumunu temizler (temiz bir arşiv taraması için)."""
+    default_state = {
+        "last_processed_date": None,
+        "total_processed_days": 0,
+        "total_saved_records": 0,
+        "last_updated_at": None
+    }
+    save_checkpoint(default_state)
+    logger.info("🧹 [Checkpoint] Arşiv checkpoint durumu başarıyla sıfırlandı.")
 
 
 # ==============================================================================
@@ -222,6 +252,7 @@ def save_decisions_to_cloud_sql(
                         existing_sinif.hukuki_gerekce = it.hukuki_gerekce[:1500]
                         existing_sinif.resmi_gazete_sayisi = it.resmi_gazete_sayisi or "-"
                         existing_sinif.kaynak_url = gcs_pdf_uri or kaynak_url
+                        saved_count += 1
                 else:
                     sinif_obj = GumrukSiniflandirmaKarariModel(
                         karar_tipi="SINIFLANDIRMA_KARARI",
@@ -271,7 +302,7 @@ def save_decisions_to_cloud_sql(
                 logger.debug(f"[Cloud SQL] Karar kaydetme satır uyarısı: {e_item}")
 
         session.close()
-        logger.info(f"✅ [Cloud SQL] {len(items)} karar başarıyla işlendi (Yeni eklenen: {saved_count}).")
+        logger.info(f"✅ [Cloud SQL] {len(items)} karar başarıyla işlendi (Kayıt/Güncelleme: {saved_count}).")
         return saved_count
     except Exception as e:
         logger.error(f"[Cloud SQL] Veritabanı kayıt hatası: {e}", exc_info=True)
@@ -286,7 +317,7 @@ def scan_and_process_gazette_day(year: int, month: int, day: int, skip_embedding
     """
     Tek bir Resmî Gazete gününün hem asıl hem de mükerrer (m1, m2, m3) sayılarını tarar:
     1. İlgili Gümrük Tebliğlerini ve eklerini saptar.
-    2. Ekli PDF'i indirip Gemini 3.5 Flash Lite ile multimodal tablo ayrıştırmasından geçirir.
+    2. Ekli PDF'i indirip Gemini ile multimodal tablo ayrıştırmasından geçirir.
     3. Karar bulunursa ham PDF'i GCS'e arşivler, kararları Cloud SQL'e kaydeder.
     """
     date_str = f"{year}{month:02d}{day:02d}"
@@ -302,8 +333,8 @@ def scan_and_process_gazette_day(year: int, month: int, day: int, skip_embedding
         index_url = f"{RG_BASE}/eskiler/{year}/{month:02d}/{sub_key}.htm"
         
         try:
-            resp = requests.get(index_url, headers=HEADERS, timeout=12)
-            if resp.status_code != 200:
+            resp = safe_http_get(index_url, timeout=12)
+            if not resp:
                 continue
 
             resp.encoding = "windows-1254"
@@ -336,8 +367,8 @@ def scan_and_process_gazette_day(year: int, month: int, day: int, skip_embedding
                     full_htm = urljoin(index_url, href)
                     if is_customs_related(link_context):
                         try:
-                            sub_resp = requests.get(full_htm, headers=HEADERS, timeout=12)
-                            if sub_resp.status_code == 200:
+                            sub_resp = safe_http_get(full_htm, timeout=12)
+                            if sub_resp:
                                 sub_resp.encoding = "windows-1254"
                                 related_html_documents[full_htm] = sub_resp.text
                                 sub_soup = BeautifulSoup(sub_resp.text, "html.parser")
@@ -366,8 +397,9 @@ def scan_and_process_gazette_day(year: int, month: int, day: int, skip_embedding
             # Tespit edilen PDF'leri Multimodal olarak ayrıştır
             for pdf_url in pdf_candidates:
                 try:
-                    pdf_resp = requests.get(pdf_url, headers=HEADERS, timeout=30)
-                    if pdf_resp.status_code == 200 and len(pdf_resp.content) > 1000:
+                    pdf_resp = safe_http_get(pdf_url, timeout=30)
+                    if pdf_resp and len(pdf_resp.content) > 1000:
+                        logger.info(f"📄 [PDF İnceleniyor] {pub_date} ({gazette_no}): {pdf_url}")
                         # 1. Multimodal Ayrıştırma
                         extracted_items = extract_tables_from_gazette_pdf(
                             pdf_resp.content, 
@@ -390,9 +422,11 @@ def scan_and_process_gazette_day(year: int, month: int, day: int, skip_embedding
                                 skip_embedding=skip_embedding
                             )
                             total_saved += saved
+                        else:
+                            logger.info(f"ℹ️ [PDF Ayrıştırıldı] {pdf_url}: Sınıflandırma kararı tablosu saptanmadı.")
 
                 except Exception as pdf_e:
-                    logger.debug(f"PDF işleme hatası [{pdf_url}]: {pdf_e}")
+                    logger.warning(f"PDF işleme hatası [{pdf_url}]: {pdf_e}")
 
         except Exception as e:
             logger.debug(f"Fihrist tarama hatası [{pub_date} {sub_ed}]: {e}")
@@ -544,7 +578,11 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=30, help="Checkpoint aralığı (gün)")
     parser.add_argument("--days-back", type=int, default=3, help="Günlük modda geriye dönük taranacak gün sayısı")
     parser.add_argument("--skip-embedding", action="store_true", help="Vektörleştirme adımını atla")
+    parser.add_argument("--reset-checkpoint", action="store_true", help="Var olan checkpoint'i sıfırlayıp baştan başla")
     args = parser.parse_args()
+
+    if args.reset_checkpoint:
+        reset_checkpoint()
 
     if args.mode == "daily":
         run_daily_sync(days_back=args.days_back, skip_embedding=args.skip_embedding)

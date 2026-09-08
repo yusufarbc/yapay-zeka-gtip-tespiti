@@ -36,7 +36,7 @@ if ($LASTEXITCODE -eq 0) {
         --region $REGION `
         --project $PROJECT_ID `
         --command "python" `
-        --args "scripts/spider_resmi_gazete_archive.py,--mode,archive" `
+        --args "-m,scripts.spider_resmi_gazete_archive,--mode,archive" `
         --max-retries 3 `
         --task-timeout 86400s `
         --memory 4Gi `
@@ -52,7 +52,7 @@ if ($LASTEXITCODE -eq 0) {
         --region $REGION `
         --project $PROJECT_ID `
         --command "python" `
-        --args "scripts/spider_resmi_gazete_archive.py,--mode,archive" `
+        --args "-m,scripts.spider_resmi_gazete_archive,--mode,archive" `
         --max-retries 3 `
         --task-timeout 86400s `
         --memory 4Gi `

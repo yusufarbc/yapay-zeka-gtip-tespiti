@@ -49,8 +49,8 @@ Assert-LastExitCode "Gerekli GCP API'leri etkinleştirilemedi."
 Assert-LastExitCode "gtip-db-password Secret Manager'da bulunamadı."
 
 Write-Host "6 yıllık arşiv ve günlük ETL işleri dağıtılıyor..."
-Deploy-EtlJob $ARCHIVE_JOB "scripts/spider_resmi_gazete_archive.py,--mode,archive" "86400s" "4Gi" "2"
-Deploy-EtlJob $DAILY_JOB "scripts/spider_resmi_gazete_archive.py,--mode,daily,--days-back,3" "3600s" "2Gi" "1"
+Deploy-EtlJob $ARCHIVE_JOB "-m,scripts.spider_resmi_gazete_archive,--mode,archive" "86400s" "4Gi" "2"
+Deploy-EtlJob $DAILY_JOB "-m,scripts.spider_resmi_gazete_archive,--mode,daily,--days-back,3" "3600s" "2Gi" "1"
 Deploy-EtlJob $BTB_JOB "-m,scripts.scrape_official_btb" "21600s" "2Gi" "1"
 
 Write-Host "Servis hesabına yalnızca ETL Job çağırma yetkisi veriliyor..."

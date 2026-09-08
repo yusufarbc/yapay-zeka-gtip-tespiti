@@ -314,13 +314,21 @@ class GTIPWorkflowEngine:
             "decision": decision.model_dump()
         }
 
-    def resume_analysis(self, session_id: str, selected_option_id: str) -> GTIPDecision:
+    def resume_analysis(self, session_id: str, selected_option_id: str, question_id: Optional[str] = None) -> GTIPDecision:
         """
         Kullanıcı HITL sorusunu yanıtladığında akışı askıdan alıp (resume) tamamlar.
         """
         state_dict = local_state_store.get_state(session_id)
         if not state_dict:
             raise ValueError(f"Oturum bulunamadı: {session_id}")
+
+        hitl_q = state_dict.get("hitl_question")
+        if state_dict.get("status") != "WAITING_FOR_USER" or not hitl_q:
+            raise LookupError("Bu oturum yanıt beklemiyor.")
+        if question_id is not None and question_id != hitl_q.get("question_id"):
+            raise LookupError("Yanıtlanan soru güncel değil. Güncel soruyu yanıtlayın.")
+        if not any(opt.get("option_id") == selected_option_id for opt in hitl_q.get("options", [])):
+            raise LookupError("Seçilen yanıt bu sorunun seçenekleri arasında bulunmuyor.")
 
         features_data = state_dict.get("product_features", {})
         features = ProductFeatures(**features_data)
@@ -391,7 +399,11 @@ class GTIPWorkflowEngine:
 
         precedents = top_candidate.precedents
 
-        state_dict["status"] = "COMPLETED"
+        decision_status = "COMPLETED" if is_yes else "MANUAL_REVIEW_REQUIRED"
+        state_dict["status"] = decision_status
+        state_dict["product_features"] = features.model_dump()
+        state_dict["hitl_question"] = None
+        state_dict["audit_notes"] = [audit_note_msg]
         state_dict["confidence_score"] = confidence
         state_dict["selected_gtip"] = top_candidate.gtip_code
         state_dict["official_statute_text"] = official_statute_text
@@ -400,7 +412,7 @@ class GTIPWorkflowEngine:
 
         return GTIPDecision(
             session_id=session_id,
-            status="COMPLETED",
+            status=decision_status,
             gtip_code=top_candidate.gtip_code,
             confidence_score=confidence,
             official_statute_text=official_statute_text,
@@ -410,7 +422,7 @@ class GTIPWorkflowEngine:
             precedent_btbs=precedents,
             legal_sources=top_candidate.legal_sources,
             consulted_sources=top_candidate.consulted_sources,
-            audit_notes=["Gümrük Müşaviri yanıtı alındı. Akış başarıyla tamamlandı."]
+            audit_notes=[audit_note_msg]
         )
 
 workflow_engine = GTIPWorkflowEngine()

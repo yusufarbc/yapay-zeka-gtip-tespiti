@@ -1,6 +1,17 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://gtip-backend-gu6pxpqefa-uc.a.run.app/api/v1';
+const API_BASE_URL = (import.meta.env.VITE_API_URL || (
+  import.meta.env.DEV ? '/api/v1' : 'https://gtip-backend-gu6pxpqefa-uc.a.run.app/api/v1'
+)).replace(/\/+$/, '');
+
+export const getAPIErrorMessage = (error, fallback) => {
+  const detail = error.response?.data?.detail;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail.map(item => item.msg).filter(Boolean).join(' ') || fallback;
+  }
+  return error.message || fallback;
+};
 
 export const getUploadUrl = async (filename) => {
   const response = await axios.get(`${API_BASE_URL}/generate-upload-url`, {

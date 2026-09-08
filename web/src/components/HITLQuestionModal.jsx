@@ -7,7 +7,7 @@ export const HITLQuestionModal = ({ question, onRespond, isSubmitting }) => {
   if (!question) return null;
 
   const handleSubmit = () => {
-    if (!selectedOpt) return;
+    if (isSubmitting || !question.options.some(opt => opt.option_id === selectedOpt)) return;
     onRespond(question.question_id, selectedOpt);
   };
 
@@ -70,11 +70,16 @@ export const HITLQuestionModal = ({ question, onRespond, isSubmitting }) => {
           const badge = getOptionBadge(displayText);
 
           return (
-            <div
+            <button
+              type="button"
+              aria-pressed={isSelected}
+              disabled={isSubmitting}
               key={opt.option_id}
               onClick={() => setSelectedOpt(opt.option_id)}
               style={{
                 background: 'var(--bg-surface)',
+                textAlign: 'left',
+                font: 'inherit',
                 border: isSelected ? '2px solid var(--primary-brand)' : '1px solid var(--border-subtle)',
                 borderRadius: '10px',
                 padding: '16px 18px',
@@ -111,7 +116,7 @@ export const HITLQuestionModal = ({ question, onRespond, isSubmitting }) => {
                   </span>
                 </div>
               </div>
-            </div>
+            </button>
           );
         })}
       </div>

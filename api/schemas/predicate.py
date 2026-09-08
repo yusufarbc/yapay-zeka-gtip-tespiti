@@ -22,6 +22,7 @@ class PredicateVerificationResult(BaseModel):
     predicate_id: str
     description: str
     status: PredicateStatus
+    required_value: PredicateStatus = PredicateStatus.TRUE
     evidence_quote: Optional[str] = None
     statute_reference: str
 
@@ -41,7 +42,7 @@ class TariffVerification(BaseModel):
     exclusion_notes_violated: bool = Field(description="İlgili fasıl veya pozisyon dışlama notları ihlal edildi mi? (True ise ürün bu pozisyona GİREMEZ)")
     gir_rule_applied: str = Field(default="GIR 1", description="Uygulanan GİR Yorum Kuralı (örn: GIR 1, GIR 3(b))")
     legal_reasoning_points: List[str] = Field(default_factory=list, description="Yasal gerekçe maddeleri")
-    confidence_score: float = Field(default=0.85, description="Modelin yasal şartlara uygunluk güven puanı (0.0 - 1.0)")
+    confidence_score: float = Field(default=0.0, ge=0.0, le=1.0, description="Modelin yasal şartlara uygunluk güven puanı (0.0 - 1.0)")
 
 class ChapterExclusionCheck(BaseModel):
     """

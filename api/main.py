@@ -7,7 +7,7 @@ import logging
 from fastapi import FastAPI, HTTPException, Depends, Response, Form, UploadFile, File, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from typing import Optional, List, Any
+from typing import Annotated, Optional, List, Any
 from pydantic import BaseModel
 
 from api.config import settings
@@ -138,17 +138,19 @@ from fastapi.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 import re
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/jpg", "application/pdf"}
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
 
+ProductDescription = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=5000)]
+
 class AnalyzeJSONRequest(BaseModel):
-    product_description: str = Field(..., min_length=3, max_length=5000, description="Ürün tanımı veya fatura metni")
+    product_description: ProductDescription = Field(..., description="Ürün tanımı veya fatura metni")
     image_uri: Optional[str] = Field(default=None, max_length=1000)
 
 class BatchAnalyzeRequest(BaseModel):
-    product_descriptions: List[str] = Field(..., min_length=1, max_length=50)
+    product_descriptions: List[ProductDescription] = Field(..., min_length=1, max_length=50)
 
 async def _validate_and_sanitize_upload(file: UploadFile) -> str:
     """
@@ -202,13 +204,11 @@ async def _upload_file_to_gcs(file: UploadFile, destination_blob_name: str) -> s
 @app.get("/api/v1/generate-upload-url")
 async def generate_upload_url(request: Request, filename: str = Query(...)):
     """GCS Signed URL oluşturur. İstemci doğrudan Google Storage'a dosya yükleyebilir."""
-    try:
-        user_session = get_current_user_session(request)
-    except Exception:
-        pass # Public or semi-public usage allowed if needed, though secure is better
+    get_current_user_session(request)
         
     safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', filename)
-    destination = f"uploads/{time.strftime('%Y/%m/%d')}/client_{safe_name}"
+    import uuid
+    destination = f"uploads/{time.strftime('%Y/%m/%d')}/{uuid.uuid4().hex}_{safe_name}"
     
     if settings.USE_GCP_EMULATOR:
         return {"upload_url": f"http://localhost:8000/mock-upload", "destination": destination}
@@ -304,7 +304,7 @@ from api.security.auth import get_current_user_session
 async def analyze_product(
     request: Request,
     background_tasks: BackgroundTasks,
-    product_description: str = Form(...),
+    product_description: Annotated[ProductDescription, Form()],
     image: Optional[UploadFile] = File(None)
 ):
     start_time = time.time()
@@ -337,16 +337,19 @@ async def analyze_product(
             background_tasks.add_task(append_continuous_learning_record, decision.session_id, product_description[:60], decision.gtip_code)
 
         return decision
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"GTİP Analiz Hatası: {str(e)}")
 
 
 @app.get("/api/v1/analyze/stream")
-async def analyze_product_stream(product_description: str, request: Request):
+async def analyze_product_stream(product_description: Annotated[ProductDescription, Query()], request: Request):
     """
     Canlı Akışlı Karar Takibi (Server-Sent Events / SSE) Endpoint'i.
     4 aşamalı karar akışının her bir aşamasını istemciye anlık akış (text/event-stream) olarak iletir.
     """
+    get_current_user_session(request)
     if not product_description or not product_description.strip():
         raise HTTPException(status_code=400, detail="Geçerli bir ürün açıklaması girmelisiniz.")
 
@@ -380,6 +383,8 @@ async def analyze_product_json(payload: AnalyzeJSONRequest, request: Request, ba
             background_tasks.add_task(append_continuous_learning_record, decision.session_id, payload.product_description[:60], decision.gtip_code)
 
         return decision
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"GTİP Analiz Hatası: {str(e)}")
 
@@ -429,11 +434,12 @@ async def respond_hitl(response_data: HITLResponse, request: Request, background
         user_session = get_current_user_session(request)
         decision = workflow_engine.resume_analysis(
             session_id=response_data.session_id,
-            selected_option_id=response_data.selected_option_id
+            selected_option_id=response_data.selected_option_id,
+            question_id=response_data.question_id,
         )
         execution_ms = (time.time() - start_time) * 1000
 
-        if decision.gtip_code:
+        if decision.status == "COMPLETED" and decision.gtip_code:
             audit_entry = AuditLogEntry(
                 session_id=decision.session_id,
                 user_email=user_session.email,
@@ -450,6 +456,10 @@ async def respond_hitl(response_data: HITLResponse, request: Request, background
             background_tasks.add_task(append_continuous_learning_record, decision.session_id, "HITL Onaylı Ürün", decision.gtip_code)
 
         return decision
+    except HTTPException:
+        raise
+    except LookupError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
     except Exception as e:

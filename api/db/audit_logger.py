@@ -23,7 +23,7 @@ class FirestoreAuditLogger:
 
     def _init_backend(self):
         from api.config import settings
-        if settings.USE_GCP_EMULATOR:
+        if settings.USE_GCP_EMULATOR or settings.AUDIT_BACKEND == "cloudsql":
             logger.info("[AuditLogger] SQLAlchemy ORM backend kullanılıyor.")
             self._sqlalchemy_fallback = _SQLAlchemyAuditLogger()
             return

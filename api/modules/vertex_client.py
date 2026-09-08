@@ -34,7 +34,8 @@ def get_genai_client():
                 _genai_client = genai.Client(
                     vertexai=True,
                     project=settings.GCP_PROJECT_ID,
-                    location=settings.GCP_REGION
+                    location=settings.VERTEX_AI_LOCATION,
+                    http_options={"timeout": 90000},
                 )
                 logger.info(
                     f"[Vertex AI] İstemci başarıyla başlatıldı (Project: {settings.GCP_PROJECT_ID}, Region: {settings.GCP_REGION})."
@@ -62,9 +63,12 @@ def generate_embedding(text: str, model: str = None) -> List[float]:
     Vertex AI text-embedding-005 ile 768 boyutlu semantik embedding üretir.
     gcp_architecture_report.md Bölüm 3 standardı.
     """
-    client = get_genai_client()
     target_model = model or settings.EMBEDDING_MODEL
     try:
+        # text-embedding-005 uses a regional endpoint, independent of Gemini global.
+        from google import genai
+        client = genai.Client(vertexai=True, project=settings.GCP_PROJECT_ID,
+                              location=settings.GCP_REGION, http_options={"timeout": 30000})
         response = client.models.embed_content(
             model=target_model,
             contents=text
@@ -75,3 +79,13 @@ def generate_embedding(text: str, model: str = None) -> List[float]:
     except Exception as e:
         logger.warning(f"[Vertex AI] Embedding üretme hatası ({e}). Fallback sıfır vektör dönülüyor.")
         return [0.0] * settings.VECTOR_DIM
+
+
+def generation_config(model: str, *, reasoning: bool = False, **kwargs):
+    """Use Gemini 3 thinking levels; retain budget compatibility for older overrides."""
+    from google.genai import types
+    thinking = (types.ThinkingConfig(thinking_level="HIGH" if reasoning else "LOW")
+                if model.startswith("gemini-3") else
+                types.ThinkingConfig(thinking_budget=settings.THINKING_BUDGET_VERIFIER
+                                     if reasoning else settings.THINKING_BUDGET_EXTRACTOR))
+    return types.GenerateContentConfig(thinking_config=thinking, **kwargs)
