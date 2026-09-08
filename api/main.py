@@ -926,6 +926,75 @@ async def get_gcp_official_gazette_sync_status(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Durum alma hatası: {str(e)}")
 
 
+@app.get("/api/v1/admin/db-stats")
+def get_db_stats(db: Session = Depends(get_db)):
+    """
+    Cloud SQL veritabanındaki tüm tabloların güncel satır sayılarını ve sağlık durumunu döndürür.
+    """
+    try:
+        from api.db.database import (
+            GumrukSiniflandirmaKarariModel,
+            GumrukEmsalKararModel,
+            GumrukMevzuatMaddesiModel,
+            TgtcGtipModel,
+            TgtcRuleModel,
+            TgtcNoteModel,
+            AuditLogModel
+        )
+        siniflandirma_count = db.query(GumrukSiniflandirmaKarariModel).count()
+        btb_count = db.query(GumrukEmsalKararModel).filter(GumrukEmsalKararModel.karar_tipi == "BTB").count()
+        emsal_sinif_count = db.query(GumrukEmsalKararModel).filter(GumrukEmsalKararModel.karar_tipi == "SINIFLANDIRMA_KARARI").count()
+        mevzuat_count = db.query(GumrukMevzuatMaddesiModel).count()
+        tgtc_count = db.query(TgtcGtipModel).count()
+        tgtc_chapters = db.query(TgtcGtipModel).filter(TgtcGtipModel.level == "CHAPTER").count()
+        tgtc_headings = db.query(TgtcGtipModel).filter(TgtcGtipModel.level == "HEADING").count()
+        rules_count = db.query(TgtcRuleModel).count()
+        notes_count = db.query(TgtcNoteModel).count()
+        audit_count = db.query(AuditLogModel).count()
+
+        latest_sinif = db.query(GumrukSiniflandirmaKarariModel).order_by(GumrukSiniflandirmaKarariModel.id.desc()).first()
+        latest_btb = db.query(GumrukEmsalKararModel).filter(GumrukEmsalKararModel.karar_tipi == "BTB").order_by(GumrukEmsalKararModel.id.desc()).first()
+
+        return {
+            "status": "HEALTHY",
+            "database_instance": settings.CLOUD_SQL_CONNECTION_NAME,
+            "database_name": settings.DB_NAME,
+            "tables": {
+                "gumruk_siniflandirma_kararlari": siniflandirma_count,
+                "gumruk_emsal_kararlar": {
+                    "total": btb_count + emsal_sinif_count,
+                    "btb": btb_count,
+                    "siniflandirma_karari": emsal_sinif_count
+                },
+                "gumruk_mevzuat_maddeleri": mevzuat_count,
+                "tgtc_gtip_tree": {
+                    "total": tgtc_count,
+                    "chapters": tgtc_chapters,
+                    "headings": tgtc_headings
+                },
+                "tgtc_rules": rules_count,
+                "tgtc_notes": notes_count,
+                "audit_logs": audit_count
+            },
+            "latest_records": {
+                "latest_siniflandirma_karari": {
+                    "gtip": latest_sinif.gtip_kodu if latest_sinif else None,
+                    "yayin_tarihi": latest_sinif.yayin_tarihi if latest_sinif else None,
+                    "esya_tanimi": (latest_sinif.esya_tanimi[:100] + "...") if latest_sinif and latest_sinif.esya_tanimi else None
+                },
+                "latest_btb": {
+                    "referans_no": latest_btb.referans_no if latest_btb else None,
+                    "gtip": latest_btb.gtip_kodu if latest_btb else None,
+                    "yayin_tarihi": latest_btb.yayin_tarihi if latest_btb else None,
+                    "esya_tanimi": (latest_btb.esya_tanimi[:100] + "...") if latest_btb and latest_btb.esya_tanimi else None
+                }
+            }
+        }
+    except Exception as e:
+        logger.error(f"DB Stats hatası: {e}")
+        raise HTTPException(status_code=500, detail=f"DB Stats hatası: {str(e)}")
+
+
 @app.post("/api/v1/admin/seed-tgtc-tree")
 async def seed_tgtc_tree_admin(db: Session = Depends(get_db)):
     """
