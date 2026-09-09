@@ -76,7 +76,7 @@ foreach ($jobName in $jobNames) {
         if ($image -notmatch '@sha256:[0-9a-f]{64}$') { Add-Failure "$jobName immutable digest kullanmıyor: $image" }
     }
 }
-if (($jobImages | Where-Object { $_ } | Select-Object -Unique).Count -gt 1) {
+if (@($jobImages | Where-Object { $_ } | Select-Object -Unique).Count -gt 1) {
     Add-Failure "Cloud Run Job'lar aynı backend digest'ini kullanmıyor."
 }
 
@@ -92,11 +92,19 @@ foreach ($schedulerName in @("resmi-gazete-daily-sync", "official-btb-daily-sync
 
 $bucket = Get-GcloudJson @("storage", "buckets", "describe", "gs://$ProjectId-storage-$Region", "--project", $ProjectId) "GCS bucket yok."
 if ($bucket) {
-    if ($bucket.public_access_prevention -ne "enforced" -and $bucket.iamConfiguration.publicAccessPrevention -ne "enforced") {
-        Add-Failure "GCS public access prevention enforced değil."
+    $pap = ""
+    if ($bucket.PSObject.Properties.Match('public_access_prevention').Count -gt 0) {
+        $pap = [string]$bucket.public_access_prevention
+    } elseif ($bucket.PSObject.Properties.Match('iamConfiguration').Count -gt 0 -and $bucket.iamConfiguration.PSObject.Properties.Match('publicAccessPrevention').Count -gt 0) {
+        $pap = [string]$bucket.iamConfiguration.publicAccessPrevention
     }
-    $cors = @($bucket.cors_config) + @($bucket.cors)
-    if (-not ($cors | Where-Object { $_ })) { Add-Failure "GCS CORS yapılandırması yok." }
+    if ($pap -ne "enforced") {
+        Add-Failure "GCS public access prevention enforced değil ($pap)."
+    }
+    $cors = @()
+    if ($bucket.PSObject.Properties.Match('cors_config').Count -gt 0) { $cors += @($bucket.cors_config) }
+    if ($bucket.PSObject.Properties.Match('cors').Count -gt 0) { $cors += @($bucket.cors) }
+    if (@($cors | Where-Object { $_ }).Count -eq 0) { Add-Failure "GCS CORS yapılandırması yok." }
 }
 
 if ($failures.Count -gt 0) {
