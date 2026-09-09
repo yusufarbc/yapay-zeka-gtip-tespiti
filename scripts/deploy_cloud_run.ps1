@@ -68,8 +68,10 @@ function Get-ServiceDescription([string]$ServiceName) {
 
 function Get-TaggedUrl([string]$ServiceName, [string]$Tag) {
     $description = Get-ServiceDescription $ServiceName
-    $traffic = @($description.status.traffic) | Where-Object { $_.tag -eq $Tag } | Select-Object -First 1
-    if (-not $traffic -or -not $traffic.url) {
+    $traffic = @($description.status.traffic) | Where-Object {
+        $_.PSObject.Properties.Match('tag').Count -gt 0 -and $_.tag -eq $Tag
+    } | Select-Object -First 1
+    if (-not $traffic -or -not ($traffic.PSObject.Properties.Match('url').Count -gt 0) -or -not $traffic.url) {
         throw "$ServiceName için '$Tag' candidate URL'i bulunamadı."
     }
     return [string]$traffic.url
