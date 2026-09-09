@@ -37,6 +37,10 @@ function Assert-Command([string]$Name) {
     }
 }
 
+function Invoke-GcloudCheck([string]$CommandLine) {
+    & cmd.exe /c "gcloud.cmd $CommandLine >nul 2>&1"
+}
+
 function Write-JsonFile([string]$Path, [object]$Value) {
     $json = $Value | ConvertTo-Json -Depth 8
     [System.IO.File]::WriteAllText($Path, $json, [System.Text.UTF8Encoding]::new($false))
@@ -141,16 +145,16 @@ try {
         storage.googleapis.com containeranalysis.googleapis.com --project $ProjectId --quiet
     Assert-LastExitCode "Gerekli GCP API'leri etkinleştirilemedi."
 
-    & gcloud.cmd artifacts repositories describe $Repository --location $Region --project $ProjectId *> $null
+    Invoke-GcloudCheck "artifacts repositories describe $Repository --location $Region --project $ProjectId"
     Assert-LastExitCode "Artifact Registry repository bulunamadı: $Repository"
-    & gcloud.cmd iam service-accounts describe $RuntimeServiceAccount --project $ProjectId *> $null
+    Invoke-GcloudCheck "iam service-accounts describe $RuntimeServiceAccount --project $ProjectId"
     Assert-LastExitCode "Runtime servis hesabı bulunamadı: $RuntimeServiceAccount"
     foreach ($secret in @("gtip-db-password", "gtip-jwt-secret")) {
-        & gcloud.cmd secrets versions describe latest --secret $secret --project $ProjectId *> $null
+        Invoke-GcloudCheck "secrets versions describe latest --secret $secret --project $ProjectId"
         Assert-LastExitCode "Secret'ın etkin latest sürümü bulunamadı: $secret"
     }
 
-    $sqlRaw = & gcloud.cmd sql instances describe $SqlInstanceName --project $ProjectId --format=json
+    $sqlRaw = & cmd.exe /c "gcloud.cmd sql instances describe $SqlInstanceName --project $ProjectId --format=json 2>nul"
     Assert-LastExitCode "Cloud SQL '$SqlInstanceName' bulunamadı. Boş instance oluşturulmayacak; önce final backup restore edilmelidir."
     $sql = $sqlRaw | ConvertFrom-Json
     if ($sql.state -ne "RUNNABLE") { throw "Cloud SQL hazır değil; state=$($sql.state)" }
@@ -162,27 +166,23 @@ try {
     if (-not $sql.settings.backupConfiguration.enabled -or -not $sql.settings.backupConfiguration.pointInTimeRecoveryEnabled) {
         throw "Cloud SQL backup/PITR etkin değil."
     }
-    & gcloud.cmd sql databases describe gtip_db --instance $SqlInstanceName --project $ProjectId *> $null
+    Invoke-GcloudCheck "sql databases describe gtip_db --instance $SqlInstanceName --project $ProjectId"
     Assert-LastExitCode "Restore edilen Cloud SQL içinde gtip_db bulunamadı."
-    & gcloud.cmd storage buckets describe "gs://$Bucket" --project $ProjectId *> $null
+    Invoke-GcloudCheck "storage buckets describe gs://$Bucket --project $ProjectId"
     Assert-LastExitCode "GCS bucket bulunamadı: gs://$Bucket"
 
     Write-Host "Least-privilege runtime IAM uygulanıyor..."
     foreach ($role in @("roles/aiplatform.user", "roles/cloudsql.client")) {
-        & gcloud.cmd projects add-iam-policy-binding $ProjectId `
-            --member="serviceAccount:$RuntimeServiceAccount" --role=$role --condition=None --quiet *> $null
+        Invoke-GcloudCheck "projects add-iam-policy-binding $ProjectId --member=serviceAccount:$RuntimeServiceAccount --role=$role --condition=None --quiet"
         Assert-LastExitCode "IAM rolü verilemedi: $role"
     }
     foreach ($secret in @("gtip-db-password", "gtip-jwt-secret")) {
-        & gcloud.cmd secrets add-iam-policy-binding $secret --project $ProjectId `
-            --member="serviceAccount:$RuntimeServiceAccount" --role=roles/secretmanager.secretAccessor --quiet *> $null
+        Invoke-GcloudCheck "secrets add-iam-policy-binding $secret --project $ProjectId --member=serviceAccount:$RuntimeServiceAccount --role=roles/secretmanager.secretAccessor --quiet"
         Assert-LastExitCode "Secret IAM verilemedi: $secret"
     }
-    & gcloud.cmd storage buckets add-iam-policy-binding "gs://$Bucket" `
-        --member="serviceAccount:$RuntimeServiceAccount" --role=roles/storage.objectAdmin --quiet *> $null
+    Invoke-GcloudCheck "storage buckets add-iam-policy-binding gs://$Bucket --member=serviceAccount:$RuntimeServiceAccount --role=roles/storage.objectAdmin --quiet"
     Assert-LastExitCode "Bucket object IAM verilemedi."
-    & gcloud.cmd iam service-accounts add-iam-policy-binding $RuntimeServiceAccount --project $ProjectId `
-        --member="serviceAccount:$RuntimeServiceAccount" --role=roles/iam.serviceAccountTokenCreator --quiet *> $null
+    Invoke-GcloudCheck "iam service-accounts add-iam-policy-binding $RuntimeServiceAccount --project $ProjectId --member=serviceAccount:$RuntimeServiceAccount --role=roles/iam.serviceAccountTokenCreator --quiet"
     Assert-LastExitCode "Signed URL için self signBlob yetkisi verilemedi."
 
     $BackendTag = "$Region-docker.pkg.dev/$ProjectId/$Repository/backend:$Release"
@@ -305,7 +305,7 @@ try {
         maxAgeSeconds = 3600
     })
     & gcloud.cmd storage buckets update "gs://$Bucket" --project $ProjectId `
-        --public-access-prevention=enforced `
+        --pap `
         --lifecycle-file="$PSScriptRoot/gcs_lifecycle.json" `
         --cors-file=$CorsFile --quiet
     Assert-LastExitCode "GCS güvenlik/lifecycle/CORS yapılandırması başarısız."
@@ -318,8 +318,7 @@ try {
             --format="value(bindings.role)"
         Assert-LastExitCode "Proje IAM denetlenemedi: $broadRole"
         if (($hasRole | Out-String).Trim()) {
-            & gcloud.cmd projects remove-iam-policy-binding $ProjectId `
-                --member="serviceAccount:$RuntimeServiceAccount" --role=$broadRole --condition=None --quiet *> $null
+            Invoke-GcloudCheck "projects remove-iam-policy-binding $ProjectId --member=serviceAccount:$RuntimeServiceAccount --role=$broadRole --condition=None --quiet"
             Assert-LastExitCode "Geniş IAM rolü kaldırılamadı: $broadRole"
         }
     }
