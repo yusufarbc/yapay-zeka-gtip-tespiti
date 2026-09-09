@@ -16,7 +16,7 @@ $ErrorActionPreference = "Stop"
 $JobName = "gtip-seed-tgtc-2026"
 $CloudSqlConnection = "$ProjectId`:$Region`:gumruk-db"
 $ServiceAccount = "gtip-backend-sa@$ProjectId.iam.gserviceaccount.com"
-$envVars = "GCP_PROJECT_ID=$ProjectId,GCP_REGION=$Region,VERTEX_AI_LOCATION=$Region,ENVIRONMENT=production,CLOUD_RUN_JOB=$JobName,CLOUD_SQL_CONNECTION_NAME=$CloudSqlConnection,INSTANCE_CONNECTION_NAME=$CloudSqlConnection,DB_USER=postgres,DB_NAME=gtip_db,DB_POOL_SIZE=1,DB_MAX_OVERFLOW=1,USE_GCP_EMULATOR=false,SKIP_TGTC_AUTO_SEED=true,EMBEDDING_MODEL=text-embedding-005"
+$envVars = "GCP_PROJECT_ID=$ProjectId,GCP_REGION=$Region,VERTEX_AI_LOCATION=$Region,ENVIRONMENT=production,CLOUD_SQL_CONNECTION_NAME=$CloudSqlConnection,INSTANCE_CONNECTION_NAME=$CloudSqlConnection,DB_USER=postgres,DB_NAME=gtip_db,DB_POOL_SIZE=1,DB_MAX_OVERFLOW=1,USE_GCP_EMULATOR=false,SKIP_TGTC_AUTO_SEED=true,EMBEDDING_MODEL=text-embedding-005"
 
 function Assert-LastExitCode([string]$Message) {
     if ($LASTEXITCODE -ne 0) { throw $Message }
