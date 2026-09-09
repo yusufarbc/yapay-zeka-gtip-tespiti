@@ -110,14 +110,11 @@ def admin_status(request: Request, db: Session = Depends(get_db)):
         "cloud_sql_siniflandirma_kararlari_count": count
     }
 
-# CORS Configuration: Production ortamında wildcard (*) kesinlikle engellenir.
+# CORS Configuration: production'da yapılandırma yoksa cross-origin erişim kapalıdır.
 _cors_origins_raw = settings.CORS_ALLOWED_ORIGINS
-if settings.ENVIRONMENT == "production" and (_cors_origins_raw == "*" or not _cors_origins_raw):
-    _cors_origins = [
-        "https://gtip-web-141090733173.us-central1.run.app",
-        "https://gtip-web-gu6pxpqefa-uc.a.run.app",
-    ]
-    _allow_credentials = True
+if settings.ENVIRONMENT == "production" and not _cors_origins_raw:
+    _cors_origins = []
+    _allow_credentials = False
 elif _cors_origins_raw == "*":
     _cors_origins = ["*"]
     _allow_credentials = False

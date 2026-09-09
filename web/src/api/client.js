@@ -1,8 +1,9 @@
 import axios from 'axios';
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL || (
-  import.meta.env.DEV ? '/api/v1' : 'https://gtip-backend-gu6pxpqefa-uc.a.run.app/api/v1'
-)).replace(/\/+$/, '');
+// Production Nginx, /api isteklerini BACKEND_ORIGIN'e proxy eder. Böylece web
+// imajı ortama özel URL içermeden tekrar kullanılabilir ve tarayıcı CORS'a
+// bağımlı olmaz. VITE_API_URL yalnız özel geliştirme/preview ortamları içindir.
+const API_BASE_URL = (import.meta.env.VITE_API_URL || '/api/v1').replace(/\/+$/, '');
 
 export const getAPIErrorMessage = (error, fallback) => {
   const detail = error.response?.data?.detail;

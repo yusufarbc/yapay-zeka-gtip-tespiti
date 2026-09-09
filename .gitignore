@@ -22,6 +22,8 @@ ENV/
 # Testing & Coverage
 .pytest_cache/
 .pytest-tmp*/
+.uv-cache/
+.uv-python/
 .coverage
 htmlcov/
 .tox/

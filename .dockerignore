@@ -23,6 +23,7 @@ build/
 # Test dosyaları
 tests/
 api/tests/
+scripts/test_*.py
 
 # Arşiv ve geliştirme araçları
 archieve/
@@ -50,7 +51,14 @@ scripts/evaluate_accuracy.py
 scripts/build_vector_index.py
 scripts/fetch_official_btb.py
 scripts/import_official_customs_excel.py
+scripts/deploy_*
+scripts/setup_*
 
 # Large PDF files
 **/*.pdf
 
+# Ham TGTC çalışma dosyaları; runtime yalnız üretilmiş iki JSON'u kullanır
+2026 TGTC/2026 TGTC/
+2026 TGTC/2026 FASIL NOTLARI/
+2026 TGTC/*.xls
+2026 TGTC/*.csv

@@ -1,37 +1,65 @@
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[a-z0-9.-]+-docker\.pkg\.dev/.+@sha256:[0-9a-f]{64}$')]
+    [string]$Image,
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[a-z0-9][a-z0-9-]{0,49}$')]
+    [string]$Release,
+    [string]$ProjectId = "gumruk-mevzuat",
+    [string]$Region = "us-central1"
+)
+
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$PROJECT_ID = "gumruk-mevzuat"
-$REGION = "us-central1"
-$JOB_NAME = "gtip-seed-tgtc-2026"
-$IMAGE_URI = "$REGION-docker.pkg.dev/$PROJECT_ID/gtip-repo/backend:latest"
-$CLOUD_SQL_INSTANCE = "$PROJECT_ID`:$REGION`:gumruk-db"
-$SERVICE_ACCOUNT = "gtip-backend-sa@$PROJECT_ID.iam.gserviceaccount.com"
-$ENV_VARS = "GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,ENVIRONMENT=production,CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_INSTANCE,DB_USER=postgres,DB_NAME=gtip_db,DB_POOL_SIZE=1,DB_MAX_OVERFLOW=1,USE_GCP_EMULATOR=false,SKIP_TGTC_AUTO_SEED=true"
+$JobName = "gtip-seed-tgtc-2026"
+$CloudSqlConnection = "$ProjectId`:$Region`:gumruk-db"
+$ServiceAccount = "gtip-backend-sa@$ProjectId.iam.gserviceaccount.com"
+$envVars = "GCP_PROJECT_ID=$ProjectId,GCP_REGION=$Region,VERTEX_AI_LOCATION=$Region,ENVIRONMENT=production,CLOUD_RUN_JOB=$JobName,CLOUD_SQL_CONNECTION_NAME=$CloudSqlConnection,INSTANCE_CONNECTION_NAME=$CloudSqlConnection,DB_USER=postgres,DB_NAME=gtip_db,DB_POOL_SIZE=1,DB_MAX_OVERFLOW=1,USE_GCP_EMULATOR=false,SKIP_TGTC_AUTO_SEED=true,EMBEDDING_MODEL=text-embedding-005"
 
-$existing = & gcloud.cmd run jobs list `
-    --region $REGION `
-    --project $PROJECT_ID `
-    --filter="metadata.name=$JOB_NAME" `
-    --format="value(metadata.name)"
-if ($LASTEXITCODE -ne 0) { throw "Cloud Run Job listesi okunamadı." }
-$action = if (($existing | Out-String).Trim()) { "update" } else { "create" }
+function Assert-LastExitCode([string]$Message) {
+    if ($LASTEXITCODE -ne 0) { throw $Message }
+}
 
-& gcloud.cmd run jobs $action $JOB_NAME `
-    --image $IMAGE_URI `
-    --region $REGION `
-    --project $PROJECT_ID `
+if (-not (Get-Command gcloud.cmd -ErrorAction SilentlyContinue)) { throw "gcloud.cmd bulunamadı." }
+& gcloud.cmd artifacts docker images describe $Image --project $ProjectId *> $null
+Assert-LastExitCode "Immutable backend image bulunamadı: $Image"
+& gcloud.cmd sql instances describe gumruk-db --project $ProjectId *> $null
+Assert-LastExitCode "Cloud SQL gumruk-db bulunamadı."
+& gcloud.cmd secrets versions describe latest --secret gtip-db-password --project $ProjectId *> $null
+Assert-LastExitCode "gtip-db-password latest sürümü bulunamadı."
+
+& gcloud.cmd run jobs describe $JobName --region $Region --project $ProjectId *> $null
+$action = if ($LASTEXITCODE -eq 0) { "update" } else { "create" }
+
+& gcloud.cmd run jobs $action $JobName `
+    --image $Image `
+    --region $Region `
+    --project $ProjectId `
     --tasks 1 `
-    --max-retries 1 `
-    --task-timeout 3600s `
+    --parallelism 1 `
+    --max-retries 0 `
+    --task-timeout 7200s `
     --memory 4Gi `
     --cpu 2 `
-    --service-account $SERVICE_ACCOUNT `
-    --set-cloudsql-instances $CLOUD_SQL_INSTANCE `
-    --set-env-vars $ENV_VARS `
+    --service-account $ServiceAccount `
+    --set-cloudsql-instances $CloudSqlConnection `
+    --set-env-vars $envVars `
     --set-secrets "DB_PASS=gtip-db-password:latest" `
     --command python `
-    "--args=scripts/seed_tgtc_2026.py" `
+    "--args=-m,scripts.seed_tgtc_2026" `
+    --labels "app=gtip,component=seed,release=$Release" `
     --quiet
-if ($LASTEXITCODE -ne 0) { throw "2026 TGTC seed işi dağıtılamadı." }
+Assert-LastExitCode "TGTC seed job dağıtılamadı."
 
-Write-Host "Hazır: $JOB_NAME. Yıllık TGTC dosyaları güncellendikten sonra bu işi kontrollü olarak çalıştırın."
+& gcloud.cmd run jobs add-iam-policy-binding $JobName `
+    --region $Region `
+    --project $ProjectId `
+    --member "serviceAccount:$ServiceAccount" `
+    --role "roles/run.invoker" `
+    --quiet *> $null
+Assert-LastExitCode "TGTC seed job invoker yetkisi verilemedi."
+
+Write-Host "Hazır: $JobName ($Image)"
+Write-Host "Bu job otomatik çalıştırılmaz. Restore verisi eksikse kontrollü olarak execute edin."

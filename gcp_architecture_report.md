@@ -2,7 +2,7 @@
 
 Bu belge; Türkiye Gümrük Mevzuatı, Türk Gümrük Tarife Cetveli (TGTC) ve Bağlayıcı Tarife Bilgisi (BTB) kararlarını temel alarak, sıfır halüsinasyon (Zero-Hallucination) prensibiyle 12 haneli GTİP tespiti ve mevzuat danışmanlığı yapan kurumsal bilişim sisteminin nihai mimari şartnamesidir. Sistem; **Resmi Gazete Otomasyonu**, **AlloyDB AI Tabanlı Birleşik Veri Katmanı**, **Dinamik Kural Motoru**, **İki Aşamalı FastMCP Sorgulama Protokolü** ve **Human-in-the-Loop (HITL) Ajan Mimarisi** bileşenlerinden oluşur.
 
-> **Canlı uygulama profili (2026-09-08):** Maliyet ve işletim sadeliği nedeniyle mevcut üretim kurulumu `gumruk-mevzuat/us-central1` üzerinde **Cloud SQL for PostgreSQL + pgvector/HNSW**, **Cloud Run Backend/Web**, **Cloud Run Jobs** ve **Cloud Scheduler** kullanır. AlloyDB/ScaNN ve Firebase bu belgedeki hedef mimari seçenekleridir; canlı sistem bunlara geçirilmiş gibi varsayılmamalıdır.
+> **Üretim hedef profili (2026-09-09):** `gumruk-mevzuat/us-central1` üzerinde **Cloud SQL for PostgreSQL + pgvector/HNSW**, **Cloud Run Backend/Web**, **Cloud Run Jobs** ve **Cloud Scheduler** kullanılır. Servisler, job'lar ve Cloud SQL 9 Eylül'de kontrollü olarak silinmiş olup FINAL backup'tan geri yükleme ve yeniden dağıtım beklemektedir. AlloyDB/ScaNN ve Firebase yalnız hedef mimari seçenekleridir.
 
 GTİP karar sırası zorunludur: aday kod yalnızca yürürlükteki **2026 TGTC** ağacından üretilir; **GİR 1-6**, ilgili fasıl notları/izahnameler, son altı yıldaki **BTB kararları**, **sınıflandırma kararları** ve diğer gümrük mevzuatı ayrı kaynak katmanları olarak sorgulanır. Eski bir BTB veya karar, 2026 cetvelinde bulunmayan bir kodu nihai aday haline getiremez.
 
@@ -463,7 +463,7 @@ Müşavir ekranında LLM çıktısı ile veritabanından çekilen resmi hukuki k
 
 ## 8. ÜRETİM ORTAMI (PRODUCTION) MEVCUT DURUM VE YOL HARİTASI
 
-1. **Mevcut:** Cloud SQL PostgreSQL 15, pgvector/HNSW, iki Cloud Run servisi, dört Cloud Run Job ve iki Scheduler görevi `us-central1` bölgesinde çalışır.
+1. **Yeniden kurulacak hedef:** Cloud SQL PostgreSQL 15, pgvector/HNSW, iki Cloud Run servisi, dört Cloud Run Job ve iki Scheduler görevi `us-central1` bölgesinde çalışır.
 2. **Güvenlik:** Yönetim ve veri değiştiren uçlar kimlik doğrulamalıdır. Google tokenları audience/domain ve yönetici e-posta allowlist'i ile doğrulanır; demo analiz trafiği hız sınırlıdır.
 3. **Dayanıklılık:** BTB portalının geçici 429/5xx cevapları yeniden denenir; daha önce kaydedilmiş referansların detay sayfaları tekrar indirilmez.
 4. **Kapasite:** Backend `concurrency=20`, `max-instances=3` ve worker başına en fazla iki DB bağlantısıyla `db-f1-micro` bağlantı bütçesini korur.
