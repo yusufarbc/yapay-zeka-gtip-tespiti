@@ -236,6 +236,9 @@ try {
     $CandidateTag = "candidate-$Release"
 
     Write-Host "Backend candidate revision deploy ediliyor..."
+    Invoke-GcloudCheck "run services describe $BackendService --region $Region --project $ProjectId"
+    $backendExists = ($LASTEXITCODE -eq 0)
+    $backendTrafficArgs = if ($backendExists) { @("--tag", $CandidateTag, "--no-traffic") } else { @("--tag", $CandidateTag) }
     $backendArgs = @(
         "run", "deploy", $BackendService, "--image", $BackendImage,
         "--region", $Region, "--project", $ProjectId, "--platform", "managed",
@@ -249,9 +252,8 @@ try {
         "--startup-probe", "httpGet.path=/api/v1/ready,httpGet.port=8080,timeoutSeconds=10,periodSeconds=10,failureThreshold=18",
         "--readiness-probe", "httpGet.path=/api/v1/ready,httpGet.port=8080,timeoutSeconds=5,periodSeconds=10,failureThreshold=3,successThreshold=1",
         "--liveness-probe", "httpGet.path=/api/v1/health,httpGet.port=8080,initialDelaySeconds=30,timeoutSeconds=5,periodSeconds=30,failureThreshold=3",
-        "--labels", "app=gtip,component=backend,release=$Release",
-        "--tag", $CandidateTag, "--no-traffic", "--deploy-health-check", "--quiet"
-    )
+        "--labels", "app=gtip,component=backend,release=$Release"
+    ) + $backendTrafficArgs + @("--deploy-health-check", "--quiet")
     & gcloud.cmd @backendArgs
     Assert-LastExitCode "Backend candidate deploy başarısız."
     $BackendCandidateUrl = Get-TaggedUrl $BackendService $CandidateTag
@@ -271,6 +273,9 @@ try {
     $WebEnvFile = [System.IO.Path]::GetTempFileName()
     Write-JsonFile $WebEnvFile ([ordered]@{ BACKEND_ORIGIN = $BackendUrl; BACKEND_HOST = $BackendHost })
     Write-Host "Web candidate revision deploy ediliyor..."
+    Invoke-GcloudCheck "run services describe $WebService --region $Region --project $ProjectId"
+    $webExists = ($LASTEXITCODE -eq 0)
+    $webTrafficArgs = if ($webExists) { @("--tag", $CandidateTag, "--no-traffic") } else { @("--tag", $CandidateTag) }
     $webArgs = @(
         "run", "deploy", $WebService, "--image", $WebImage,
         "--region", $Region, "--project", $ProjectId, "--platform", "managed",
@@ -281,9 +286,8 @@ try {
         "--startup-probe", "httpGet.path=/healthz,httpGet.port=8080,timeoutSeconds=5,periodSeconds=5,failureThreshold=12",
         "--readiness-probe", "httpGet.path=/healthz,httpGet.port=8080,timeoutSeconds=5,periodSeconds=10,failureThreshold=3,successThreshold=1",
         "--liveness-probe", "httpGet.path=/healthz,httpGet.port=8080,initialDelaySeconds=10,timeoutSeconds=5,periodSeconds=30,failureThreshold=3",
-        "--labels", "app=gtip,component=web,release=$Release",
-        "--tag", $CandidateTag, "--no-traffic", "--deploy-health-check", "--quiet"
-    )
+        "--labels", "app=gtip,component=web,release=$Release"
+    ) + $webTrafficArgs + @("--deploy-health-check", "--quiet")
     & gcloud.cmd @webArgs
     Assert-LastExitCode "Web candidate deploy başarısız."
     $WebCandidateUrl = Get-TaggedUrl $WebService $CandidateTag
