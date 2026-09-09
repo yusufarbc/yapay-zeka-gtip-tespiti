@@ -59,7 +59,7 @@ if ($backend) {
 }
 if ($web) {
     $webUrl = [string]$web.status.url
-    Assert-Http "$webUrl/healthz" "Web health"
+    Assert-Http "$webUrl" "Web UI"
     Assert-Http "$webUrl/api/v1/health" "Web -> backend proxy"
     $webImage = [string]$web.spec.template.spec.containers[0].image
     if ($webImage -notmatch '@sha256:[0-9a-f]{64}$') { Add-Failure "Web immutable digest kullanmıyor: $webImage" }

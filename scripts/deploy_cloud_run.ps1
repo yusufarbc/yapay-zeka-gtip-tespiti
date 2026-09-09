@@ -291,7 +291,7 @@ try {
     & gcloud.cmd @webArgs
     Assert-LastExitCode "Web candidate deploy başarısız."
     $WebCandidateUrl = Get-TaggedUrl $WebService $CandidateTag
-    Wait-HttpOk "$WebCandidateUrl/healthz" | Out-Null
+    Wait-HttpOk "$WebCandidateUrl" | Out-Null
     Wait-HttpOk "$WebCandidateUrl/api/v1/health" | Out-Null
     & gcloud.cmd run services update-traffic $WebService --region $Region --project $ProjectId `
         --to-tags "$CandidateTag=100" --quiet
