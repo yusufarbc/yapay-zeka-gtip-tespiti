@@ -42,7 +42,11 @@ function Invoke-GcloudCheck([string]$CommandLine) {
 }
 
 function Write-JsonFile([string]$Path, [object]$Value) {
-    $json = $Value | ConvertTo-Json -Depth 8
+    if ($Value -is [System.Collections.IList] -or $Value -is [System.Array]) {
+        $json = "[" + (($Value | ForEach-Object { $_ | ConvertTo-Json -Depth 8 }) -join ",") + "]"
+    } else {
+        $json = $Value | ConvertTo-Json -Depth 8
+    }
     [System.IO.File]::WriteAllText($Path, $json, [System.Text.UTF8Encoding]::new($false))
 }
 
