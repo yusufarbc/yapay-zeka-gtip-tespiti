@@ -27,8 +27,12 @@ function Assert-LastExitCode([string]$Message) {
     if ($LASTEXITCODE -ne 0) { throw $Message }
 }
 
+function Invoke-GcloudCheck([string]$CommandLine) {
+    & cmd.exe /c "gcloud.cmd $CommandLine >nul 2>&1"
+}
+
 function Pause-SchedulerIfPresent([string]$Name) {
-    & gcloud.cmd scheduler jobs describe $Name --location $Region --project $ProjectId *> $null
+    Invoke-GcloudCheck "scheduler jobs describe $Name --location $Region --project $ProjectId"
     if ($LASTEXITCODE -eq 0) {
         & gcloud.cmd scheduler jobs pause $Name --location $Region --project $ProjectId --quiet
         Assert-LastExitCode "Scheduler duraklatılamadı: $Name"
@@ -43,7 +47,7 @@ function Deploy-EtlJob(
     [string]$Cpu,
     [string]$Retries
 ) {
-    & gcloud.cmd run jobs describe $Name --region $Region --project $ProjectId *> $null
+    Invoke-GcloudCheck "run jobs describe $Name --region $Region --project $ProjectId"
     $action = if ($LASTEXITCODE -eq 0) { "update" } else { "create" }
     $envVars = "GCP_PROJECT_ID=$ProjectId,GCP_REGION=$Region,VERTEX_AI_LOCATION=$Region,ENVIRONMENT=production,GCS_BUCKET_NAME=$Bucket,CLOUD_SQL_CONNECTION_NAME=$CloudSqlConnection,INSTANCE_CONNECTION_NAME=$CloudSqlConnection,DB_USER=postgres,DB_NAME=gtip_db,DB_POOL_SIZE=1,DB_MAX_OVERFLOW=1,USE_GCP_EMULATOR=false,SKIP_TGTC_AUTO_SEED=true,EXTRACTOR_LLM_MODEL=gemini-2.5-flash-lite,EMBEDDING_MODEL=text-embedding-005"
 
@@ -72,13 +76,13 @@ function Deploy-EtlJob(
         --project $ProjectId `
         --member "serviceAccount:$SchedulerAccount" `
         --role "roles/run.invoker" `
-        --quiet *> $null
+        --quiet
     Assert-LastExitCode "Job invoker yetkisi verilemedi: $Name"
 }
 
 function Upsert-Scheduler([string]$Name, [string]$TargetJob, [string]$Schedule, [string]$Description) {
     $uri = "https://run.googleapis.com/v2/projects/$ProjectId/locations/$Region/jobs/$TargetJob`:run"
-    & gcloud.cmd scheduler jobs describe $Name --location $Region --project $ProjectId *> $null
+    Invoke-GcloudCheck "scheduler jobs describe $Name --location $Region --project $ProjectId"
     $action = if ($LASTEXITCODE -eq 0) { "update" } else { "create" }
     $headerFlag = if ($action -eq "update") {
         "--update-headers=Content-Type=application/json"
@@ -113,11 +117,11 @@ function Upsert-Scheduler([string]$Name, [string]$TargetJob, [string]$Schedule, 
 }
 
 if (-not (Get-Command gcloud.cmd -ErrorAction SilentlyContinue)) { throw "gcloud.cmd bulunamadı." }
-& gcloud.cmd artifacts docker images describe $Image --project $ProjectId *> $null
+Invoke-GcloudCheck "artifacts docker images describe $Image --project $ProjectId"
 Assert-LastExitCode "Immutable backend image bulunamadı: $Image"
-& gcloud.cmd sql instances describe gumruk-db --project $ProjectId *> $null
+Invoke-GcloudCheck "sql instances describe gumruk-db --project $ProjectId"
 Assert-LastExitCode "Cloud SQL gumruk-db bulunamadı."
-& gcloud.cmd secrets versions describe latest --secret gtip-db-password --project $ProjectId *> $null
+Invoke-GcloudCheck "secrets versions describe latest --secret gtip-db-password --project $ProjectId"
 Assert-LastExitCode "gtip-db-password latest sürümü bulunamadı."
 
 Pause-SchedulerIfPresent $DailyScheduler

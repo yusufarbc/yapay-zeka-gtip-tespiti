@@ -22,15 +22,19 @@ function Assert-LastExitCode([string]$Message) {
     if ($LASTEXITCODE -ne 0) { throw $Message }
 }
 
+function Invoke-GcloudCheck([string]$CommandLine) {
+    & cmd.exe /c "gcloud.cmd $CommandLine >nul 2>&1"
+}
+
 if (-not (Get-Command gcloud.cmd -ErrorAction SilentlyContinue)) { throw "gcloud.cmd bulunamadı." }
-& gcloud.cmd artifacts docker images describe $Image --project $ProjectId *> $null
+Invoke-GcloudCheck "artifacts docker images describe $Image --project $ProjectId"
 Assert-LastExitCode "Immutable backend image bulunamadı: $Image"
-& gcloud.cmd sql instances describe gumruk-db --project $ProjectId *> $null
+Invoke-GcloudCheck "sql instances describe gumruk-db --project $ProjectId"
 Assert-LastExitCode "Cloud SQL gumruk-db bulunamadı."
-& gcloud.cmd secrets versions describe latest --secret gtip-db-password --project $ProjectId *> $null
+Invoke-GcloudCheck "secrets versions describe latest --secret gtip-db-password --project $ProjectId"
 Assert-LastExitCode "gtip-db-password latest sürümü bulunamadı."
 
-& gcloud.cmd run jobs describe $JobName --region $Region --project $ProjectId *> $null
+Invoke-GcloudCheck "run jobs describe $JobName --region $Region --project $ProjectId"
 $action = if ($LASTEXITCODE -eq 0) { "update" } else { "create" }
 
 & gcloud.cmd run jobs $action $JobName `
@@ -58,7 +62,7 @@ Assert-LastExitCode "TGTC seed job dağıtılamadı."
     --project $ProjectId `
     --member "serviceAccount:$ServiceAccount" `
     --role "roles/run.invoker" `
-    --quiet *> $null
+    --quiet
 Assert-LastExitCode "TGTC seed job invoker yetkisi verilemedi."
 
 Write-Host "Hazır: $JobName ($Image)"
