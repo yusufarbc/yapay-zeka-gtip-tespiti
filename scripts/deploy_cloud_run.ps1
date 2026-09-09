@@ -118,8 +118,13 @@ try {
         $env:USE_GCP_EMULATOR = "true"
         $env:GEMINI_API_KEY = "local-emulator-placeholder"
         $env:JWT_SECRET_KEY = "local-development-only"
-        & .\.venv\Scripts\python.exe -m pytest api/tests -q -p no:cacheprovider --basetemp .pytest-tmp-predeploy
-        Assert-LastExitCode "Backend testleri başarısız."
+        $testTemp = Join-Path ([System.IO.Path]::GetTempPath()) "gtip-test-$(New-Guid)"
+        try {
+            & .\.venv\Scripts\python.exe -m pytest api/tests -q -p no:cacheprovider --basetemp $testTemp
+            Assert-LastExitCode "Backend testleri başarısız."
+        } finally {
+            if (Test-Path $testTemp) { Remove-Item -Recurse -Force $testTemp -ErrorAction SilentlyContinue }
+        }
         & .\.venv\Scripts\python.exe -m compileall -q api scripts
         Assert-LastExitCode "Python compileall başarısız."
         & npm.cmd --prefix web ci --ignore-scripts

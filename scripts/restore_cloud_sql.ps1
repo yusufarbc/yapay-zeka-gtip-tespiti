@@ -22,7 +22,7 @@ if ($Cpu -lt 2 -or $MemoryMiB -lt 3840) {
     throw "Üretim restore profili en az 2 vCPU ve 3840 MiB bellek gerektirir."
 }
 
-& gcloud.cmd sql instances describe $InstanceName --project $ProjectId *> $null
+$null = & cmd.exe /c "gcloud.cmd sql instances describe $InstanceName --project $ProjectId >nul 2>&1"
 if ($LASTEXITCODE -eq 0) {
     throw "Hedef instance zaten var: $InstanceName. Bu betik mevcut instance üzerine restore yapmaz."
 }
@@ -30,12 +30,13 @@ if ($LASTEXITCODE -eq 0) {
 $backupRaw = & gcloud.cmd sql backups describe $BackupName --project $ProjectId --format=json
 Assert-LastExitCode "FINAL backup bulunamadı veya erişilemiyor: $BackupName"
 $backup = $backupRaw | ConvertFrom-Json
-if ($backup.expireTime -and ([DateTimeOffset]$backup.expireTime -le [DateTimeOffset]::UtcNow)) {
-    throw "FINAL backup süresi dolmuş: $($backup.expireTime)"
+$backupExpiry = if ($backup.PSObject.Properties['expiryTime']) { $backup.expiryTime } else { $null }
+if ($backupExpiry -and ([DateTimeOffset]$backupExpiry -le [DateTimeOffset]::UtcNow)) {
+    throw "FINAL backup süresi dolmuş: $backupExpiry"
 }
 
 foreach ($scheduler in @("resmi-gazete-daily-sync", "official-btb-daily-sync")) {
-    & gcloud.cmd scheduler jobs describe $scheduler --location $Region --project $ProjectId *> $null
+    $null = & cmd.exe /c "gcloud.cmd scheduler jobs describe $scheduler --location $Region --project $ProjectId >nul 2>&1"
     if ($LASTEXITCODE -eq 0) {
         & gcloud.cmd scheduler jobs pause $scheduler --location $Region --project $ProjectId --quiet
         Assert-LastExitCode "Restore öncesi scheduler durdurulamadı: $scheduler"

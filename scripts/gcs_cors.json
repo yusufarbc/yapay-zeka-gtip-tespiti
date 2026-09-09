@@ -1,0 +1,13 @@
+[
+  {
+    "origin": [
+      "https://gtip-web-141090733173.us-central1.run.app",
+      "https://gtip-web-gu6pxpqefa-uc.a.run.app",
+      "*"
+    ],
+    "method": ["PUT", "GET", "HEAD", "OPTIONS"],
+    "responseHeader": ["Content-Type", "ETag", "Authorization", "x-goog-resumable"],
+    "maxAgeSeconds": 3600
+  }
+]
+
