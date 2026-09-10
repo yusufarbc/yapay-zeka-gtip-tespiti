@@ -1,0 +1,90 @@
+{
+  "source": {
+    "title": "2026 TGTC / HS 9401 ara grup bağlamı",
+    "authority": "T.C. Ticaret Bakanlığı ve 2026 AB Kombine Nomanklatürü",
+    "url": "https://ticaret.gov.tr/gumruk-islemleri/bilgi-bankasi",
+    "retrieved_at": "2026-09-10"
+  },
+  "subheadings": {
+    "940110": {
+      "description": "Hava taşıtlarında kullanılan türden oturmaya mahsus mobilyalar",
+      "required_terms": ["hava taşıtı", "uçak", "havacılık"],
+      "missing_qualifier_penalty": 0.18
+    },
+    "940120": {
+      "description": "Motorlu taşıtlarda kullanılan türden oturmaya mahsus mobilyalar",
+      "required_terms": ["motorlu taşıt", "otomobil", "araç koltuğu"],
+      "missing_qualifier_penalty": 0.18
+    },
+    "940131": {
+      "description": "Yüksekliği ayarlanabilen döner koltuklar; ahşap olanlar",
+      "required_terms": ["yüksekliği ayarlanabilir", "yükseklik ayarlı", "döner koltuk"],
+      "missing_qualifier_penalty": 0.12
+    },
+    "940139": {
+      "description": "Yüksekliği ayarlanabilen döner koltuklar; diğerleri",
+      "required_terms": ["yüksekliği ayarlanabilir", "yükseklik ayarlı", "döner koltuk"],
+      "missing_qualifier_penalty": 0.12
+    },
+    "940141": {
+      "description": "Bahçe veya kamp eşyası hariç, yatak haline getirilebilen oturmaya mahsus mobilyalar; ahşap olanlar",
+      "required_terms": ["yatak haline", "yatağa dönüş", "çekyat", "uyku"],
+      "missing_qualifier_penalty": 0.12
+    },
+    "940149": {
+      "description": "Bahçe veya kamp eşyası hariç, yatak haline getirilebilen oturmaya mahsus mobilyalar; diğerleri",
+      "required_terms": ["yatak haline", "yatağa dönüş", "çekyat", "uyku"],
+      "missing_qualifier_penalty": 0.12
+    },
+    "940152": {
+      "description": "Bambudan oturmaya mahsus mobilyalar",
+      "required_terms": ["bambu"],
+      "missing_qualifier_penalty": 0.14
+    },
+    "940153": {
+      "description": "Hint kamışından oturmaya mahsus mobilyalar",
+      "required_terms": ["hint kamışı", "rattan"],
+      "missing_qualifier_penalty": 0.14
+    },
+    "940159": {
+      "description": "Kamış, sepetçi söğüdü, bambu veya benzeri maddelerden diğer oturmaya mahsus mobilyalar",
+      "required_terms": ["kamış", "sepetçi söğüdü", "rattan", "bambu"],
+      "missing_qualifier_penalty": 0.14
+    },
+    "940161": {
+      "description": "Ahşap iskeletli diğer sandalye ve koltuklar; içleri doldurulmuş veya kaplanmış (döşemeli) olanlar",
+      "required_terms": ["döşemeli", "dolgulu", "kaplanmış", "kumaş kaplı", "deri kaplı"],
+      "missing_qualifier_penalty": 0.04
+    },
+    "940169": {
+      "description": "Ahşap iskeletli diğer sandalye ve koltuklar; döşemeli olmayan diğerleri",
+      "required_terms": [],
+      "missing_qualifier_penalty": 0.0
+    },
+    "940171": {
+      "description": "Metal iskeletli diğer sandalye ve koltuklar; içleri doldurulmuş veya kaplanmış (döşemeli) olanlar",
+      "required_terms": ["metal iskelet", "çelik iskelet", "alüminyum iskelet"],
+      "missing_qualifier_penalty": 0.08
+    },
+    "940179": {
+      "description": "Metal iskeletli diğer sandalye ve koltuklar; döşemeli olmayan diğerleri",
+      "required_terms": ["metal iskelet", "çelik iskelet", "alüminyum iskelet"],
+      "missing_qualifier_penalty": 0.08
+    },
+    "940180": {
+      "description": "Oturmaya mahsus diğer mobilyalar",
+      "required_terms": [],
+      "missing_qualifier_penalty": 0.0
+    },
+    "940191": {
+      "description": "Oturmaya mahsus mobilyaların ahşap aksam ve parçaları",
+      "required_terms": ["aksam", "parça", "yedek parça", "bileşen"],
+      "missing_qualifier_penalty": 0.2
+    },
+    "940199": {
+      "description": "Oturmaya mahsus mobilyaların diğer aksam ve parçaları",
+      "required_terms": ["aksam", "parça", "yedek parça", "bileşen"],
+      "missing_qualifier_penalty": 0.2
+    }
+  }
+}

@@ -10,6 +10,8 @@ import json
 import logging
 import math
 import re
+from functools import lru_cache
+from pathlib import Path
 from typing import Generator, List, Dict, Any, Optional, Tuple
 from sqlalchemy import (
     create_engine, Column, Integer, String, Float, Boolean,
@@ -20,6 +22,22 @@ from sqlalchemy.engine import URL
 from sqlalchemy.types import TypeDecorator
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _load_subheading_contexts() -> Dict[str, Dict[str, Any]]:
+    """Ham cetvelde düşen ara grup başlıklarını veri katmanından yükler."""
+    path = Path(__file__).resolve().parents[1] / "data" / "tgtc_subheading_context.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return {
+            re.sub(r"\D", "", str(code)): value
+            for code, value in payload.get("subheadings", {}).items()
+            if isinstance(value, dict)
+        }
+    except (OSError, ValueError, TypeError) as exc:
+        logger.warning("Alt pozisyon bağlam verisi yüklenemedi: %s", exc)
+        return {}
 
 # pgvector SQLAlchemy eklenti kontrolü
 try:
@@ -851,11 +869,22 @@ def hybrid_search_headings_and_gtip(
     for item in candidate_records:
         chapter_notes = notes_by_chapter.get(str(item.get("chapter_code") or "").zfill(2), "")
         code = str(item.get("gtip_code") or "")
+        subheading_context = _load_subheading_contexts().get(code, {})
+        item["branch_context"] = str(subheading_context.get("description") or "")
+        item["required_terms"] = [
+            _normalize_search_text(term)
+            for term in subheading_context.get("required_terms", [])
+            if str(term).strip()
+        ]
+        item["missing_qualifier_penalty"] = float(
+            subheading_context.get("missing_qualifier_penalty") or 0.0
+        )
         relevant_note_lines = " ".join(
             line for line in chapter_notes.splitlines() if code and code in re.sub(r"\D", "", line)
         )
         item["searchable_text"] = " ".join([
             str(item.get("description") or ""),
+            item["branch_context"],
             relevant_note_lines,
         ])
 
@@ -882,6 +911,11 @@ def hybrid_search_headings_and_gtip(
             # Artık ("Diğer") pozisyon yasal bir daldır. Yapay ceza uygulanmaz;
             # seçim yalnızca sorgu kanıtı ve üst dal kilidi içinde yapılır.
             score = match_count / (len(query_tokens) + 1.0)
+            required_terms = item.get("required_terms") or []
+            if required_terms and not any(term in clean_query for term in required_terms):
+                score -= float(item.get("missing_qualifier_penalty") or 0.0)
+            if score <= 0.0:
+                continue
             sparse_scores.append((score, item))
 
     sparse_scores.sort(key=lambda x: x[0], reverse=True)
@@ -951,6 +985,7 @@ def hybrid_search_headings_and_gtip(
         rrf_candidates[gtip] = {
             "gtip_code": gtip,
             "description": item.get("description", ""),
+            "branch_context": item.get("branch_context", ""),
             "chapter": item.get("chapter_code") or gtip[:2],
             "heading": gtip[:4],
             "level": item.get("level", "HEADING"),

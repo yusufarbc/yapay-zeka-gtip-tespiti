@@ -61,9 +61,10 @@ class DiscriminatorExtractor:
         if isinstance(value, TariffBranch):
             return value
         if isinstance(value, Mapping):
+            description = str(value.get("branch_context") or value.get("description") or "")
             return TariffBranch(
                 code=str(value.get("code") or value.get("gtip_code") or ""),
-                description=str(value.get("description") or ""),
+                description=description,
                 score=float(value.get("score", value.get("similarity_score", 0.0)) or 0.0),
                 level=str(value.get("level") or "HEADING"),
             )
@@ -117,7 +118,9 @@ class DiscriminatorExtractor:
         )
 
     def _infer_criterion(self, first: TariffBranch, second: TariffBranch) -> tuple[str, str]:
-        combined = f"{first.description} {second.description}".lower()
+        first_text = first.description.lower()
+        second_text = second.description.lower()
+        combined = f"{first_text} {second_text}"
         threshold = self._THRESHOLD.search(combined)
         if threshold:
             value = threshold.group("value").replace(",", ".")
@@ -132,7 +135,23 @@ class DiscriminatorExtractor:
             label = f" {unit}" if unit else ""
             return parameter, f"Ürünün ilgili teknik değeri {value}{label} eşiğinin hangi tarafındadır?"
 
-        materials = [material for material in self._MATERIALS if material in combined]
+        upholstered_terms = ("döşemeli", "dolgulu", "içleri doldurulmuş", "kaplanmış")
+        negative_upholstery_terms = ("döşemeli olmayan", "doldurulmamış", "kaplanmamış")
+
+        def is_upholstered(text: str) -> bool:
+            if any(term in text for term in negative_upholstery_terms):
+                return False
+            return any(term in text for term in upholstered_terms)
+
+        first_upholstered = is_upholstered(first_text)
+        second_upholstered = is_upholstered(second_text)
+        if first_upholstered != second_upholstered:
+            return "dosemeli_mi", "Sandalye/koltuğun oturma veya sırt bölümü dolgu ya da kumaş/deri ile döşenmiş midir?"
+
+        materials = [
+            material for material in self._MATERIALS
+            if (material in first_text) != (material in second_text)
+        ]
         if materials:
             material = materials[0]
             return f"{material}_orani", f"Ürünün baskın malzemesi veya ağırlıkça ana bileşeni {material} mudur?"
@@ -141,4 +160,3 @@ class DiscriminatorExtractor:
 
 
 discriminator_extractor = DiscriminatorExtractor()
-
