@@ -765,8 +765,9 @@ def hybrid_search_headings_and_gtip(
             )
         # Aday kümesini Python'da tüm tarife ağacını dolaşarak değil, indeksli
         # level/chapter/parent alanlarıyla SQL tarafında daralt. Eski veri
-        # yüklemelerinde SUBHEADING satırları olmayabileceğinden yalnız o seviye
-        # için GTIP yapraklarından 6 haneli düğüm türetme fallback'i korunur.
+        # yüklemelerinde bazı 6 haneli alt pozisyonlar ayrı SUBHEADING satırı,
+        # bazıları ise doğrudan 12 haneli yaprak olarak bulunduğundan iki kayıt
+        # türü aynı kilitli pozisyon içinde birlikte okunur.
         if target_level == "HEADING":
             query = query.filter(TgtcGtipModel.level == "HEADING")
         elif target_level == "GTIP":
@@ -777,21 +778,15 @@ def hybrid_search_headings_and_gtip(
                     for parent in clean_parents
                 ]))
         elif target_level == "SUBHEADING":
-            subheading_query = query.filter(TgtcGtipModel.level == "SUBHEADING")
+            subheading_query = query.filter(
+                TgtcGtipModel.level.in_(["SUBHEADING", "GTIP"])
+            )
             if clean_parents:
                 subheading_query = subheading_query.filter(or_(*[
                     TgtcGtipModel.gtip_code.like(f"{parent}%")
                     for parent in clean_parents
                 ]))
             db_items = subheading_query.all()
-            if not db_items:
-                query = query.filter(TgtcGtipModel.level == "GTIP")
-                if clean_parents:
-                    query = query.filter(or_(*[
-                        TgtcGtipModel.gtip_code.like(f"{parent}%")
-                        for parent in clean_parents
-                    ]))
-                db_items = query.all()
         if target_level != "SUBHEADING":
             db_items = query.all()
         for it in db_items:
