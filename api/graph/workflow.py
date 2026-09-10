@@ -10,6 +10,8 @@ Aşama 5: Deterministik Karar ve %5 Eşik HITL Kapısı (No-AI Output Binding).
 import uuid
 import json
 import logging
+import re
+from decimal import Decimal, InvalidOperation
 from typing import Dict, Any, Tuple, Optional, List
 from api.graph.state import GTIPState, CustomsState
 from api.modules.feature_extractor import feature_extractor
@@ -19,6 +21,7 @@ from api.modules.predicate_registry import predicate_registry
 from api.modules.llm_verifier import llm_verifier
 from api.modules.deterministic_engine import deterministic_engine
 from api.schemas.product import ProductFeatures, GTIPCandidate, GTIPDecision, HITLQuestion, HITLOption
+from api.schemas.predicate import CandidateSelectionStatus, PredicateStatus
 from api.db.gcp_emulator import local_state_store
 
 logger = logging.getLogger("GTIPWorkflowEngine")
@@ -40,7 +43,68 @@ def _bind_legal_sources(decision: GTIPDecision, candidate: GTIPCandidate) -> GTI
     decision.consulted_sources = list(candidate.consulted_sources)
     return decision
 
-def check_dynamic_gtip_rules(heading: str, specs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _comparable_value(value: Any) -> Any:
+    raw = str(value or "").strip().lower().replace(",", ".")
+    if raw in {"true", "evet", "yes", "var", "1"}:
+        return True
+    if raw in {"false", "hayır", "hayir", "no", "yok", "0"}:
+        return False
+    match = re.search(r"-?\d+(?:\.\d+)?", raw)
+    if match:
+        try:
+            return Decimal(match.group(0))
+        except InvalidOperation:
+            pass
+    return raw
+
+
+def _condition_matches(actual: Any, operator: str, expected: Any) -> bool:
+    left = _comparable_value(actual)
+    right = _comparable_value(expected)
+    op = str(operator or "==").strip().lower()
+    try:
+        if op in {"==", "="}:
+            return left == right
+        if op in {"!=", "<>"}:
+            return left != right
+        if op == "<=":
+            return left <= right
+        if op == "<":
+            return left < right
+        if op == ">=":
+            return left >= right
+        if op == ">":
+            return left > right
+        if op == "contains":
+            return str(right).lower() in str(left).lower()
+        if op == "in":
+            values = expected if isinstance(expected, (list, tuple, set)) else str(expected).split("|")
+            return str(actual).strip().lower() in {str(value).strip().lower() for value in values}
+    except (TypeError, InvalidOperation):
+        return False
+    return False
+
+
+def _option_impact_value(option: Dict[str, Any]) -> str:
+    if option.get("value") is not None:
+        return str(option["value"])
+    option_id = str(option.get("id") or "").lower()
+    known_values = {
+        "opt_le_10kg": "10kg",
+        "opt_gt_10kg": "10.01kg",
+        "opt_has_both": "true",
+        "opt_no_both": "false",
+        "opt_cotton_gte_85": "85%",
+        "opt_cotton_lt_85": "84.99%",
+    }
+    return known_values.get(option_id, str(option.get("id") or option.get("label") or ""))
+
+
+def check_dynamic_gtip_rules(
+    heading: str,
+    specs: Dict[str, Any],
+    candidate_gtip: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     """
     gcp_architecture_report.md Bölüm 6:
     dynamic_rule_auditor_node - AlloyDB/Cloud SQL gtip_rules tablosundaki eşik şartlarını denetler.
@@ -53,16 +117,29 @@ def check_dynamic_gtip_rules(heading: str, specs: Dict[str, Any]) -> Optional[Di
             ).order_by(GtipRuleModel.oncelik.asc()).all()
 
             for rule in rules:
+                if candidate_gtip and rule.target_gtip:
+                    if re.sub(r"\D", "", str(candidate_gtip)) != re.sub(r"\D", "", str(rule.target_gtip)):
+                        continue
                 if rule.parametre_adi not in specs:
                     try:
                         options = json.loads(rule.secenekler) if isinstance(rule.secenekler, str) else rule.secenekler
                     except Exception:
                         options = []
                     return {
+                        "status": "MISSING",
                         "missing_parameter": rule.parametre_adi,
                         "question": rule.soru_metni,
                         "options": options,
                         "target_gtip": rule.target_gtip
+                    }
+                if not _condition_matches(specs.get(rule.parametre_adi), rule.kosul_operatoru, rule.esik_deger):
+                    return {
+                        "status": "FAILED",
+                        "missing_parameter": rule.parametre_adi,
+                        "target_gtip": rule.target_gtip,
+                        "actual_value": specs.get(rule.parametre_adi),
+                        "operator": rule.kosul_operatoru,
+                        "expected_value": rule.esik_deger,
                     }
     except Exception as ex:
         logger.warning(f"Dinamik kural denetimi uyarısı: {ex}")
@@ -92,12 +169,52 @@ class GTIPWorkflowEngine:
                 audit_notes=["RAG uzayında uygun emsal karar bulunamadı. Kıdemli Müşavire yönlendirildi."]
             )
 
-        top_candidate = candidates[0]
+        selection = llm_verifier.select_candidate(
+            raw_text=raw_text,
+            candidates=candidates,
+            allowed_chapters=allowed_chapters,
+            gir_rules=gir_rules,
+        )
+        if selection.status != CandidateSelectionStatus.SELECT or not selection.selected_candidate_id:
+            return GTIPDecision(
+                session_id=session_id,
+                status="MANUAL_REVIEW_REQUIRED",
+                confidence_score=0.0,
+                audit_notes=(selection.reasoning_points + selection.missing_information)[:8],
+            )
+
+        selected_index = int(selection.selected_candidate_id[1:]) - 1
+        if selected_index < 0 or selected_index >= min(5, len(candidates)):
+            return GTIPDecision(
+                session_id=session_id,
+                status="MANUAL_REVIEW_REQUIRED",
+                audit_notes=["Kapalı aday kümesi dışında seçim reddedildi."],
+            )
+        top_candidate = candidates[selected_index]
 
         # 3.5. Aşama: Dinamik Kural Denetimi (gcp_architecture_report.md Bölüm 6 - Dynamic Rule Auditor)
         heading_code = top_candidate.heading or top_candidate.gtip_code[:4]
-        rule_check = check_dynamic_gtip_rules(heading_code, features.technical_specifications)
+        rule_check = check_dynamic_gtip_rules(
+            heading_code,
+            features.technical_specifications,
+            candidate_gtip=top_candidate.gtip_code,
+        )
         if rule_check:
+            if rule_check.get("status") == "FAILED":
+                return GTIPDecision(
+                    session_id=session_id,
+                    status="MANUAL_REVIEW_REQUIRED",
+                    gtip_code=top_candidate.gtip_code,
+                    confidence_score=0.0,
+                    applied_gir_rules=gir_rules,
+                    legal_sources=top_candidate.legal_sources,
+                    consulted_sources=top_candidate.consulted_sources,
+                    audit_notes=[
+                        "Dinamik tarife koşulu karşılanmadı: "
+                        f"{rule_check['missing_parameter']}={rule_check['actual_value']} "
+                        f"{rule_check['operator']} {rule_check['expected_value']}"
+                    ],
+                )
             # Eksik parametre tespit edildi: Müşavire dinamik soru yönelt ve durumu askıya al
             opts = []
             for idx, o in enumerate(rule_check.get("options", [])):
@@ -106,7 +223,7 @@ class GTIPWorkflowEngine:
                 opts.append(HITLOption(
                     option_id=opt_id,
                     text=label,
-                    impact_data={rule_check["missing_parameter"]: opt_id}
+                    impact_data={rule_check["missing_parameter"]: _option_impact_value(o)}
                 ))
             hitl_q = HITLQuestion(
                 question_id=f"q_{rule_check['missing_parameter']}_{session_id[:6]}",
@@ -118,7 +235,7 @@ class GTIPWorkflowEngine:
                 session_id=session_id,
                 status="WAITING_FOR_USER",
                 gtip_code=top_candidate.gtip_code,
-                confidence_score=0.75,
+                confidence_score=0.0,
                 hitl_question=hitl_q,
                 applied_gir_rules=gir_rules,
                 precedent_btbs=top_candidate.precedents,
@@ -144,7 +261,15 @@ class GTIPWorkflowEngine:
             return decision
 
         # 4. Aşama: Yasal Yüklem ve Yapılandırılmış Doğrulama (Deep Reasoning - Gemini 2.5 Pro / 3.6 Flash)
-        predicates = predicate_registry.get_predicates_for_gtip(top_candidate.gtip_code)
+        chapter_note = next(
+            (source.excerpt for source in top_candidate.legal_sources if source.source_type == "IZAHNAME"),
+            "",
+        )
+        predicates = predicate_registry.get_predicates_for_gtip(
+            top_candidate.gtip_code,
+            top_candidate.description,
+            chapter_note,
+        )
         evidence_context = _format_evidence_context(top_candidate)
         
         verification_results = None
@@ -162,8 +287,7 @@ class GTIPWorkflowEngine:
                 candidate_gtip=top_candidate.gtip_code,
                 heading_desc=top_candidate.description,
                 chapter_notes=next(
-                    (s.excerpt for s in top_candidate.legal_sources if s.source_type == "IZAHNAME"),
-                    "",
+                    (s.excerpt for s in top_candidate.legal_sources if s.source_type == "IZAHNAME"), "",
                 ),
                 gir_rules=gir_rules,
                 evidence_context=evidence_context,
@@ -254,7 +378,80 @@ class GTIPWorkflowEngine:
             }
             return
 
-        top_candidate = candidates[0]
+        selection = await asyncio.to_thread(
+            llm_verifier.select_candidate, raw_text, candidates, allowed_chapters, gir_rules
+        )
+        if selection.status != CandidateSelectionStatus.SELECT or not selection.selected_candidate_id:
+            decision = GTIPDecision(
+                session_id=session_id,
+                status="MANUAL_REVIEW_REQUIRED",
+                audit_notes=(selection.reasoning_points + selection.missing_information)[:8],
+            )
+            yield {
+                "stage": "COMPLETED",
+                "status": decision.status,
+                "message": "Kapalı aday kümesinde güvenilir seçim yapılamadı.",
+                "decision": decision.model_dump(),
+            }
+            return
+        top_candidate = candidates[int(selection.selected_candidate_id[1:]) - 1]
+
+        rule_check = await asyncio.to_thread(
+            check_dynamic_gtip_rules,
+            top_candidate.heading or top_candidate.gtip_code[:4],
+            features.technical_specifications,
+            top_candidate.gtip_code,
+        )
+        if rule_check:
+            if rule_check.get("status") == "FAILED":
+                decision = GTIPDecision(
+                    session_id=session_id,
+                    status="MANUAL_REVIEW_REQUIRED",
+                    gtip_code=top_candidate.gtip_code,
+                    audit_notes=["Dinamik tarife koşulu karşılanmadı."],
+                )
+            else:
+                options = [
+                    HITLOption(
+                        option_id=option.get("id", f"OPT_{index}"),
+                        text=option.get("label", option.get("text", str(option))),
+                        impact_data={rule_check["missing_parameter"]: _option_impact_value(option)},
+                    )
+                    for index, option in enumerate(rule_check.get("options", []))
+                ]
+                question = HITLQuestion(
+                    question_id=f"q_{rule_check['missing_parameter']}_{session_id[:6]}",
+                    question_text=rule_check["question"],
+                    missing_parameter=rule_check["missing_parameter"],
+                    options=options,
+                )
+                decision = GTIPDecision(
+                    session_id=session_id,
+                    status="WAITING_FOR_USER",
+                    gtip_code=top_candidate.gtip_code,
+                    hitl_question=question,
+                    legal_sources=top_candidate.legal_sources,
+                    consulted_sources=top_candidate.consulted_sources,
+                )
+                local_state_store.save_state(session_id, {
+                    "session_id": session_id,
+                    "raw_text": raw_text,
+                    "image_uri": image_uri,
+                    "product_features": features.model_dump(),
+                    "allowed_chapters": allowed_chapters,
+                    "applied_gir_rules": gir_rules,
+                    "candidates": [candidate.model_dump() for candidate in candidates],
+                    "selected_gtip": top_candidate.gtip_code,
+                    "status": decision.status,
+                    "hitl_question": question.model_dump(),
+                })
+            yield {
+                "stage": "COMPLETED",
+                "status": decision.status,
+                "message": "Dinamik tarife kuralı için kullanıcı teyidi gerekiyor.",
+                "decision": decision.model_dump(),
+            }
+            return
 
         yield {
             "stage": "LLM_VERIFICATION",
@@ -263,7 +460,15 @@ class GTIPWorkflowEngine:
             "session_id": session_id
         }
         await asyncio.sleep(0.05)
-        predicates = await asyncio.to_thread(predicate_registry.get_predicates_for_gtip, top_candidate.gtip_code)
+        chapter_note = next(
+            (source.excerpt for source in top_candidate.legal_sources if source.source_type == "IZAHNAME"), ""
+        )
+        predicates = await asyncio.to_thread(
+            predicate_registry.get_predicates_for_gtip,
+            top_candidate.gtip_code,
+            top_candidate.description,
+            chapter_note,
+        )
         evidence_context = _format_evidence_context(top_candidate)
         
         verification_results = None
@@ -333,18 +538,22 @@ class GTIPWorkflowEngine:
         features_data = state_dict.get("product_features", {})
         features = ProductFeatures(**features_data)
 
-        # Seçilen yanıt verisini teknik özelliklere ekle veya %5 Aday Teyidini algıla
-        hitl_q = state_dict.get("hitl_question")
+        # Seçilen yanıt yalnızca sunucunun daha önce imzaladığı seçeneklerden gelir.
         selected_gtip_choice = None
+        selected_impact: Dict[str, str] = {}
         if hitl_q and "options" in hitl_q:
             for opt in hitl_q["options"]:
                 if opt["option_id"] == selected_option_id:
-                    imp = opt.get("impact_data", {})
-                    if "selected_gtip" in imp:
-                        selected_gtip_choice = imp["selected_gtip"]
-                    features.technical_specifications.update(imp)
-                    if "primary_material" in imp:
-                        features.primary_material = imp["primary_material"]
+                    selected_impact = dict(opt.get("impact_data", {}))
+                    if "selected_gtip" in selected_impact:
+                        selected_gtip_choice = selected_impact["selected_gtip"]
+                    feature_updates = {
+                        key: value for key, value in selected_impact.items()
+                        if key not in {"selected_gtip", "predicate_verified"}
+                    }
+                    features.technical_specifications.update(feature_updates)
+                    if "primary_material" in selected_impact:
+                        features.primary_material = selected_impact["primary_material"]
 
         selected_gtip = selected_gtip_choice or state_dict.get("selected_gtip")
         stored_candidates_data = state_dict.get("candidates", [])
@@ -364,66 +573,131 @@ class GTIPWorkflowEngine:
                     status="MANUAL_REVIEW_REQUIRED",
                     audit_notes=["RAG uzayında uygun emsal karar bulunamadı. Kıdemli Müşavire yönlendirildi."]
                 )
-            top_candidate = candidates[0]
-
-        is_yes = (selected_option_id == "OPT_YES" or "YES" in selected_option_id.upper() or "EVET" in selected_option_id.upper() or selected_gtip_choice is not None)
-        base_score = top_candidate.score if hasattr(top_candidate, 'score') and top_candidate.score else 0.85
-
-        if selected_gtip_choice:
-            confidence = round(min(0.96, max(0.85, base_score * 1.05)), 2)
-            audit_note_msg = f"Gümrük Müşaviri %5 yakınlık eşiğindeki soruda {selected_gtip_choice} pozisyonunu kesinleştirdi."
-            llm_commentary = (
-                f"Yapay Zeka Mantıksal Doğrulama (Müşavir Karar Tayini): %5 eşik kuralı sorusunda Gümrük Müşavirimiz "
-                f"{selected_gtip_choice} tarife pozisyonunu seçtiğinden, pozisyon %{int(confidence*100)} güvenle kesinleştirildi."
+            selection = llm_verifier.select_candidate(
+                state_dict.get("raw_text", ""), candidates, allowed_chapters, gir_rules
             )
-        elif is_yes:
-            confidence = round(min(0.96, max(0.80, base_score * 1.05)), 2)
-            audit_note_msg = "Gümrük Müşaviri 'EVET' yanıtı verdi. Teknik şart doğrulandı."
-            llm_commentary = (
-                f"Yapay Zeka Ajan Değerlendirmesi: Gümrük Müşavirimizin seçtiği 'EVET' teyidi uyarınca "
-                f"ürünün niteliği ve ilgili fasıl notları %{int(confidence*100)} güven skoru ile doğrulanmıştır."
-            )
-        else:
-            confidence = round(max(0.55, min(0.72, base_score * 0.70)), 2)
-            audit_note_msg = "⚠️ Gümrük Müşaviri 'HAYIR' yanıtı verdi. Teknik şart sağlanamadı (ŞÜPHELİ / DÜŞÜK GÜVEN)."
-            llm_commentary = (
-                f"⚠️ ŞÜPHELİ / UYUMSUZ TEYİT: Gümrük Müşavirimiz 'HAYIR (Teknik özellik sağlanmıyor)' yanıtını seçtiği için "
-                f"ürün bu pozisyonun yasal şartını karşılamamaktadır. Güven skoru %{int(confidence*100)} seviyesine düşürülmüştür. "
-                f"Alternatif tarife pozisyonu (örn. aksam/parça veya ikincil alt açılım) değerlendirilmelidir."
-            )
+            if selection.status != CandidateSelectionStatus.SELECT or not selection.selected_candidate_id:
+                return GTIPDecision(
+                    session_id=session_id,
+                    status="MANUAL_REVIEW_REQUIRED",
+                    audit_notes=(selection.reasoning_points + selection.missing_information)[:8],
+                )
+            top_candidate = candidates[int(selection.selected_candidate_id[1:]) - 1]
+            stored_candidates = candidates
 
-        official_statute_text = (
-            f"Türk Gümrük Tarife Cetveli (TGTC) Madde {top_candidate.gtip_code[:4]} ve GİR Kuralları: "
-            f"{top_candidate.description}. (Resmi Mevzuat Veritabanı Kaydı)"
+        if selected_impact.get("predicate_verified") == "FALSE" or selected_option_id == "OPT_NO":
+            decision = GTIPDecision(
+                session_id=session_id,
+                status="MANUAL_REVIEW_REQUIRED",
+                gtip_code=top_candidate.gtip_code,
+                confidence_score=0.0,
+                legal_sources=top_candidate.legal_sources,
+                consulted_sources=top_candidate.consulted_sources,
+                audit_notes=["Kullanıcı zorunlu yasal/teknik koşulu olumsuz yanıtladı; otomatik onay engellendi."],
+            )
+            state_dict["status"] = decision.status
+            state_dict["product_features"] = features.model_dump()
+            state_dict["hitl_question"] = None
+            state_dict["audit_notes"] = decision.audit_notes
+            local_state_store.save_state(session_id, state_dict)
+            return decision
+
+        # Teknik seçenek yanıtlandıktan sonra bütün dinamik kurallar tekrar çalışır.
+        rule_check = check_dynamic_gtip_rules(
+            top_candidate.heading or top_candidate.gtip_code[:4],
+            features.technical_specifications,
+            candidate_gtip=top_candidate.gtip_code,
         )
+        if rule_check and rule_check.get("status") == "MISSING":
+            options = [
+                HITLOption(
+                    option_id=option.get("id", f"OPT_{index}"),
+                    text=option.get("label", option.get("text", str(option))),
+                    impact_data={rule_check["missing_parameter"]: _option_impact_value(option)},
+                )
+                for index, option in enumerate(rule_check.get("options", []))
+            ]
+            next_question = HITLQuestion(
+                question_id=f"q_{rule_check['missing_parameter']}_{session_id[:6]}",
+                question_text=rule_check["question"],
+                missing_parameter=rule_check["missing_parameter"],
+                options=options,
+            )
+            decision = GTIPDecision(
+                session_id=session_id,
+                status="WAITING_FOR_USER",
+                gtip_code=top_candidate.gtip_code,
+                confidence_score=0.0,
+                hitl_question=next_question,
+                applied_gir_rules=gir_rules,
+                precedent_btbs=top_candidate.precedents,
+                legal_sources=top_candidate.legal_sources,
+                consulted_sources=top_candidate.consulted_sources,
+                audit_notes=[f"Sıradaki zorunlu teknik parametre bekleniyor: {rule_check['missing_parameter']}"],
+            )
+            state_dict["status"] = decision.status
+            state_dict["product_features"] = features.model_dump()
+            state_dict["hitl_question"] = next_question.model_dump()
+            state_dict["selected_gtip"] = top_candidate.gtip_code
+            local_state_store.save_state(session_id, state_dict)
+            return decision
 
-        precedents = top_candidate.precedents
+        if rule_check and rule_check.get("status") == "FAILED":
+            decision = GTIPDecision(
+                session_id=session_id,
+                status="MANUAL_REVIEW_REQUIRED",
+                gtip_code=top_candidate.gtip_code,
+                confidence_score=0.0,
+                legal_sources=top_candidate.legal_sources,
+                consulted_sources=top_candidate.consulted_sources,
+                audit_notes=[f"Yanıtlanan teknik değer seçilen GTİP koşulunu karşılamıyor: {rule_check}"],
+            )
+            state_dict["status"] = decision.status
+            state_dict["product_features"] = features.model_dump()
+            state_dict["hitl_question"] = None
+            state_dict["audit_notes"] = decision.audit_notes
+            local_state_store.save_state(session_id, state_dict)
+            return decision
 
-        decision_status = "COMPLETED" if is_yes else "MANUAL_REVIEW_REQUIRED"
-        state_dict["status"] = decision_status
+        raw_text = state_dict.get("raw_text", "")
+        chapter_note = next(
+            (source.excerpt for source in top_candidate.legal_sources if source.source_type == "IZAHNAME"), ""
+        )
+        predicates = predicate_registry.get_predicates_for_gtip(
+            top_candidate.gtip_code,
+            top_candidate.description,
+            chapter_note,
+        )
+        evidence_context = _format_evidence_context(top_candidate)
+        verification_results = llm_verifier.verify_predicates(
+            raw_text=raw_text,
+            predicates=predicates,
+            allowed_chapters=allowed_chapters,
+            evidence_context=evidence_context,
+        )
+        predicate_answer = selected_impact.get("predicate_verified")
+        answered_predicate = hitl_q.get("missing_parameter")
+        if predicate_answer in {"TRUE", "FALSE"}:
+            for result in verification_results:
+                if result.predicate_id == answered_predicate:
+                    result.status = PredicateStatus(predicate_answer)
+
+        evaluation_candidates = [top_candidate] if selected_gtip_choice else stored_candidates
+        decision = deterministic_engine.evaluate_decision(
+            session_id, top_candidate, verification_results, evaluation_candidates
+        )
+        decision = _bind_legal_sources(decision, top_candidate)
+
+        state_dict["status"] = decision.status
         state_dict["product_features"] = features.model_dump()
-        state_dict["hitl_question"] = None
-        state_dict["audit_notes"] = [audit_note_msg]
-        state_dict["confidence_score"] = confidence
+        state_dict["hitl_question"] = decision.hitl_question.model_dump() if decision.hitl_question else None
+        state_dict["audit_notes"] = decision.audit_notes
+        state_dict["confidence_score"] = decision.confidence_score
         state_dict["selected_gtip"] = top_candidate.gtip_code
-        state_dict["official_statute_text"] = official_statute_text
-        state_dict["llm_reasoning_commentary"] = llm_commentary
+        state_dict["official_statute_text"] = decision.official_statute_text
+        state_dict["llm_reasoning_commentary"] = decision.llm_reasoning_commentary
         local_state_store.save_state(session_id, state_dict)
-
-        return GTIPDecision(
-            session_id=session_id,
-            status=decision_status,
-            gtip_code=top_candidate.gtip_code,
-            confidence_score=confidence,
-            official_statute_text=official_statute_text,
-            llm_reasoning_commentary=llm_commentary,
-            legal_justification=official_statute_text,
-            applied_gir_rules=gir_rules,
-            precedent_btbs=precedents,
-            legal_sources=top_candidate.legal_sources,
-            consulted_sources=top_candidate.consulted_sources,
-            audit_notes=[audit_note_msg]
-        )
+        return decision
 
 workflow_engine = GTIPWorkflowEngine()
 
@@ -432,28 +706,19 @@ workflow_engine = GTIPWorkflowEngine()
 # ==============================================================================
 
 def feature_extractor_node(state: CustomsState):
-    """Gemini Flash-Lite ile ürün özelliklerini yapılandırılmış şemada çıkarır."""
-    from api.modules.vertex_client import get_genai_client
-    from google.genai import types
-    client = get_genai_client()
-    prompt = f"Şu ürün tanımından teknik parametreleri JSON olarak çıkar: {state['user_query']}"
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash-lite",
-            contents=prompt,
-            config=types.GenerateContentConfig(response_mime_type="application/json")
-        )
-        extracted = json.loads(response.text) if hasattr(response, "text") and response.text else {}
-    except Exception as e:
-        logger.warning(f"feature_extractor_node fallback: {e}")
-        extracted = {"raw": state.get("user_query", "")}
-
-    heading = "8471" if "bilgisayar" in state.get("user_query", "").lower() else "5208"
-    return {"product_specs": extracted, "candidate_heading": heading, "status": "IN_PROGRESS"}
+    """Ana özellik çıkarıcıyı kullanır; örnek/sabit pozisyon üretmez."""
+    features = feature_extractor.extract_features(state.get("user_query", ""))
+    return {
+        "product_specs": features.technical_specifications,
+        "candidate_heading": None,
+        "status": "IN_PROGRESS",
+    }
 
 def dynamic_rule_auditor_node(state: CustomsState, session=None):
     """AlloyDB / Cloud SQL gtip_rules tablosundaki eşik şartlarını denetler."""
-    heading = state.get("candidate_heading") or "8471"
+    heading = state.get("candidate_heading")
+    if not heading:
+        return {"status": "RESOLVED"}
     specs = state.get("product_specs", {})
     rule_check = check_dynamic_gtip_rules(heading, specs)
     if rule_check:
@@ -468,14 +733,17 @@ def dynamic_rule_auditor_node(state: CustomsState, session=None):
     return {"status": "RESOLVED"}
 
 def resolver_node(state: CustomsState, session=None):
-    """Emsal BTB ve Tarife Metnini eşleştirerek nihai 12 haneli GTİP'i kesinleştirir."""
-    gtip_result = "8471.30.00.00.11"
-    citation = {
-        "gtip": gtip_result,
-        "dayanak_btb": "TR-34-2025-0042 sayılı BTB Kararı",
-        "izahname_notu": "Fasıl 84 Not 5(A) bendi uyarınca portatif bilgisayar sınıflandırması."
+    """Sabit örnek kod yerine üretimde kullanılan fail-closed karar hattına bağlanır."""
+    decision = workflow_engine.start_analysis(state.get("user_query", ""))
+    return {
+        "final_gtip": decision.gtip_code,
+        "legal_basis": {
+            "official_statute_text": decision.official_statute_text,
+            "legal_sources": [source.model_dump() for source in decision.legal_sources],
+        },
+        "status": decision.status,
+        "audit_notes": decision.audit_notes,
     }
-    return {"final_gtip": gtip_result, "legal_basis": citation, "status": "COMPLETED"}
 
 def build_customs_workflow(checkpointer=None):
     """LangGraph StateGraph oluşturur."""

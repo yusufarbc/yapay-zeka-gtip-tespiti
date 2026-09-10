@@ -12,6 +12,11 @@ class FactStatus(str, Enum):
     INFERRED = "INFERRED"
     MISSING = "MISSING"
 
+class CandidateSelectionStatus(str, Enum):
+    SELECT = "SELECT"
+    INSUFFICIENT_INFORMATION = "INSUFFICIENT_INFORMATION"
+    NO_MATCH = "NO_MATCH"
+
 class LegalPredicate(BaseModel):
     predicate_id: str = Field(..., description="Tekil kural kimliği (ör: P_8542_1)")
     description: str = Field(..., description="Doğrulanacak yasal/teknik koşul açıklaması")
@@ -30,6 +35,14 @@ class ProductFact(BaseModel):
     feature_name: str
     value: Optional[Any] = None
     status: FactStatus = FactStatus.EXPLICIT
+
+class CandidateSelection(BaseModel):
+    """LLM'nin yalnızca sunucu tarafından verilen aday kimliklerinden seçebildiği çıktı."""
+    status: CandidateSelectionStatus
+    selected_candidate_id: Optional[str] = None
+    reasoning_points: List[str] = Field(default_factory=list, max_length=6)
+    missing_information: List[str] = Field(default_factory=list, max_length=6)
+    evidence_source_refs: List[str] = Field(default_factory=list, max_length=12)
 
 class TariffVerification(BaseModel):
     """

@@ -318,6 +318,7 @@ def load_btb_catalog() -> List[Dict[str, Any]]:
                     or ("TGTC_2026" if btb_id.startswith("TGTC2026-") else "BTB")
                 ).upper(),
                 "valid_until": str(item.get("valid_until") or item.get("gecerlilik_tarihi") or "9999-12-31"),
+                "embedding": item.get("embedding"),
             })
         return enriched_list
 
@@ -382,8 +383,9 @@ def load_btb_catalog() -> List[Dict[str, Any]]:
                 GumrukEmsalKararModel.resmi_gazete_sayisi,
                 GumrukEmsalKararModel.kaynak_url,
                 GumrukEmsalKararModel.valid_until,
+                GumrukEmsalKararModel.embedding,
             ).limit(2500).all()
-            for ref_no, er_id, gtip_kodu, pub_date, esya_tanimi, karar_tipi, hukuki_gerekce, rg_sayisi, kaynak_url, valid_until in emsal_rows:
+            for ref_no, er_id, gtip_kodu, pub_date, esya_tanimi, karar_tipi, hukuki_gerekce, rg_sayisi, kaynak_url, valid_until, embedding in emsal_rows:
                 all_raw_items.append({
                     "btb_no": ref_no or f"EMS-{er_id}",
                     "gtip_code": gtip_kodu,
@@ -395,6 +397,7 @@ def load_btb_catalog() -> List[Dict[str, Any]]:
                     "source_type": karar_tipi,
                     "source_url": kaynak_url,
                     "valid_until": valid_until,
+                    "embedding": embedding,
                 })
         except Exception as ex_emsal:
             logger.warning(f"[TGTC Catalog] GumrukEmsalKararModel okuma uyarısı: {ex_emsal}")

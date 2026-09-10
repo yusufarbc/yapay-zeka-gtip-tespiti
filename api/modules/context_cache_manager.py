@@ -8,6 +8,7 @@ böylece 4 worker da aynı cache'i kullanır (her worker ayrı cache oluşturmaz
 """
 import os
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Any
 from api.config import settings
 
@@ -27,6 +28,7 @@ class ContextCacheManager:
     """
     def __init__(self):
         self.cached_content_names: dict = {}
+        self.cached_content_expiry: dict = {}
         self.client: Optional[Any] = None
 
     def _read_cache_from_store(self, model_name: Optional[str] = None) -> Optional[str]:
@@ -35,18 +37,32 @@ class ContextCacheManager:
             from api.db.gcp_emulator import local_state_store
             key = _get_cache_state_key(model_name)
             stored = local_state_store.get_state(key)
-            if stored and stored.get("name"):
-                return stored["name"]
+            if stored and stored.get("name") and stored.get("expires_at"):
+                try:
+                    expires_at = datetime.fromisoformat(str(stored["expires_at"]).replace("Z", "+00:00"))
+                    if expires_at > datetime.now(timezone.utc) + timedelta(minutes=2):
+                        self.cached_content_expiry[key] = expires_at
+                        return stored["name"]
+                except (TypeError, ValueError):
+                    pass
+                logger.info("[ContextCacheManager] Süresi dolmuş/geçersiz cache kaydı yok sayıldı (%s).", model_name)
         except Exception as e:
             logger.debug(f"[ContextCacheManager] Cache adı okunamadı: {e}")
         return None
 
-    def _save_cache_to_store(self, cache_name: str, model_name: Optional[str] = None):
+    def _save_cache_to_store(
+        self,
+        cache_name: str,
+        model_name: Optional[str] = None,
+        expires_at: Optional[datetime] = None,
+    ):
         """Modele ait cache adını paylaşımlı depoya yazar."""
         try:
             from api.db.gcp_emulator import local_state_store
             key = _get_cache_state_key(model_name)
-            local_state_store.save_state(key, {"name": cache_name})
+            expiry = expires_at or (datetime.now(timezone.utc) + timedelta(hours=23, minutes=55))
+            local_state_store.save_state(key, {"name": cache_name, "expires_at": expiry.isoformat()})
+            self.cached_content_expiry[key] = expiry
             logger.info(f"[ContextCacheManager] Cache adı ({model_name}) paylaşımlı depoya yazıldı: {cache_name}")
         except Exception as e:
             logger.warning(f"[ContextCacheManager] Cache adı kaydedilemedi: {e}")
@@ -119,8 +135,13 @@ class ContextCacheManager:
                 )
             )
             self.cached_content_names[target_model] = cache.name
+            raw_expiry = getattr(cache, "expire_time", None)
+            if isinstance(raw_expiry, datetime):
+                expires_at = raw_expiry if raw_expiry.tzinfo else raw_expiry.replace(tzinfo=timezone.utc)
+            else:
+                expires_at = datetime.now(timezone.utc) + timedelta(hours=23, minutes=55)
             # 2. Cache adını paylaşımlı depoya yaz (diğer worker'lar okuyabilir)
-            self._save_cache_to_store(cache.name, target_model)
+            self._save_cache_to_store(cache.name, target_model, expires_at)
             logger.info(f"[OK] Vertex AI Context Cache Başarıyla Oluşturuldu ({target_model}): {cache.name}")
             return cache.name
         except Exception as e:
@@ -129,6 +150,10 @@ class ContextCacheManager:
 
     def get_cache_name(self, model_name: str = None) -> Optional[str]:
         target_model = model_name or settings.REASONING_LLM_MODEL
+        state_key = _get_cache_state_key(target_model)
+        expiry = self.cached_content_expiry.get(state_key)
+        if expiry and expiry <= datetime.now(timezone.utc) + timedelta(minutes=2):
+            self.invalidate_cache(target_model)
         # Önce in-memory cache'i kontrol et
         if target_model not in self.cached_content_names or not self.cached_content_names[target_model]:
             # Paylaşımlı depodan oku (diğer worker oluşturmuş olabilir)
@@ -143,6 +168,7 @@ class ContextCacheManager:
         """Cache'i geçersiz kılar (mevzuat güncellemesinde çağrılır)."""
         target_model = model_name or settings.REASONING_LLM_MODEL
         self.cached_content_names.pop(target_model, None)
+        self.cached_content_expiry.pop(_get_cache_state_key(target_model), None)
         try:
             from api.db.gcp_emulator import local_state_store
             key = _get_cache_state_key(target_model)
@@ -150,10 +176,27 @@ class ContextCacheManager:
             logger.info(f"[ContextCacheManager] Cache geçersiz kılındı ({target_model}).")
         except Exception:
             pass
-            local_state_store.save_state(_CACHE_STATE_KEY, {"name": None})
-            logger.info("[ContextCacheManager] Cache geçersiz kılındı.")
+
+    @staticmethod
+    def is_stale_cache_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return (
+            "cached content" in message
+            and any(marker in message for marker in ("404", "not_found", "not found", "expired"))
+        )
+
+    def refresh_cached_config(self, model_name: str = None) -> Any:
+        """Stale cache kaydını siler, bir kez yeniden oluşturur ve config döndürür."""
+        target_model = model_name or settings.REASONING_LLM_MODEL
+        self.invalidate_cache(target_model)
+        cache_name = self.initialize_cache(target_model)
+        if not cache_name:
+            return None
+        try:
+            from google.genai import types
+            return types.GenerateContentConfig(cached_content=cache_name)
         except Exception:
-            pass
+            return None
 
     def get_cached_config(self, model_name: str = None) -> Any:
         """

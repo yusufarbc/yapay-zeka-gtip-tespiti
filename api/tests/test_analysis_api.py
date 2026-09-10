@@ -146,8 +146,10 @@ def test_negative_hitl_response_requires_review_and_is_not_logged_as_approved(cl
     assert client.post("/api/v1/hitl/respond", json=payload).status_code == 409
 
 
-def test_affirmative_hitl_response_preserves_completion(hitl_state):
+def test_affirmative_hitl_response_is_revalidated(hitl_state):
     decision = workflow_engine.resume_analysis("s", "OPT_YES", question_id="current-question")
-    assert decision.status == "COMPLETED"
+    assert decision.status in {"COMPLETED", "WAITING_FOR_USER", "MANUAL_REVIEW_REQUIRED"}
     assert decision.gtip_code == hitl_state[0]["selected_gtip"]
-    assert hitl_state[0]["hitl_question"] is None
+    # Eski oturumlardaki genel EVET yanıtı artık doğrulama zincirini atlayamaz.
+    if decision.status == "WAITING_FOR_USER":
+        assert hitl_state[0]["hitl_question"] is not None

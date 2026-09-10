@@ -25,7 +25,12 @@ class PredicateRegistryEngine:
     Gelen GTİP koduna ait yasal şartları canlı veritabanından dinamik olarak türetir.
     """
 
-    def get_predicates_for_gtip(self, gtip_code: str) -> List[LegalPredicate]:
+    def get_predicates_for_gtip(
+        self,
+        gtip_code: str,
+        official_description: Optional[str] = None,
+        chapter_note: Optional[str] = None,
+    ) -> List[LegalPredicate]:
         """
         GTİP koduna (ör. '8517.13.00.00.00' veya '8471.30') göre yasal doğrulama şartlarını 
         resmi mevzuat ve BTB veritabanından dinamik olarak oluşturur.
@@ -44,7 +49,10 @@ class PredicateRegistryEngine:
         predicates.append(
             LegalPredicate(
                 predicate_id=f"P_{pos4}_1",
-                description=f"Eşya, TGTC Fasıl {chap2} ({chap_title}) kapsamındaki {pos4} pozisyonunun teknik ve hukuki tanımına uygun mudur?",
+                description=(
+                    f"Eşya, TGTC Fasıl {chap2} ({chap_title}) kapsamındaki {pos4} pozisyonunun "
+                    f"şu resmi tanımına uygun mudur: {(official_description or 'resmi pozisyon tanımı')[:800]}"
+                ),
                 required_value="TRUE",
                 statute_reference=f"TGTC Fasıl {chap2} İzahnamesi & GİR 1"
             )
@@ -61,26 +69,20 @@ class PredicateRegistryEngine:
                 )
             )
 
-        # 3. Emsal BTB Kararlarından Dinamik Gerekçe Şartı Çekme
-        try:
-            from api.db.gcp_emulator import local_vector_store
-            btb_matches = local_vector_store.search_btb(
-                query_text=gtip_code,
-                allowed_chapters=[chap2],
-                top_k=1
-            )
-            if btb_matches and btb_matches[0].get("legal_justification"):
-                justification = btb_matches[0]["legal_justification"]
-                predicates.append(
-                    LegalPredicate(
-                        predicate_id=f"P_{pos4}_BTB",
-                        description=f"Eşya, Resmi Emsal BTB ({btb_matches[0].get('btb_no', 'RESMİ-BTB')}) Kararı gerekçesindeki '{justification[:100]}...' yasal kriterini sağlıyor mu?",
-                        required_value="TRUE",
-                        statute_reference=f"Ticaret Bakanlığı BTB Kararı {btb_matches[0].get('btb_no', '')}"
-                    )
+        # BTB emsalleri bağlayıcı koşul değildir; zorunlu predikat yalnız TGTC
+        # pozisyon/alt pozisyon metni ve dışlama notlarından üretilir.
+        if chapter_note:
+            predicates.append(
+                LegalPredicate(
+                    predicate_id=f"P_{pos4}_EXCLUSION",
+                    description=(
+                        "Eşya aşağıdaki fasıl/pozisyon notuna göre bu adaydan hariç tutuluyor mu: "
+                        f"{chapter_note[:800]}"
+                    ),
+                    required_value="FALSE",
+                    statute_reference=f"TGTC Fasıl {chap2} dışlama ve uygulama notları",
                 )
-        except Exception as e:
-            logger.debug(f"[PredicateRegistry] BTB dinamik gerekçe çekme uyarısı: {e}")
+            )
 
         return predicates
 

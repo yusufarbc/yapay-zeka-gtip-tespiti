@@ -14,8 +14,10 @@ import logging
 from typing import List, Dict, Any, Optional
 from api.schemas.predicate import (
     LegalPredicate, PredicateVerificationResult, PredicateStatus,
-    TariffVerification, ChapterExclusionCheck
+    TariffVerification, ChapterExclusionCheck,
+    CandidateSelection, CandidateSelectionStatus,
 )
+from api.schemas.product import GTIPCandidate
 from api.config import settings
 
 logger = logging.getLogger("LLMFactVerifier")
@@ -32,10 +34,97 @@ class LLMFactVerifier:
             thinking_cfg = types.ThinkingConfig(thinking_budget=settings.THINKING_BUDGET_VERIFIER)
             return types.GenerateContentConfig(
                 thinking_config=thinking_cfg,
-                temperature=0.2
+                temperature=0.1,
+                response_mime_type="application/json",
             )
         except Exception:
             return None
+
+    def select_candidate(
+        self,
+        raw_text: str,
+        candidates: List[GTIPCandidate],
+        allowed_chapters: Optional[List[str]] = None,
+        gir_rules: Optional[List[str]] = None,
+    ) -> CandidateSelection:
+        """Kapalı aday kümesinden seçim yapar; modelin serbest GTİP üretmesini reddeder."""
+        bounded_candidates = candidates[:5]
+        if not bounded_candidates:
+            return CandidateSelection(
+                status=CandidateSelectionStatus.NO_MATCH,
+                reasoning_points=["Yürürlükteki 2026 TGTC ağacından aday üretilemedi."],
+            )
+
+        candidate_map = {f"C{index + 1}": candidate for index, candidate in enumerate(bounded_candidates)}
+        if settings.USE_GCP_EMULATOR or settings.ENVIRONMENT != "production":
+            return CandidateSelection(
+                status=CandidateSelectionStatus.SELECT,
+                selected_candidate_id="C1",
+                reasoning_points=["Emülatör ortamında en yüksek deterministik RAG adayı seçildi."],
+            )
+        payload = []
+        for candidate_id, candidate in candidate_map.items():
+            payload.append({
+                "candidate_id": candidate_id,
+                "gtip_code": candidate.gtip_code,
+                "official_description": candidate.description[:1600],
+                "chapter": candidate.chapter,
+                "heading": candidate.heading,
+                "retrieval_score": candidate.score,
+                "evidence": [
+                    {
+                        "source_type": source.source_type,
+                        "reference_no": source.reference_no,
+                        "title": source.title,
+                        "excerpt": source.excerpt[:900],
+                    }
+                    for source in candidate.legal_sources[:8]
+                ],
+            })
+
+        prompt = (
+            "Sen Türk Gümrük Tarife Cetveli için kapalı-küme karar hakemisin. "
+            "Yeni bir GTİP kodu yazamazsın; yalnızca aşağıdaki candidate_id değerlerinden birini seçebilirsin.\n"
+            "GİR sırasını, pozisyon/alt pozisyon metnini, bölüm-fasıl notlarını ve dışlama hükümlerini uygula. "
+            "BTB kararlarını yalnız destekleyici emsal olarak kullan. Bilgi kesin seçim için yetersizse "
+            "INSUFFICIENT_INFORMATION, hiçbir aday uygun değilse NO_MATCH döndür.\n\n"
+            f"ÜRÜN: {raw_text}\n"
+            f"İZİNLİ FASILLAR: {allowed_chapters or []}\n"
+            f"UYGULANAN GİR KURALLARI: {gir_rules or []}\n"
+            f"KAPALI ADAY KÜMESİ: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            "Yalnızca şu JSON biçimini döndür: "
+            "{\"status\":\"SELECT|INSUFFICIENT_INFORMATION|NO_MATCH\","
+            "\"selected_candidate_id\":\"C1 veya null\","
+            "\"reasoning_points\":[\"...\"],"
+            "\"missing_information\":[\"...\"],"
+            "\"evidence_source_refs\":[\"...\"]}"
+        )
+
+        try:
+            from api.modules.vertex_client import get_genai_client
+
+            client = get_genai_client()
+            response = client.models.generate_content(
+                model=settings.REASONING_LLM_MODEL,
+                contents=prompt,
+                config=self._get_reasoning_config(),
+            )
+            clean_json = re.sub(r"```json\s*|\s*```", "", response.text or "").strip()
+            data = json.loads(clean_json)
+            selection = CandidateSelection(**data)
+            if selection.status == CandidateSelectionStatus.SELECT:
+                if selection.selected_candidate_id not in candidate_map:
+                    raise ValueError("Model kapalı aday kümesi dışında bir candidate_id döndürdü.")
+            else:
+                selection.selected_candidate_id = None
+            return selection
+        except Exception as exc:
+            logger.error("[LLM Candidate Selector] Fail-closed: %s", exc)
+            return CandidateSelection(
+                status=CandidateSelectionStatus.INSUFFICIENT_INFORMATION,
+                reasoning_points=["Kapalı-küme aday seçicisi güvenilir bir yapılandırılmış yanıt üretemedi."],
+                missing_information=["Uzman incelemesi gereklidir."],
+            )
 
     def verify_chapter_exclusions(
         self,
@@ -188,14 +277,27 @@ class LLMFactVerifier:
                 match = re.search(r'\{.*\}', response.text, re.DOTALL)
                 clean_json = match.group(0) if match else re.sub(r'```json\s*|\s*```', '', response.text).strip()
                 data = json.loads(clean_json)
+                required_boolean_fields = (
+                    "is_material_compliant",
+                    "is_function_compliant",
+                    "exclusion_notes_violated",
+                )
+                for field_name in required_boolean_fields:
+                    if type(data.get(field_name)) is not bool:
+                        raise ValueError(
+                            f"LLM yanıtındaki {field_name} alanı eksik veya boolean değil."
+                        )
                 return TariffVerification(
                     candidate_gtip=candidate_gtip,
-                    is_material_compliant=bool(data.get("is_material_compliant", True)),
-                    is_function_compliant=bool(data.get("is_function_compliant", True)),
-                    exclusion_notes_violated=bool(data.get("exclusion_notes_violated", False)),
-                    gir_rule_applied=data.get("gir_rule_applied", "GIR 1"),
-                    legal_reasoning_points=data.get("legal_reasoning_points", []),
-                    confidence_score=float(data.get("confidence_score", 0.88))
+                    is_material_compliant=data["is_material_compliant"],
+                    is_function_compliant=data["is_function_compliant"],
+                    exclusion_notes_violated=data["exclusion_notes_violated"],
+                    gir_rule_applied=str(data.get("gir_rule_applied") or "GIR 1")[:100],
+                    legal_reasoning_points=[
+                        str(point)[:1000]
+                        for point in (data.get("legal_reasoning_points") or [])[:10]
+                    ],
+                    confidence_score=float(data.get("confidence_score", 0.0))
                 )
         except Exception as e:
             logger.error(f"[LLM Tariff Verification] Yapay zeka doğrulama hatası (Fail-Closed): {e}")
@@ -258,16 +360,21 @@ class LLMFactVerifier:
             reasoning_config = self._get_reasoning_config()
             active_config = cached_config or reasoning_config
 
-            if active_config:
+            try:
                 response = client.models.generate_content(
                     model=settings.AUDITOR_LLM_MODEL,
                     contents=prompt,
-                    config=active_config
+                    config=active_config,
                 )
-            else:
+            except Exception as cache_exc:
+                if not context_cache_manager.is_stale_cache_error(cache_exc):
+                    raise
+                logger.warning("[LLM Predicate Verifier] Stale cache yenileniyor: %s", cache_exc)
+                refreshed_config = context_cache_manager.refresh_cached_config(settings.AUDITOR_LLM_MODEL)
                 response = client.models.generate_content(
                     model=settings.AUDITOR_LLM_MODEL,
-                    contents=prompt
+                    contents=prompt,
+                    config=refreshed_config or reasoning_config,
                 )
 
             if response.text:
@@ -289,6 +396,7 @@ class LLMFactVerifier:
                             predicate_id=p.predicate_id,
                             description=p.description,
                             status=status,
+                            required_value=PredicateStatus(str(p.required_value).upper()),
                             evidence_quote=res.get("evidence_quote"),
                             statute_reference=p.statute_reference
                         )

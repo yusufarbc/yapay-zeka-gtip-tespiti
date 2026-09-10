@@ -263,7 +263,7 @@ engine = create_engine(
     pool_size=int(os.getenv("DB_POOL_SIZE", "1")),
     max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "1")),
     pool_recycle=600,   # Cloud SQL connection reuse lifetime (10 dakika)
-    pool_timeout=30,    # Max wait time for a connection
+    pool_timeout=int(os.getenv("DB_POOL_TIMEOUT", "10")),
     connect_args=connect_args
 )
 
@@ -411,8 +411,8 @@ def init_orm_tables():
                             esik_deger="10kg",
                             soru_metni="Cihazın net ağırlığı klavye ve ekran dahil 10 kg'ı geçiyor mu?",
                             secenekler=json.dumps([
-                                {"id": "opt_le_10kg", "label": "Ağırlık 10 kg veya altında (Portatif / Dizüstü)"},
-                                {"id": "opt_gt_10kg", "label": "Ağırlık 10 kg'dan fazla (Masaüstü / Sunucu)"}
+                                {"id": "opt_le_10kg", "value": "10kg", "label": "Ağırlık 10 kg veya altında (Portatif / Dizüstü)"},
+                                {"id": "opt_gt_10kg", "value": "10.01kg", "label": "Ağırlık 10 kg'dan fazla (Masaüstü / Sunucu)"}
                             ], ensure_ascii=False),
                             oncelik=1
                         ),
@@ -424,8 +424,8 @@ def init_orm_tables():
                             esik_deger="true",
                             soru_metni="Cihaz en azından bir merkezi işlem birimi, bir klavye ve bir ekrandan mı oluşuyor?",
                             secenekler=json.dumps([
-                                {"id": "opt_has_both", "label": "Evet, entegre ekran ve klavyesi var"},
-                                {"id": "opt_no_both", "label": "Hayır, harici birimler gerekiyor"}
+                                {"id": "opt_has_both", "value": "true", "label": "Evet, entegre ekran ve klavyesi var"},
+                                {"id": "opt_no_both", "value": "false", "label": "Hayır, harici birimler gerekiyor"}
                             ], ensure_ascii=False),
                             oncelik=2
                         ),
@@ -437,8 +437,8 @@ def init_orm_tables():
                             esik_deger="85%",
                             soru_metni="Kumaşın ağırlık itibariyle pamuk oranı en az %85 mi?",
                             secenekler=json.dumps([
-                                {"id": "opt_cotton_gte_85", "label": "Evet, %85 veya daha fazla pamuk içerir"},
-                                {"id": "opt_cotton_lt_85", "label": "Hayır, pamuk oranı %85'in altında"}
+                                {"id": "opt_cotton_gte_85", "value": "85%", "label": "Evet, %85 veya daha fazla pamuk içerir"},
+                                {"id": "opt_cotton_lt_85", "value": "84.99%", "label": "Hayır, pamuk oranı %85'in altında"}
                             ], ensure_ascii=False),
                             oncelik=1
                         )
@@ -709,8 +709,8 @@ def hybrid_search_headings_and_gtip(
     # Tüm adayların Sparse & Dense Rank'lerini birleştir
     all_gtips = set(sparse_ranks.keys()).union(set(dense_ranks.keys()))
     if not all_gtips:
-        # Fallback: ilk kayıtlar
-        all_gtips = set(item["gtip_code"] for item in candidate_records[:top_k])
+        # Kanıtsız/arbitrary ilk satırı GTİP adayı yapmak yerine fail-closed.
+        return []
 
     for gtip in all_gtips:
         item = candidate_items.get(gtip)

@@ -266,15 +266,18 @@ class LocalVectorStore:
         candidate_docs.sort(key=lambda x: x[0], reverse=True)
         top_candidates = [d for _, d in candidate_docs[:10]]
 
-        # --- Strateji 1: text-embedding-005 ile Cosine Similarity (Sadece Top-10 Aday) ---
-        query_embedding = _get_embedding(query, "")
+        # --- Strateji 1: saklanmış belge embedding'leriyle Cosine Similarity ---
+        # Belge embedding'i sorgu anında üretilmez. Aksi halde her analiz aynı
+        # ilk 10 belge için tekrar Vertex çağrısı yaparak gecikme ve maliyet yaratır.
+        has_stored_embeddings = any(doc.get("embedding") is not None for doc in top_candidates)
+        query_embedding = _get_embedding(query, "") if has_stored_embeddings else []
         if query_embedding and any(query_embedding):
             scored_results = []
             for doc in top_candidates:
                 source_type = str(doc.get("source_type") or "BTB").upper()
                 chap = str(doc.get("chapter", doc.get("gtip_code", "")[:2])).zfill(2)
                 desc = doc.get("product_description", "")
-                doc_embedding = doc.get("embedding") or _get_embedding(desc, "")
+                doc_embedding = doc.get("embedding")
                 if doc_embedding:
                     similarity = _cosine_similarity(query_embedding, doc_embedding)
                     scored_results.append({

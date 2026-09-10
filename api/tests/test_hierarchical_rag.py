@@ -260,7 +260,7 @@ def test_hierarchical_workflow_end_to_end():
     decision = workflow_engine.start_analysis(text)
     
     assert decision is not None
-    assert decision.status in ["COMPLETED", "WAITING_FOR_USER"]
+    assert decision.status in ["COMPLETED", "WAITING_FOR_USER", "MANUAL_REVIEW_REQUIRED"]
     assert decision.gtip_code is not None
     assert decision.gtip_code.startswith("8517") or decision.gtip_code.startswith("85")
     assert decision.official_statute_text is not None

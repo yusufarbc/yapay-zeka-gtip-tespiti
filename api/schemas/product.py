@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, List
 
 
@@ -13,6 +13,30 @@ class LegalSource(BaseModel):
     publication_date: Optional[str] = Field(default=None, max_length=30)
     excerpt: str = Field(default="")
     source_url: Optional[str] = None
+
+    @field_validator("source_type", mode="before")
+    @classmethod
+    def normalize_source_type(cls, value):
+        return str(value or "").strip().upper()[:50]
+
+    @field_validator("reference_no", mode="before")
+    @classmethod
+    def bound_reference_no(cls, value):
+        return str(value or "").strip()[:150]
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def bound_title(cls, value):
+        # Dış kaynak başlıkları/ürün tanımları şema sınırını aşsa bile bütün
+        # analizi 500'e düşürmemeli. Tam metin excerpt alanında korunur.
+        return str(value or "").strip()[:500]
+
+    @field_validator("publication_date", mode="before")
+    @classmethod
+    def bound_publication_date(cls, value):
+        if value is None:
+            return None
+        return str(value).strip()[:30]
 
 class ProductFeatures(BaseModel):
     product_name: str = Field(description="Ürünün ticari adı veya kısa tanımı", min_length=1, max_length=2000)

@@ -12,6 +12,8 @@ import { PipelineStatus } from './components/PipelineStatus';
 import { analyzeProduct, respondHITL, getAuditLogs, getAPIErrorMessage } from './api/client';
 import { useToast } from './components/ToastContext';
 
+const AUDIT_LOGS_ENABLED = import.meta.env.VITE_ENABLE_AUDIT_LOGS === 'true';
+
 export function App() {
   const [theme, setTheme] = useState(() => {
     return localStorage.getItem('gtip_theme') || 'light';
@@ -34,6 +36,7 @@ export function App() {
   };
 
   const fetchLogs = async () => {
+    if (!AUDIT_LOGS_ENABLED) return;
     try {
       const data = await getAuditLogs();
       setAuditLogs(data.entries || []);
@@ -43,7 +46,7 @@ export function App() {
   };
 
   useEffect(() => {
-    fetchLogs();
+    if (AUDIT_LOGS_ENABLED) fetchLogs();
   }, []);
 
   const handleStartAnalysis = async (description) => {
@@ -58,7 +61,7 @@ export function App() {
       addToast(getAPIErrorMessage(err, "GTİP analizi sırasında beklenmeyen bir hata oluştu."), "error");
     } finally {
       setIsAnalyzing(false);
-      fetchLogs();
+      if (AUDIT_LOGS_ENABLED) fetchLogs();
     }
   };
 
@@ -74,7 +77,7 @@ export function App() {
       addToast(getAPIErrorMessage(err, "Müşavir teyit yanıtı iletilirken hata oluştu."), "error");
     } finally {
       setIsSubmittingHITL(false);
-      fetchLogs();
+      if (AUDIT_LOGS_ENABLED) fetchLogs();
     }
   };
 
@@ -115,7 +118,7 @@ export function App() {
                 <ManualReviewCard decision={decision} />
               )}
 
-              <AuditHistoryTable logs={auditLogs} />
+              {AUDIT_LOGS_ENABLED && <AuditHistoryTable logs={auditLogs} />}
             </>
           ) : (
             <CustomsKnowledgeExplorer />

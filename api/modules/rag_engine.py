@@ -45,12 +45,17 @@ def _six_year_cutoff(today: Optional[datetime.date] = None) -> datetime.date:
 
 def _decision_source(item: Dict[str, Any]) -> LegalSource:
     source_type = str(item.get("source_type") or "BTB").upper()
+    description = str(item.get("product_description") or source_type).strip()
+    reference_no = str(item.get("btb_no") or "").strip()
     return LegalSource(
         source_type=source_type,
-        reference_no=str(item.get("btb_no") or ""),
-        title=str(item.get("product_description") or source_type),
+        reference_no=reference_no,
+        title=f"{source_type} {reference_no}: {description}" if reference_no else description,
         publication_date=str(item.get("issue_date") or ""),
-        excerpt=str(item.get("legal_justification") or "")[:1200],
+        excerpt=(
+            f"Ürün tanımı: {description}\n"
+            f"Hukuki gerekçe: {str(item.get('legal_justification') or '').strip()}"
+        )[:2400],
         source_url=item.get("source_url"),
     )
 
@@ -226,10 +231,9 @@ class RAGEngine:
             item for item in hybrid_results
             if len(re.sub(r"[^0-9]", "", str(item.get("gtip_code") or ""))) == 12
         ]
-        if full_gtip_results:
-            # Nihai sınıflandırma 12 hanelidir. 4/6 haneli başlıklar bağlam olarak
-            # kullanılır, 12 haneli uygun aday varken nihai aday listesine girmez.
-            hybrid_results = full_gtip_results
+        # Nihai sınıflandırma yalnızca yürürlükteki 12 haneli TGTC yapraklarından
+        # yapılır. Başlık seviyesindeki kayıtlar bağlamdır, nihai aday değildir.
+        hybrid_results = full_gtip_results
         # Adaylar yalnızca yürürlükteki 2026 TGTC ağacından doğar. Eski kararlar
         # aday kod üretemez; sadece mevcut tarife kodunu destekler veya çelişkiyi görünür kılar.
         for hr in hybrid_results:
@@ -293,7 +297,14 @@ class RAGEngine:
                 (float(item.get("similarity_score") or 0.0) for item in matching_classifications),
                 default=0.0,
             )
-            combined_score = (sim * 0.70) + (btb_support * 0.18) + (classification_support * 0.12)
+            # TGTC aday uygunluğu temel, BTB/sınıflandırma kararları destekleyici
+            # kanıttır. Ayarlar gerçekten formüle uygulanır; emsal bulunmaması
+            # adayı yapay biçimde sıfırlamaz.
+            precedent_support = max(btb_support, classification_support)
+            combined_score = (
+                sim * settings.TGTC_WEIGHT
+                + precedent_support * settings.BTB_WEIGHT
+            )
 
             candidate = GTIPCandidate(
                 gtip_code=str(gtip),

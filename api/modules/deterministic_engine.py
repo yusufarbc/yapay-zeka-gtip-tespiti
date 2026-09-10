@@ -153,7 +153,21 @@ class DeterministicDecisionEngine:
             )
 
         total_count = len(predicate_list)
-        verified_count = sum(1 for r in predicate_list if r.status in [PredicateStatus.TRUE, PredicateStatus.FALSE])
+        def _required_status(result: PredicateVerificationResult) -> PredicateStatus:
+            raw = result.required_value
+            if isinstance(raw, PredicateStatus):
+                return raw
+            return PredicateStatus(str(raw).upper())
+
+        satisfied_predicates = [
+            result for result in predicate_list
+            if result.status != PredicateStatus.UNKNOWN and result.status == _required_status(result)
+        ]
+        contradicted_predicates = [
+            result for result in predicate_list
+            if result.status != PredicateStatus.UNKNOWN and result.status != _required_status(result)
+        ]
+        verified_count = len(satisfied_predicates)
         unknown_predicates = [r for r in predicate_list if r.status == PredicateStatus.UNKNOWN]
 
         base_score = top_candidate.score if hasattr(top_candidate, 'score') and top_candidate.score else 0.80
@@ -164,11 +178,30 @@ class DeterministicDecisionEngine:
         else:
             final_confidence = round(max(0.58, min(0.78, base_score * (0.5 + 0.5 * calc_ratio))), 2)
 
-        # DURUM A: Tüm Yasal Şartlar Deterministik Olarak Doğrulandı (%100 Kesin Karar)
+        # Açıkça terslenen tek bir zorunlu koşul dahi adayı geçersiz kılar.
+        if contradicted_predicates:
+            contradicted = contradicted_predicates[0]
+            return GTIPDecision(
+                session_id=session_id,
+                status="MANUAL_REVIEW_REQUIRED",
+                gtip_code=top_candidate.gtip_code,
+                confidence_score=round(min(0.49, max(0.0, base_score * 0.45)), 2),
+                official_statute_text=official_statute,
+                llm_reasoning_commentary=(
+                    f"Aday GTİP zorunlu yasal koşulu karşılamıyor: {contradicted.description} "
+                    f"(beklenen={_required_status(contradicted).value}, bulunan={contradicted.status.value})."
+                ),
+                legal_justification=official_statute,
+                applied_gir_rules=applied_rules,
+                precedent_btbs=top_candidate.precedents,
+                audit_notes=[f"Zorunlu predikat terslendi: {contradicted.predicate_id}. Otomatik onay engellendi."],
+            )
+
+        # DURUM A: Tüm Yasal Şartlar Deterministik Olarak Doğrulandı
         if not unknown_predicates and calc_ratio == 1.0:
             llm_commentary = (
                 f"Yapay Zeka Mantıksal Doğrulama (Predicate Logic): Ürünün teknik özellikleri ve yasal predikat ağacı "
-                f"({verified_count}/{total_count} kural) %100 deterministik olarak doğrulanmış, halüsinasyon riski %0 tutulup "
+                f"({verified_count}/{total_count} kural) yapılandırılmış olarak doğrulanmış ve "
                 f"statik veritabanı eşleştirmesi yapılarak {top_candidate.gtip_code} tarife pozisyonu kesinleştirilmiştir."
             )
             return GTIPDecision(
@@ -181,7 +214,7 @@ class DeterministicDecisionEngine:
                 legal_justification=official_statute,
                 applied_gir_rules=applied_rules + [f"GİR 1 & GİR 6: ({verified_count}/{total_count} kural doğrulandı)"],
                 precedent_btbs=top_candidate.precedents,
-                audit_notes=[f"Tüm {total_count} yasal predikat katı mantık motorunda doğrulandı. Halüsinasyon Riski: %0."]
+                audit_notes=[f"Tüm {total_count} zorunlu yasal predikat beklenen değerle eşleşti."]
             )
 
         # DURUM B: Eksik Bilgi Var (UNKNOWN Predikat) -> HITL İnsan Onayı Başlat
@@ -193,15 +226,21 @@ class DeterministicDecisionEngine:
             question_text=f"Eksik Teknik Bilgi Teyidi: {missing_p.description}",
             missing_parameter=missing_p.predicate_id,
             options=[
+                        HITLOption(
+                            option_id="OPT_YES",
+                            text=f"EVET ({missing_p.description} şartı sağlanıyor)",
+                            impact_data={
+                                "predicate_verified": "TRUE",
+                                missing_p.predicate_id: "TRUE",
+                            }
+                        ),
                 HITLOption(
-                    option_id="OPT_YES",
-                    text=f"EVET ({missing_p.description} şartı sağlanıyor)",
-                    impact_data={"predicate_verified": "TRUE"}
-                ),
-                HITLOption(
-                    option_id="OPT_NO",
-                    text=f"HAYIR (Bu teknik özellik sağlanmıyor)",
-                    impact_data={"predicate_verified": "FALSE"}
+                            option_id="OPT_NO",
+                            text=f"HAYIR (Bu teknik özellik sağlanmıyor)",
+                            impact_data={
+                                "predicate_verified": "FALSE",
+                                missing_p.predicate_id: "FALSE",
+                            }
                 )
             ]
         )

@@ -95,6 +95,23 @@ function Wait-HttpOk([string]$Url, [int]$Attempts = 12) {
     throw "Smoke test başarısız: $Url. Son hata: $lastError"
 }
 
+function Assert-AnalysisSmoke([string]$BaseUrl) {
+    $payload = @{
+        product_description = "Ahşap iskeletli, döşemesiz, dönmeyen ve yatağa dönüşmeyen ev tipi yemek masası sandalyesi"
+        image_uri = $null
+    } | ConvertTo-Json -Compress
+    try {
+        $result = Invoke-RestMethod -Uri "$BaseUrl/api/v1/analyze-json" -Method Post `
+            -ContentType "application/json; charset=utf-8" -Body $payload -TimeoutSec 300
+        if ($result.status -notin @("COMPLETED", "WAITING_FOR_USER", "MANUAL_REVIEW_REQUIRED")) {
+            throw "Beklenmeyen analiz durumu: $($result.status)"
+        }
+        Write-Host "[OK] Gerçek GTİP analiz smoke testi: $($result.status)"
+    } catch {
+        throw "Gerçek GTİP analiz smoke testi başarısız: $($_.Exception.Message)"
+    }
+}
+
 Assert-Command "gcloud.cmd"
 Assert-Command "git"
 
@@ -216,9 +233,10 @@ try {
         INSTANCE_CONNECTION_NAME = $CloudSqlConnection
         DB_USER = "postgres"
         DB_NAME = "gtip_db"
-        DB_POOL_SIZE = "1"
-        DB_MAX_OVERFLOW = "1"
-        WEB_CONCURRENCY = "2"
+        DB_POOL_SIZE = "4"
+        DB_MAX_OVERFLOW = "2"
+        DB_POOL_TIMEOUT = "10"
+        WEB_CONCURRENCY = "1"
         PRIMARY_AI_MODEL = "gemini-2.5-flash"
         EXTRACTOR_LLM_MODEL = "gemini-2.5-flash-lite"
         REASONING_LLM_MODEL = "gemini-2.5-flash"
@@ -229,7 +247,8 @@ try {
         PUBLIC_DEMO_RATE_LIMIT_PER_MINUTE = "10"
         PUBLIC_DEMO_UPLOAD_LIMIT_PER_MINUTE = "5"
         MAX_BATCH_ITEMS = "10"
-        BATCH_CONCURRENCY = "4"
+        BATCH_CONCURRENCY = "2"
+        USE_CONTEXT_CACHE = "true"
         SKIP_TGTC_AUTO_SEED = "true"
         GOOGLE_OAUTH_CLIENT_ID = $GoogleOAuthClientId
         GOOGLE_WORKSPACE_DOMAINS = $GoogleWorkspaceDomains
@@ -249,7 +268,7 @@ try {
         "run", "deploy", $BackendService, "--image", $BackendImage,
         "--region", $Region, "--project", $ProjectId, "--platform", "managed",
         "--allow-unauthenticated", "--execution-environment", "gen2",
-        "--memory", "4Gi", "--cpu", "2", "--concurrency", "20",
+        "--memory", "4Gi", "--cpu", "2", "--concurrency", "8",
         "--min-instances", "0", "--max-instances", "3", "--timeout", "300s",
         "--cpu-boost", "--service-account", $RuntimeServiceAccount,
         "--set-cloudsql-instances", $CloudSqlConnection,
@@ -269,6 +288,9 @@ try {
         throw "Backend readiness beklenen içeriği döndürmedi: $($ready.Content)"
     }
     Wait-HttpOk "$BackendCandidateUrl/api/v1/health" | Out-Null
+    if ($AllowPublicDemo) {
+        Assert-AnalysisSmoke $BackendCandidateUrl
+    }
     & gcloud.cmd run services update-traffic $BackendService --region $Region --project $ProjectId `
         --to-tags "$CandidateTag=100" --quiet
     Assert-LastExitCode "Backend candidate trafiğe alınamadı."

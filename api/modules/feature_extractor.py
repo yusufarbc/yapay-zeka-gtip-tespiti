@@ -72,7 +72,8 @@ class FeatureExtractor:
                 thinking_config = types.ThinkingConfig(thinking_budget=settings.THINKING_BUDGET_EXTRACTOR)
                 config = types.GenerateContentConfig(
                     thinking_config=thinking_config,
-                    temperature=0.1
+                    temperature=0.1,
+                    response_mime_type="application/json",
                 )
             except Exception:
                 config = None
@@ -80,16 +81,21 @@ class FeatureExtractor:
             cached_config = context_cache_manager.get_cached_config(settings.EXTRACTOR_LLM_MODEL)
             active_config = cached_config or config
 
-            if active_config:
+            try:
                 response = client.models.generate_content(
                     model=settings.EXTRACTOR_LLM_MODEL,
                     contents=prompt,
-                    config=active_config
+                    config=active_config,
                 )
-            else:
+            except Exception as cache_exc:
+                if not context_cache_manager.is_stale_cache_error(cache_exc):
+                    raise
+                logger.warning("Stale Vertex context cache yenileniyor: %s", cache_exc)
+                refreshed_config = context_cache_manager.refresh_cached_config(settings.EXTRACTOR_LLM_MODEL)
                 response = client.models.generate_content(
                     model=settings.EXTRACTOR_LLM_MODEL,
-                    contents=prompt
+                    contents=prompt,
+                    config=refreshed_config or config,
                 )
 
             if response.text:
@@ -97,6 +103,13 @@ class FeatureExtractor:
                 clean_json = match.group(0) if match else re.sub(r'```json\s*|\s*```', '', response.text).strip()
                 data = json.loads(clean_json)
                 llm_specs = data.get("technical_specifications", {})
+                if not isinstance(llm_specs, dict):
+                    llm_specs = {}
+                llm_specs = {
+                    str(key)[:100]: str(value)[:500]
+                    for key, value in llm_specs.items()
+                    if key is not None and value is not None
+                }
                 llm_specs.update(specs)
                 return ProductFeatures(
                     product_name=data.get("product_name", raw_text[:70]),
