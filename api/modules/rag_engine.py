@@ -10,6 +10,7 @@ Düz vektör araması yerine 4 aşamalı hiyerarşik karar boru hattı işletir:
 import datetime
 import logging
 import re
+from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 from api.schemas.product import ProductFeatures, GTIPCandidate, PrecedentBTB, LegalSource
 from api.db.gcp_emulator import local_vector_store, get_text_embedding
@@ -18,12 +19,21 @@ from api.db.tgtc_knowledge_base import (
 )
 from api.db.database import (
     SessionLocal, hybrid_search_headings_and_gtip,
-    search_chapter_notes_and_exclusions, search_recent_customs_legislation
+    calculate_dynamic_candidate_score, search_chapter_notes_and_exclusions,
+    search_recent_customs_legislation,
 )
+from api.modules.discriminator_engine import DiscriminatorQuestion, discriminator_extractor
 from api.modules.llm_verifier import llm_verifier
 from api.config import settings
 
 logger = logging.getLogger("HierarchicalRAGEngine")
+
+
+@dataclass
+class HierarchicalSearchResult:
+    candidates: List[GTIPCandidate] = field(default_factory=list)
+    discriminator_question: Optional[DiscriminatorQuestion] = None
+    traversal_state: Dict[str, Any] = field(default_factory=dict)
 
 CONSULTED_SOURCE_LAYERS = [
     "TGTC_2026",
@@ -150,11 +160,78 @@ class RAGEngine:
 
         return retained_chapters or candidate_chapters
 
+    def search_candidates_hierarchical(
+        self,
+        session_id: str,
+        features: ProductFeatures,
+        allowed_chapters: Optional[List[str]] = None,
+        applied_gir_rules: Optional[List[str]] = None,
+        locked_heading: Optional[str] = None,
+        locked_subheading: Optional[str] = None,
+    ) -> HierarchicalSearchResult:
+        """4→6→12 ağacını sırayla dolaşır ve belirsizlikte yaprak aramadan durur."""
+        query_text = f"{features.product_name} {features.primary_material} {features.intended_use}"
+        query_vector = get_text_embedding(query_text)
+        is_hard_locked = any("[HARD LOCK]" in rule for rule in (applied_gir_rules or []))
+        chapters = self.detect_candidate_chapters(
+            query_text, query_vector, allowed_chapters, is_hard_locked
+        )
+        chapters = self.filter_excluded_chapters(query_text, chapters)
+        if is_hard_locked and allowed_chapters:
+            chapters = [value for value in chapters if value in allowed_chapters] or list(allowed_chapters)
+
+        traversal: Dict[str, Any] = {"retained_chapters": chapters}
+        with SessionLocal() as session:
+            if not locked_heading:
+                headings = hybrid_search_headings_and_gtip(
+                    session=session, query_text=query_text, query_vector=query_vector,
+                    allowed_chapters=chapters, search_level="HEADING", top_k=5,
+                    rrf_k=settings.RRF_K,
+                )
+                question = discriminator_extractor.extract(session_id, headings)
+                if question:
+                    traversal["pending_level"] = "HEADING"
+                    traversal["branches"] = headings[:2]
+                    return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
+                if not headings:
+                    return HierarchicalSearchResult(traversal_state=traversal)
+                locked_heading = str(headings[0]["gtip_code"])
+            traversal["locked_heading"] = locked_heading
+
+            if not locked_subheading:
+                subheadings = hybrid_search_headings_and_gtip(
+                    session=session, query_text=query_text, query_vector=query_vector,
+                    allowed_chapters=chapters, search_level="SUBHEADING",
+                    parent_codes=[locked_heading], top_k=5, rrf_k=settings.RRF_K,
+                )
+                question = discriminator_extractor.extract(session_id, subheadings)
+                if question:
+                    traversal["pending_level"] = "SUBHEADING"
+                    traversal["branches"] = subheadings[:2]
+                    return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
+                if not subheadings:
+                    return HierarchicalSearchResult(traversal_state=traversal)
+                locked_subheading = str(subheadings[0]["gtip_code"])
+            traversal["locked_subheading"] = locked_subheading
+
+        candidates = self.search_candidates(
+            features,
+            chapters,
+            applied_gir_rules,
+            locked_parent_code=locked_subheading,
+            skip_chapter_filter=True,
+            query_vector=query_vector,
+        )
+        return HierarchicalSearchResult(candidates=candidates, traversal_state=traversal)
+
     def search_candidates(
         self, 
         features: ProductFeatures, 
         allowed_chapters: List[str] = None,
-        applied_gir_rules: List[str] = None
+        applied_gir_rules: List[str] = None,
+        locked_parent_code: Optional[str] = None,
+        skip_chapter_filter: bool = False,
+        query_vector: Optional[List[float]] = None,
     ) -> List[GTIPCandidate]:
         """
         4 Aşamalı Hiyerarşik Hibrit RAG Arama Akışı.
@@ -163,7 +240,8 @@ class RAGEngine:
         is_hard_locked = any("[HARD LOCK]" in r for r in (applied_gir_rules or []))
         
         # 1. Query Vektörleştirme (text-embedding-005)
-        query_vector = get_text_embedding(query_text)
+        if query_vector is None:
+            query_vector = get_text_embedding(query_text)
 
         # 2. ADIM 1: Fasıl Seviyesi 2-Hane Routing
         candidate_chapters = self.detect_candidate_chapters(
@@ -174,9 +252,8 @@ class RAGEngine:
         )
 
         # 3. ADIM 2: Fasıl Dışlama Notları Kontrolü (Exclusion Check)
-        retained_chapters = self.filter_excluded_chapters(
-            query_text=query_text,
-            candidate_chapters=candidate_chapters
+        retained_chapters = candidate_chapters if skip_chapter_filter else self.filter_excluded_chapters(
+            query_text=query_text, candidate_chapters=candidate_chapters
         )
         if is_hard_locked and allowed_chapters:
             # Katı kilit varsa dışlama sonrası bile orijinal izinli fasıldan ayrılma
@@ -188,13 +265,17 @@ class RAGEngine:
         legislation_results = []
         cutoff = _six_year_cutoff()
         try:
+            search_kwargs: Dict[str, Any] = {}
+            if locked_parent_code:
+                search_kwargs = {"search_level": "GTIP", "parent_codes": [locked_parent_code]}
             hybrid_results = hybrid_search_headings_and_gtip(
                 session=session,
                 query_text=query_text,
                 query_vector=query_vector,
                 allowed_chapters=retained_chapters,
                 top_k=8,
-                rrf_k=settings.RRF_K
+                rrf_k=settings.RRF_K,
+                **search_kwargs,
             )
             legislation_results = search_recent_customs_legislation(
                 session=session,
@@ -293,17 +374,16 @@ class RAGEngine:
             legal_sources.extend(LegalSource(source_type="GUMRUK_MEVZUATI", **item) for item in legislation_results)
 
             btb_support = max((float(item.get("similarity_score") or 0.0) for item in matching_btbs), default=0.0)
-            classification_support = max(
-                (float(item.get("similarity_score") or 0.0) for item in matching_classifications),
-                default=0.0,
-            )
-            # TGTC aday uygunluğu temel, BTB/sınıflandırma kararları destekleyici
-            # kanıttır. Ayarlar gerçekten formüle uygulanır; emsal bulunmaması
-            # adayı yapay biçimde sıfırlamaz.
-            precedent_support = max(btb_support, classification_support)
-            combined_score = (
-                sim * settings.TGTC_WEIGHT
-                + precedent_support * settings.BTB_WEIGHT
+            # Doğrulanmış BTB varsa 40/60 birleşim, yoksa doğrudan TGTC skoru.
+            # Sınıflandırma kararları hukuki bağlamdır fakat BTB desteği sayılmaz.
+            verified_btbs = [
+                item for item in matching_btbs
+                if item.get("btb_no") and item.get("gtip_code") and item.get("product_description")
+            ]
+            combined_score = calculate_dynamic_candidate_score(
+                tgtc_similarity=sim,
+                btb_support=btb_support,
+                verified_btb_count=len(verified_btbs),
             )
 
             candidate = GTIPCandidate(

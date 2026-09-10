@@ -11,6 +11,7 @@ import os
 import sys
 import re
 import logging
+from io import BytesIO
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 
@@ -61,6 +62,86 @@ class BoundariesList(BaseModel):
 # ADIM 1.5: Multimodal Tablo Ayrıştırıcı (Gemini 3.5 Flash Lite)
 # ==============================================================================
 
+def _normalize_header(value: Any) -> str:
+    translated = str(value or "").translate(str.maketrans({
+        "ı": "i", "İ": "I", "ş": "s", "Ş": "S", "ğ": "g", "Ğ": "G",
+        "ü": "u", "Ü": "U", "ö": "o", "Ö": "O", "ç": "c", "Ç": "C",
+    })).lower()
+    return re.sub(r"[^a-z0-9]+", " ", translated).strip()
+
+
+def parse_customs_table_matrix(
+    matrix: List[List[Any]], pub_date: str, gazette_no: str
+) -> List[CustomsDecisionItem]:
+    """PDF/HTML tablo hücre matrisini sütun anlamlarına göre ayrıştırır."""
+    rows = [[re.sub(r"\s+", " ", str(cell or "")).strip() for cell in row] for row in matrix if row]
+    if len(rows) < 2:
+        return []
+    header_index = next((
+        index for index, row in enumerate(rows[:5])
+        if any("gtip" in _normalize_header(cell) or "tarife" in _normalize_header(cell) for cell in row)
+    ), None)
+    if header_index is None:
+        return []
+    headers = [_normalize_header(cell) for cell in rows[header_index]]
+
+    def column(*words: str) -> Optional[int]:
+        return next((index for index, header in enumerate(headers) if any(word in header for word in words)), None)
+
+    gtip_col = column("gtip", "tarife istatistik", "tarife pozisyon")
+    desc_col = column("esya tan", "urun tan", "ticari tan")
+    reason_col = column("gerekce", "siniflandirma gerek", "hukuki")
+    number_col = column("karar no", "sira no", "referans")
+    if gtip_col is None or desc_col is None:
+        return []
+
+    items: List[CustomsDecisionItem] = []
+    for row in rows[header_index + 1:]:
+        if len(row) <= max(gtip_col, desc_col, reason_col or 0):
+            continue
+        raw_gtip = row[gtip_col]
+        valid_gtip = clean_and_validate_gtip(raw_gtip)
+        if not valid_gtip:
+            # Birleştirilmiş PDF hücresinin devam satırını önceki kayda ekle.
+            if items and row[desc_col]:
+                items[-1].esya_tanimi = f"{items[-1].esya_tanimi} {row[desc_col]}".strip()
+                if reason_col is not None and row[reason_col]:
+                    items[-1].hukuki_gerekce = f"{items[-1].hukuki_gerekce} {row[reason_col]}".strip()
+            continue
+        description = row[desc_col]
+        reason = row[reason_col] if reason_col is not None else ""
+        if not description:
+            continue
+        items.append(CustomsDecisionItem(
+            karar_no=row[number_col] if number_col is not None and number_col < len(row) else "",
+            gtip_kodu=valid_gtip,
+            esya_tanimi=description,
+            hukuki_gerekce=reason,
+            resmi_gazete_sayisi=gazette_no,
+            yayin_tarihi=pub_date,
+        ))
+    return items
+
+
+def extract_structured_tables_from_pdf(
+    pdf_bytes: bytes, pub_date: str, gazette_no: str
+) -> List[CustomsDecisionItem]:
+    """Metin çapasına ihtiyaç duymadan PDF satır/sütun tablolarını çıkarır."""
+    try:
+        import pdfplumber
+        items: List[CustomsDecisionItem] = []
+        with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
+            for page in pdf.pages:
+                for table in page.extract_tables() or []:
+                    items.extend(parse_customs_table_matrix(table, pub_date, gazette_no))
+        unique: Dict[tuple[str, str], CustomsDecisionItem] = {}
+        for item in items:
+            unique[(item.karar_no, item.gtip_kodu)] = item
+        return list(unique.values())
+    except Exception as exc:
+        logger.warning("Yapısal PDF tablo ayrıştırma başarısız: %s", exc)
+        return []
+
 def get_genai_client(project_id: str, location: str):
     """Vertex AI GenAI Client nesnesi oluşturur."""
     from google import genai
@@ -74,6 +155,11 @@ def extract_tables_from_gazette_pdf(pdf_bytes: bytes, pub_date: str, gazette_no:
     """
     if not pdf_bytes or len(pdf_bytes) < 100:
         return []
+
+    structured_items = extract_structured_tables_from_pdf(pdf_bytes, pub_date, gazette_no)
+    if structured_items:
+        logger.info("Yapısal tablo ayrıştırıcı %s karar çıkardı; LLM çağrısı atlandı.", len(structured_items))
+        return structured_items
 
     project_id = getattr(settings, "GCP_PROJECT_ID", os.getenv("GCP_PROJECT_ID", "gumruk-mevzuat"))
     location = getattr(settings, "GCP_REGION", os.getenv("GCP_REGION", "us-central1"))

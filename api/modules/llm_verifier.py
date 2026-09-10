@@ -40,6 +40,18 @@ class LLMFactVerifier:
         except Exception:
             return None
 
+    def _get_fast_config(self) -> Optional[Any]:
+        """Kapalı-küme sıralamada pahalı düşünme bütçesini devre dışı bırakır."""
+        try:
+            from google.genai import types
+            return types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                temperature=0.0,
+                response_mime_type="application/json",
+            )
+        except Exception:
+            return None
+
     def select_candidate(
         self,
         raw_text: str,
@@ -107,7 +119,7 @@ class LLMFactVerifier:
             response = client.models.generate_content(
                 model=settings.REASONING_LLM_MODEL,
                 contents=prompt,
-                config=self._get_reasoning_config(),
+                config=self._get_fast_config(),
             )
             clean_json = re.sub(r"```json\s*|\s*```", "", response.text or "").strip()
             data = json.loads(clean_json)

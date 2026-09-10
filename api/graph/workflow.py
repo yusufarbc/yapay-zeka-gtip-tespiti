@@ -23,8 +23,25 @@ from api.modules.deterministic_engine import deterministic_engine
 from api.schemas.product import ProductFeatures, GTIPCandidate, GTIPDecision, HITLQuestion, HITLOption
 from api.schemas.predicate import CandidateSelectionStatus, PredicateStatus
 from api.db.gcp_emulator import local_state_store
+from api.modules.discriminator_engine import DiscriminatorQuestion
 
 logger = logging.getLogger("GTIPWorkflowEngine")
+
+
+def _as_hitl_question(question: DiscriminatorQuestion) -> HITLQuestion:
+    return HITLQuestion(
+        question_id=f"disc_{question.parameter_name}_{question.session_id[:8]}",
+        question_text=question.question_text,
+        missing_parameter=question.parameter_name,
+        options=[
+            HITLOption(
+                option_id=f"DISC_{index}",
+                text=label,
+                impact_data={"selected_branch": question.target_branches[str(index)]},
+            )
+            for index, label in enumerate(question.options)
+        ],
+    )
 
 
 def _format_evidence_context(candidate: GTIPCandidate) -> str:
@@ -150,6 +167,56 @@ class GTIPWorkflowEngine:
     Otonom GTİP Tespit ve Karar Destek Karar Motoru Orkestratörü.
     """
 
+    def _pause_for_discriminator(
+        self,
+        session_id: str,
+        raw_text: str,
+        image_uri: Optional[str],
+        features: ProductFeatures,
+        allowed_chapters: List[str],
+        gir_rules: List[str],
+        tree_result,
+    ) -> GTIPDecision:
+        hitl_question = _as_hitl_question(tree_result.discriminator_question)
+        traversal = dict(tree_result.traversal_state)
+        provisional_code = next((
+            str(branch.get("gtip_code")) for branch in traversal.get("branches", [])
+            if branch.get("gtip_code")
+        ), None)
+        provisional_description = next((
+            str(branch.get("description") or "") for branch in traversal.get("branches", [])
+            if branch.get("gtip_code") == provisional_code
+        ), "")
+        decision = GTIPDecision(
+            session_id=session_id,
+            status="WAITING_FOR_USER",
+            gtip_code=provisional_code,
+            confidence_score=0.0,
+            official_statute_text=f"2026 TGTC {provisional_code}: {provisional_description}",
+            hitl_question=hitl_question,
+            applied_gir_rules=gir_rules,
+            audit_notes=[
+                f"{traversal.get('pending_level', 'TARİFE')} seviyesinde iki yakın dal "
+                "tespit edildi; yaprak araması yapılmadan ayırt edici soru soruldu."
+            ],
+        )
+        local_state_store.save_state(session_id, {
+            "session_id": session_id,
+            "raw_text": raw_text,
+            "image_uri": image_uri,
+            "product_features": features.model_dump(),
+            "allowed_chapters": allowed_chapters,
+            "applied_gir_rules": gir_rules,
+            "candidates": [],
+            "selected_gtip": None,
+            "confidence_score": 0.0,
+            "status": decision.status,
+            "hitl_question": hitl_question.model_dump(),
+            "discriminator_traversal": traversal,
+            "audit_notes": decision.audit_notes,
+        })
+        return decision
+
     def start_analysis(self, raw_text: str, image_uri: str = None) -> GTIPDecision:
         session_id = str(uuid.uuid4())
 
@@ -160,7 +227,14 @@ class GTIPWorkflowEngine:
         allowed_chapters, gir_rules = rule_engine.apply_rules(features)
 
         # 3. Aşama: Hiyerarşik Hibrit RAG Arama (Fasıl Routing ➔ Dışlama Notu Kontrolü ➔ pgvector + BM25 RRF)
-        candidates = rag_engine.search_candidates(features, allowed_chapters, applied_gir_rules=gir_rules)
+        tree_result = rag_engine.search_candidates_hierarchical(
+            session_id, features, allowed_chapters, applied_gir_rules=gir_rules
+        )
+        if tree_result.discriminator_question:
+            return self._pause_for_discriminator(
+                session_id, raw_text, image_uri, features, allowed_chapters, gir_rules, tree_result
+            )
+        candidates = tree_result.candidates
 
         if not candidates:
             return GTIPDecision(
@@ -362,7 +436,22 @@ class GTIPWorkflowEngine:
             "session_id": session_id
         }
         await asyncio.sleep(0.05)
-        candidates = await asyncio.to_thread(rag_engine.search_candidates, features, allowed_chapters, gir_rules)
+        tree_result = await asyncio.to_thread(
+            rag_engine.search_candidates_hierarchical,
+            session_id, features, allowed_chapters, gir_rules,
+        )
+        if tree_result.discriminator_question:
+            decision = self._pause_for_discriminator(
+                session_id, raw_text, image_uri, features, allowed_chapters, gir_rules, tree_result
+            )
+            yield {
+                "stage": "COMPLETED",
+                "status": decision.status,
+                "message": "Yakın skorlu tarife dalları için ayırt edici kullanıcı yanıtı gerekiyor.",
+                "decision": decision.model_dump(),
+            }
+            return
+        candidates = tree_result.candidates
 
         if not candidates:
             decision = GTIPDecision(
@@ -549,15 +638,92 @@ class GTIPWorkflowEngine:
                         selected_gtip_choice = selected_impact["selected_gtip"]
                     feature_updates = {
                         key: value for key, value in selected_impact.items()
-                        if key not in {"selected_gtip", "predicate_verified"}
+                        if key not in {"selected_gtip", "selected_branch", "predicate_verified"}
                     }
                     features.technical_specifications.update(feature_updates)
                     if "primary_material" in selected_impact:
                         features.primary_material = selected_impact["primary_material"]
 
+        traversal = state_dict.get("discriminator_traversal")
+        if traversal:
+            selected_branch = str(selected_impact.get("selected_branch") or "")
+            if not selected_branch:
+                decision = GTIPDecision(
+                    session_id=session_id,
+                    status="MANUAL_REVIEW_REQUIRED",
+                    confidence_score=0.0,
+                    audit_notes=["Ayırt edici tarife bilgisi kullanıcı tarafından bilinmiyor olarak işaretlendi."],
+                )
+                state_dict.update({
+                    "status": decision.status,
+                    "hitl_question": None,
+                    "audit_notes": decision.audit_notes,
+                })
+                local_state_store.save_state(session_id, state_dict)
+                return decision
+
+            pending_level = traversal.get("pending_level")
+            locked_heading = traversal.get("locked_heading")
+            locked_subheading = traversal.get("locked_subheading")
+            if pending_level == "HEADING":
+                locked_heading = selected_branch
+                locked_subheading = None
+            elif pending_level == "SUBHEADING":
+                locked_subheading = selected_branch
+
+            tree_result = rag_engine.search_candidates_hierarchical(
+                session_id=session_id,
+                features=features,
+                allowed_chapters=state_dict.get("allowed_chapters") or [],
+                applied_gir_rules=state_dict.get("applied_gir_rules") or [],
+                locked_heading=locked_heading,
+                locked_subheading=locked_subheading,
+            )
+            if tree_result.discriminator_question:
+                return self._pause_for_discriminator(
+                    session_id,
+                    state_dict.get("raw_text", ""),
+                    state_dict.get("image_uri"),
+                    features,
+                    state_dict.get("allowed_chapters") or [],
+                    state_dict.get("applied_gir_rules") or [],
+                    tree_result,
+                )
+            if not tree_result.candidates:
+                decision = GTIPDecision(
+                    session_id=session_id,
+                    status="MANUAL_REVIEW_REQUIRED",
+                    confidence_score=0.0,
+                    audit_notes=["Kilitlenen tarife dalı altında yürürlükte 12 haneli aday bulunamadı."],
+                )
+                state_dict.update({"status": decision.status, "hitl_question": None})
+                local_state_store.save_state(session_id, state_dict)
+                return decision
+
+            selection = llm_verifier.select_candidate(
+                state_dict.get("raw_text", ""), tree_result.candidates,
+                state_dict.get("allowed_chapters") or [],
+                state_dict.get("applied_gir_rules") or [],
+            )
+            if selection.status != CandidateSelectionStatus.SELECT or not selection.selected_candidate_id:
+                return GTIPDecision(
+                    session_id=session_id,
+                    status="MANUAL_REVIEW_REQUIRED",
+                    confidence_score=0.0,
+                    audit_notes=(selection.reasoning_points + selection.missing_information)[:8],
+                )
+            selected_index = int(selection.selected_candidate_id[1:]) - 1
+            if selected_index < 0 or selected_index >= len(tree_result.candidates):
+                raise LookupError("Kilitlenen dal dışında aday seçimi reddedildi.")
+            stored_candidates = tree_result.candidates
+            selected_gtip_choice = stored_candidates[selected_index].gtip_code
+            state_dict["candidates"] = [candidate.model_dump() for candidate in stored_candidates]
+            state_dict["discriminator_traversal"] = None
+
         selected_gtip = selected_gtip_choice or state_dict.get("selected_gtip")
         stored_candidates_data = state_dict.get("candidates", [])
-        stored_candidates = [GTIPCandidate(**c) for c in stored_candidates_data] if stored_candidates_data else []
+        if not traversal:
+            stored_candidates = [GTIPCandidate(**c) for c in stored_candidates_data] if stored_candidates_data else []
 
         top_candidate = next((c for c in stored_candidates if c.gtip_code == selected_gtip), None)
         if not top_candidate and stored_candidates:

@@ -206,9 +206,12 @@ def populate_gtip_tree(session: Session):
         elif code_len == 4:
             level = "HEADING"
             parent_code = code[:2]
+        elif code_len == 6:
+            level = "SUBHEADING"
+            parent_code = code[:4]
         else:
             level = "GTIP"
-            parent_code = code[:4]
+            parent_code = code[:6]
 
         # In-memory set lookup for fast batch insertion
         if code not in existing_codes:
@@ -220,7 +223,8 @@ def populate_gtip_tree(session: Session):
                 description=desc,
                 tax_rate=tax,
                 unit=unit,
-                is_active=True
+                is_active=True,
+                gecerlilik_baslangic="2026-01-01",
             )
             session.add(obj)
             existing_codes.add(code)

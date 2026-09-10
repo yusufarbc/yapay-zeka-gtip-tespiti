@@ -111,6 +111,7 @@ class GumrukEmsalKararModel(Base):
     """
     __tablename__ = "gumruk_emsal_kararlar"
     __table_args__ = (
+        UniqueConstraint("karar_tipi", "referans_no", name="uq_emsal_type_reference"),
         Index("idx_emsal_gtip_valid", "gtip_kodu", "valid_until"),
         Index("idx_emsal_karar_tipi", "karar_tipi"),
     )
@@ -170,7 +171,31 @@ class TgtcGtipModel(Base):
     tax_rate = Column(String(50), nullable=True)
     unit = Column(String(50), nullable=True)
     is_active = Column(Boolean, default=True, index=True)
+    gecerlilik_baslangic = Column(String(30), nullable=True, default="2026-01-01", index=True)
+    gecerlilik_bitis = Column(String(30), nullable=True, index=True)
+    kaynak_resmi_gazete_no = Column(String(50), nullable=True)
     embedding = Column(VectorType(768), nullable=True)           # 768d text-embedding-005 vektörü
+
+
+class TgtcGtipVersionModel(Base):
+    """Değişen tarife satırlarının silinmeden saklanan tarihsel sürümü."""
+    __tablename__ = "tgtc_gtip_versions"
+    __table_args__ = (
+        UniqueConstraint("gtip_code", "gecerlilik_baslangic", name="uq_gtip_version_start"),
+        Index("idx_gtip_version_validity", "gtip_code", "gecerlilik_bitis"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    gtip_code = Column(String(20), nullable=False, index=True)
+    level = Column(String(10), nullable=False)
+    chapter_code = Column(String(10), nullable=True)
+    parent_code = Column(String(20), nullable=True)
+    description = Column(Text, nullable=False)
+    tax_rate = Column(String(50), nullable=True)
+    unit = Column(String(50), nullable=True)
+    gecerlilik_baslangic = Column(String(30), nullable=False)
+    gecerlilik_bitis = Column(String(30), nullable=True)
+    kaynak_resmi_gazete_no = Column(String(50), nullable=True)
 
 # ==============================================================================
 # YENİ GCP ALLOYDB AI / CLOUD SQL ŞARTNAME MODELLERİ (gcp_architecture_report.md)
@@ -292,6 +317,9 @@ def init_orm_tables():
                     # tgtc_gtip
                     conn.execute(text("ALTER TABLE tgtc_gtip ADD COLUMN IF NOT EXISTS chapter_code VARCHAR(10);"))
                     conn.execute(text("ALTER TABLE tgtc_gtip ADD COLUMN IF NOT EXISTS embedding vector(768);"))
+                    conn.execute(text("ALTER TABLE tgtc_gtip ADD COLUMN IF NOT EXISTS gecerlilik_baslangic VARCHAR(30) DEFAULT '2026-01-01';"))
+                    conn.execute(text("ALTER TABLE tgtc_gtip ADD COLUMN IF NOT EXISTS gecerlilik_bitis VARCHAR(30);"))
+                    conn.execute(text("ALTER TABLE tgtc_gtip ADD COLUMN IF NOT EXISTS kaynak_resmi_gazete_no VARCHAR(50);"))
                     
                     # tgtc_notes
                     conn.execute(text("ALTER TABLE tgtc_notes ADD COLUMN IF NOT EXISTS note_type VARCHAR(50) DEFAULT 'GENERAL';"))
@@ -321,6 +349,12 @@ def init_orm_tables():
                             conn.execute(text("ALTER TABLE tgtc_gtip ADD COLUMN chapter_code VARCHAR(10)"))
                         if "embedding" not in cols_gtip and cols_gtip:
                             conn.execute(text("ALTER TABLE tgtc_gtip ADD COLUMN embedding TEXT"))
+                        if "gecerlilik_baslangic" not in cols_gtip and cols_gtip:
+                            conn.execute(text("ALTER TABLE tgtc_gtip ADD COLUMN gecerlilik_baslangic VARCHAR(30) DEFAULT '2026-01-01'"))
+                        if "gecerlilik_bitis" not in cols_gtip and cols_gtip:
+                            conn.execute(text("ALTER TABLE tgtc_gtip ADD COLUMN gecerlilik_bitis VARCHAR(30)"))
+                        if "kaynak_resmi_gazete_no" not in cols_gtip and cols_gtip:
+                            conn.execute(text("ALTER TABLE tgtc_gtip ADD COLUMN kaynak_resmi_gazete_no VARCHAR(50)"))
                     except Exception:
                         pass
                     
@@ -544,6 +578,87 @@ def search_chapter_notes_and_exclusions(
     return result
 
 
+def get_heading_notes(session: Session, heading_code: str) -> Dict[str, Any]:
+    """Bir pozisyonun fasıl notlarını yerel servis çağrısıyla döndürür."""
+    digits = re.sub(r"\D", "", str(heading_code or ""))
+    if len(digits) < 2:
+        return {"general_notes": "", "exclusions": []}
+    return search_chapter_notes_and_exclusions(session, [digits[:2]]).get(
+        digits[:2], {"general_notes": "", "exclusions": []}
+    )
+
+
+def calculate_dynamic_candidate_score(
+    tgtc_similarity: float,
+    btb_support: float = 0.0,
+    verified_btb_count: int = 0,
+) -> float:
+    """BTB yokluğunda TGTC kanıtını seyrelmeden koruyan nihai puan."""
+    tgtc = min(1.0, max(0.0, float(tgtc_similarity or 0.0)))
+    if int(verified_btb_count or 0) < 1:
+        return tgtc
+    btb = min(1.0, max(0.0, float(btb_support or 0.0)))
+    return round(tgtc * 0.40 + btb * 0.60, 12)
+
+
+def upsert_tgtc_temporal_version(
+    session: Session,
+    *,
+    gtip_code: str,
+    description: str,
+    effective_from: str,
+    source_gazette_no: Optional[str] = None,
+    level: Optional[str] = None,
+    tax_rate: Optional[str] = None,
+    unit: Optional[str] = None,
+) -> TgtcGtipVersionModel:
+    """Yeni cetvel satırını ekler, değişen eski sürümün bitişini kapatır."""
+    import datetime as _datetime
+
+    code = re.sub(r"\D", "", str(gtip_code or ""))
+    if len(code) not in {2, 4, 6, 8, 10, 12}:
+        raise ValueError(f"Geçersiz tarife kodu: {gtip_code}")
+    resolved_level = level or ({2: "CHAPTER", 4: "HEADING", 6: "SUBHEADING"}.get(len(code), "GTIP"))
+    parent = None if len(code) == 2 else code[: {4: 2, 6: 4}.get(len(code), 6)]
+    active = session.query(TgtcGtipVersionModel).filter(
+        TgtcGtipVersionModel.gtip_code == code,
+        TgtcGtipVersionModel.gecerlilik_bitis.is_(None),
+    ).order_by(TgtcGtipVersionModel.gecerlilik_baslangic.desc()).first()
+    unchanged = active and (
+        active.description == description and active.tax_rate == tax_rate and active.unit == unit
+    )
+    if unchanged:
+        active.kaynak_resmi_gazete_no = source_gazette_no or active.kaynak_resmi_gazete_no
+        return active
+    if active:
+        start = _datetime.date.fromisoformat(effective_from)
+        active.gecerlilik_bitis = (start - _datetime.timedelta(days=1)).isoformat()
+
+    version = TgtcGtipVersionModel(
+        gtip_code=code, level=resolved_level, chapter_code=code[:2], parent_code=parent,
+        description=description, tax_rate=tax_rate, unit=unit,
+        gecerlilik_baslangic=effective_from,
+        kaynak_resmi_gazete_no=source_gazette_no,
+    )
+    session.add(version)
+
+    current = session.get(TgtcGtipModel, code)
+    if current is None:
+        current = TgtcGtipModel(gtip_code=code, description=description, level=resolved_level)
+        session.add(current)
+    current.level = resolved_level
+    current.chapter_code = code[:2]
+    current.parent_code = parent
+    current.description = description
+    current.tax_rate = tax_rate
+    current.unit = unit
+    current.is_active = True
+    current.gecerlilik_baslangic = effective_from
+    current.gecerlilik_bitis = None
+    current.kaynak_resmi_gazete_no = source_gazette_no
+    return version
+
+
 def search_recent_customs_legislation(
     session: Session,
     query_text: str,
@@ -591,16 +706,50 @@ def hybrid_search_headings_and_gtip(
     query_text: str,
     query_vector: Optional[List[float]] = None,
     allowed_chapters: Optional[List[str]] = None,
+    search_level: Optional[str] = None,
+    parent_codes: Optional[List[str]] = None,
+    as_of_date: Optional[str] = None,
     top_k: int = 10,
     rrf_k: int = 60
 ) -> List[Dict[str, Any]]:
     """
     Cloud SQL PostgreSQL / SQLite üzerinde Hibrit Arama (Dense pgvector + Sparse Text Search)
-    ve Reciprocal Rank Fusion (RRF) uygulayarak en uygun TGTC pozisyonlarını ve 12-haneli GTİP'leri döner.
+    ve Reciprocal Rank Fusion (RRF) uygulayarak en uygun TGTC düğümlerini döner.
+
+    ``search_level`` HEADING, SUBHEADING veya GTIP olduğunda yalnızca o ağaç
+    seviyesinde arama yapılır. ``parent_codes`` bir önceki aşamada kilitlenen
+    dallardır; böylece farklı pozisyonların "Diğer" satırları aynı aday havuzuna
+    giremez. Eski çağrılar için parametreler opsiyoneldir.
     """
     clean_query = _normalize_search_text(query_text.strip())
-    query_tokens = [w for w in clean_query.split() if len(w) > 2]
+    raw_tokens = [w for w in re.findall(r"[0-9a-z]+", clean_query) if len(w) > 2]
+    common_suffixes = ("lari", "leri", "lar", "ler", "nin", "nun", "in", "un", "li", "lu", "lik", "luk", "i", "u")
+    stemmed_tokens = []
+    for token in raw_tokens:
+        stemmed_tokens.append(token)
+        suffix = next((value for value in common_suffixes if token.endswith(value) and len(token) - len(value) >= 4), None)
+        if suffix:
+            stemmed_tokens.append(token[:-len(suffix)])
+    query_tokens = list(dict.fromkeys(stemmed_tokens))
     clean_chaps = [str(c).zfill(2) for c in (allowed_chapters or []) if str(c).strip()]
+    target_level = str(search_level or "").upper() or None
+    clean_parents = [re.sub(r"\D", "", str(code)) for code in (parent_codes or [])]
+    effective_date = str(as_of_date or "")
+
+    def code_digits(value: Any) -> str:
+        return re.sub(r"\D", "", str(value or ""))
+
+    def belongs_to_locked_branch(code: str) -> bool:
+        return not clean_parents or any(code.startswith(parent) for parent in clean_parents)
+
+    def add_candidate(item: Dict[str, Any]) -> None:
+        code = code_digits(item.get("gtip_code"))
+        if not code or code in seen_codes or not belongs_to_locked_branch(code):
+            return
+        seen_codes.add(code)
+        item["gtip_code"] = code
+        candidate_records.append(item)
+
     # 1. SQL Aday Kümesi ve TGTC 4-Haneli Pozisyonlar
     candidate_records = []
     seen_codes = set()
@@ -609,17 +758,33 @@ def hybrid_search_headings_and_gtip(
         query = session.query(TgtcGtipModel).filter(TgtcGtipModel.is_active == True)
         if clean_chaps:
             query = query.filter(TgtcGtipModel.chapter_code.in_(clean_chaps))
+        if effective_date:
+            query = query.filter(
+                or_(TgtcGtipModel.gecerlilik_baslangic.is_(None), TgtcGtipModel.gecerlilik_baslangic <= effective_date),
+                or_(TgtcGtipModel.gecerlilik_bitis.is_(None), TgtcGtipModel.gecerlilik_bitis >= effective_date),
+            )
         db_items = query.all()
         for it in db_items:
-            if it.gtip_code not in seen_codes:
-                seen_codes.add(it.gtip_code)
-                candidate_records.append({
-                    "gtip_code": it.gtip_code,
-                    "description": it.description or "",
-                    "chapter_code": it.chapter_code or it.gtip_code[:2],
-                    "level": it.level,
-                    "embedding": it.embedding
-                })
+            code = code_digits(it.gtip_code)
+            if target_level == "HEADING" and len(code) != 4:
+                continue
+            if target_level == "SUBHEADING" and len(code) not in {6, 8, 10, 12}:
+                continue
+            if target_level == "GTIP" and len(code) != 12:
+                continue
+            if target_level == "SUBHEADING" and len(code) > 6:
+                code = code[:6]
+            add_candidate({
+                "gtip_code": code,
+                "description": it.description or "",
+                "chapter_code": it.chapter_code or code[:2],
+                "level": target_level or it.level,
+                "tax_rate": it.tax_rate,
+                "unit": it.unit,
+                # Türetilmiş 6-haneli düğümde yaprak embedding'i yasal alt
+                # pozisyon metnini temsil etmediği için dense kanıt sayılmaz.
+                "embedding": it.embedding if len(code_digits(it.gtip_code)) == len(code) else None,
+            })
     except Exception as ex_db:
         logger.debug(f"[Hybrid DB Query] {ex_db}")
 
@@ -628,29 +793,52 @@ def hybrid_search_headings_and_gtip(
         from api.db.tgtc_knowledge_base import get_local_tgtc_headings
         headings_dict = get_local_tgtc_headings()
         for code, desc in headings_dict.items():
+            code = code_digits(code)
+            if target_level not in {None, "HEADING"} or len(code) != 4:
+                continue
             chap = str(code)[:2].zfill(2)
             if clean_chaps and chap not in clean_chaps:
                 continue
-            if code not in seen_codes:
-                seen_codes.add(code)
-                candidate_records.append({
-                    "gtip_code": code,
-                    "description": desc,
-                    "chapter_code": chap,
-                    "level": "HEADING",
-                    "embedding": None
-                })
+            add_candidate({
+                "gtip_code": code,
+                "description": desc,
+                "chapter_code": chap,
+                "level": "HEADING",
+                "tax_rate": None,
+                "unit": None,
+                "embedding": None,
+            })
     except Exception as ex_head:
         logger.debug(f"[Hybrid Headings Load] {ex_head}")
 
     if not candidate_records:
         return []
 
+    # Pozisyon aramasında fasıl notları da aranabilir metne dahil edilir, fakat
+    # resmi pozisyon açıklaması çıktı alanında değiştirilmez.
+    notes_by_chapter: Dict[str, str] = {}
+    if target_level == "HEADING":
+        for chapter, payload in search_chapter_notes_and_exclusions(session, clean_chaps).items():
+            notes_by_chapter[chapter] = "\n".join([
+                str(payload.get("general_notes") or ""),
+                " ".join(str(value) for value in payload.get("exclusions", [])),
+            ])
+    for item in candidate_records:
+        chapter_notes = notes_by_chapter.get(str(item.get("chapter_code") or "").zfill(2), "")
+        code = str(item.get("gtip_code") or "")
+        relevant_note_lines = " ".join(
+            line for line in chapter_notes.splitlines() if code and code in re.sub(r"\D", "", line)
+        )
+        item["searchable_text"] = " ".join([
+            str(item.get("description") or ""),
+            relevant_note_lines,
+        ])
+
     # 2. Sparse (BM25 / Token Overlap & GIR 3a Specificity) Sıralaması
     token_document_frequency = {
         token: sum(
             1 for item in candidate_records
-            if token in _normalize_search_text(item.get("description"))
+            if token in _normalize_search_text(item.get("searchable_text"))
         )
         for token in query_tokens
     }
@@ -661,20 +849,14 @@ def hybrid_search_headings_and_gtip(
 
     sparse_scores: List[Tuple[float, Any]] = []
     for item in candidate_records:
-        desc_lower = _normalize_search_text(item["description"])
+        desc_lower = _normalize_search_text(item["searchable_text"])
         # Nadir ve ayırt edici terimler (örn. "kettle") genel terimlerden
         # (örn. "elektrikli") daha yüksek ağırlık alır.
         match_count = sum(token_weights[token] for token in query_tokens if token in desc_lower)
         if match_count > 0:
-            # GİR 3(a) Özellik İlkesi: "Diğer ..." genel artık pozisyonlar özel pozisyonların gerisinde kalmalıdır
-            normalized_desc = desc_lower.lstrip("-–— ")
-            is_residual = normalized_desc.startswith("diğer") or normalized_desc.startswith("diger")
-            digit_count = len(re.sub(r"[^0-9]", "", str(item["gtip_code"])))
-            # Aynı kelimeleri taşıyan 4 haneli başlık ile 12 haneli özel açılım
-            # eşleştiğinde GİR 3(a) uyarınca özel açılım öne geçer.
-            code_specificity = 1.0 + max(0, digit_count - 4) * 0.08
-            specificity_factor = code_specificity * (0.5 if is_residual else 1.0)
-            score = (match_count * specificity_factor) / (len(query_tokens) + 1.0)
+            # Artık ("Diğer") pozisyon yasal bir daldır. Yapay ceza uygulanmaz;
+            # seçim yalnızca sorgu kanıtı ve üst dal kilidi içinde yapılır.
+            score = match_count / (len(query_tokens) + 1.0)
             sparse_scores.append((score, item))
 
     sparse_scores.sort(key=lambda x: x[0], reverse=True)
@@ -697,7 +879,8 @@ def hybrid_search_headings_and_gtip(
             emb = item.get("embedding")
             if isinstance(emb, list) and emb:
                 sim = _cosine_sim(query_vector, emb)
-                dense_scores.append((sim, item))
+                if sim > 0.0:
+                    dense_scores.append((sim, item))
 
         dense_scores.sort(key=lambda x: x[0], reverse=True)
     dense_ranks = {item["gtip_code"]: rank + 1 for rank, (_, item) in enumerate(dense_scores)}
@@ -729,12 +912,16 @@ def hybrid_search_headings_and_gtip(
         rrf = compute_rrf_score(ranks_to_fuse, k=rrf_k)
         
         # Dense ve Sparse ham benzerlikleri
-        dense_sim = next((score for score, it in dense_scores if it["gtip_code"] == gtip), 0.70)
-        sparse_sim = next((score for score, it in sparse_scores if it["gtip_code"] == gtip), 0.50)
-        
-        # Ağırlıklı nihai benzerlik (Sparse + Dense)
-        combined_sim = (dense_sim * 0.6) + (sparse_sim * 0.4)
-        normalized_sim = round(min(0.98, max(0.50, combined_sim + rrf * 5.0)), 4)
+        dense_sim = next((score for score, it in dense_scores if it["gtip_code"] == gtip), None)
+        sparse_sim = next((score for score, it in sparse_scores if it["gtip_code"] == gtip), None)
+
+        if dense_sim is not None and sparse_sim is not None:
+            combined_sim = dense_sim * 0.6 + sparse_sim * 0.4
+        elif dense_sim is not None:
+            combined_sim = dense_sim
+        else:
+            combined_sim = float(sparse_sim or 0.0)
+        normalized_sim = round(min(0.98, max(0.0, combined_sim + rrf * 5.0)), 4)
 
         rrf_candidates[gtip] = {
             "gtip_code": gtip,
