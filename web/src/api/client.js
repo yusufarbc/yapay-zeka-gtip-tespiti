@@ -6,6 +6,9 @@ import axios from 'axios';
 const API_BASE_URL = (import.meta.env.VITE_API_URL || '/api/v1').replace(/\/+$/, '');
 
 export const getAPIErrorMessage = (error, fallback) => {
+  if (error.code === 'ECONNABORTED') {
+    return 'Analiz beklenenden uzun sürdü ve güvenli biçimde durduruldu. Lütfen tekrar deneyin.';
+  }
   const detail = error.response?.data?.detail;
   if (typeof detail === 'string') return detail;
   if (Array.isArray(detail)) {
@@ -46,6 +49,8 @@ export const analyzeProduct = async (productDescription, imageFile = null) => {
   const response = await axios.post(`${API_BASE_URL}/analyze-json`, {
     product_description: productDescription,
     image_uri: imageUri
+  }, {
+    timeout: 45000
   });
   return response.data;
 };

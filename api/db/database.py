@@ -763,7 +763,37 @@ def hybrid_search_headings_and_gtip(
                 or_(TgtcGtipModel.gecerlilik_baslangic.is_(None), TgtcGtipModel.gecerlilik_baslangic <= effective_date),
                 or_(TgtcGtipModel.gecerlilik_bitis.is_(None), TgtcGtipModel.gecerlilik_bitis >= effective_date),
             )
-        db_items = query.all()
+        # Aday kümesini Python'da tüm tarife ağacını dolaşarak değil, indeksli
+        # level/chapter/parent alanlarıyla SQL tarafında daralt. Eski veri
+        # yüklemelerinde SUBHEADING satırları olmayabileceğinden yalnız o seviye
+        # için GTIP yapraklarından 6 haneli düğüm türetme fallback'i korunur.
+        if target_level == "HEADING":
+            query = query.filter(TgtcGtipModel.level == "HEADING")
+        elif target_level == "GTIP":
+            query = query.filter(TgtcGtipModel.level == "GTIP")
+            if clean_parents:
+                query = query.filter(or_(*[
+                    TgtcGtipModel.gtip_code.like(f"{parent}%")
+                    for parent in clean_parents
+                ]))
+        elif target_level == "SUBHEADING":
+            subheading_query = query.filter(TgtcGtipModel.level == "SUBHEADING")
+            if clean_parents:
+                subheading_query = subheading_query.filter(or_(*[
+                    TgtcGtipModel.gtip_code.like(f"{parent}%")
+                    for parent in clean_parents
+                ]))
+            db_items = subheading_query.all()
+            if not db_items:
+                query = query.filter(TgtcGtipModel.level == "GTIP")
+                if clean_parents:
+                    query = query.filter(or_(*[
+                        TgtcGtipModel.gtip_code.like(f"{parent}%")
+                        for parent in clean_parents
+                    ]))
+                db_items = query.all()
+        if target_level != "SUBHEADING":
+            db_items = query.all()
         for it in db_items:
             code = code_digits(it.gtip_code)
             if target_level == "HEADING" and len(code) != 4:

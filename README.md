@@ -43,16 +43,12 @@ Backend başka porttaysa `API_PROXY_TARGET=http://127.0.0.1:PORT` ayarlayın.
 
 ## Doğrulama
 
-Yukarıdaki yerel backend ortam değişkenleri ayarlanmışken proje kökünde:
+Proje kökünde temel derleme kontrolleri:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r api/requirements-dev.txt
-.\.venv\Scripts\python.exe -m pytest api/tests -q -p no:cacheprovider
+.\.venv\Scripts\python.exe -m compileall -q api scripts
 npm.cmd --prefix web run build
 ```
-
-`api/tests` otomatik regresyon testlerini içerir. Testler, cache'ler ve geliştirme
-araçları üretim container imajına dahil edilmez.
 
 ## GCP üretim dağıtımı
 

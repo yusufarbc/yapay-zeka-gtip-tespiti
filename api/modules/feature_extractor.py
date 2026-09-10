@@ -51,8 +51,6 @@ class FeatureExtractor:
         try:
             from api.modules.vertex_client import get_genai_client
             from google.genai import types
-            from api.modules.context_cache_manager import context_cache_manager
-
             client = get_genai_client()
             prompt = (
                 f"Aşağıdaki gümrük ürün açıklamasını veya fatura metnini analiz et.\n"
@@ -78,25 +76,14 @@ class FeatureExtractor:
             except Exception:
                 config = None
 
-            cached_config = context_cache_manager.get_cached_config(settings.EXTRACTOR_LLM_MODEL)
-            active_config = cached_config or config
-
-            try:
-                response = client.models.generate_content(
-                    model=settings.EXTRACTOR_LLM_MODEL,
-                    contents=prompt,
-                    config=active_config,
-                )
-            except Exception as cache_exc:
-                if not context_cache_manager.is_stale_cache_error(cache_exc):
-                    raise
-                logger.warning("Stale Vertex context cache yenileniyor: %s", cache_exc)
-                refreshed_config = context_cache_manager.refresh_cached_config(settings.EXTRACTOR_LLM_MODEL)
-                response = client.models.generate_content(
-                    model=settings.EXTRACTOR_LLM_MODEL,
-                    contents=prompt,
-                    config=refreshed_config or config,
-                )
+            # Bu kısa ve ürüne özel prompt için context cache hem faydasızdır hem de
+            # cache yokken devasa TGTC bağlamını senkron oluşturup isteği ~90 sn
+            # bekletebilir. Her zaman doğrudan model çağrısı kullanılır.
+            response = client.models.generate_content(
+                model=settings.EXTRACTOR_LLM_MODEL,
+                contents=prompt,
+                config=config,
+            )
 
             if response.text:
                 match = re.search(r'\{.*\}', response.text, re.DOTALL)

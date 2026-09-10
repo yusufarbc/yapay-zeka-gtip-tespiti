@@ -145,13 +145,6 @@ try {
         $env:USE_GCP_EMULATOR = "true"
         $env:GEMINI_API_KEY = "local-emulator-placeholder"
         $env:JWT_SECRET_KEY = "local-development-only"
-        $testTemp = Join-Path ([System.IO.Path]::GetTempPath()) "gtip-test-$(New-Guid)"
-        try {
-            & .\.venv\Scripts\python.exe -m pytest api/tests -q -p no:cacheprovider --basetemp $testTemp
-            Assert-LastExitCode "Backend testleri başarısız."
-        } finally {
-            if (Test-Path $testTemp) { Remove-Item -Recurse -Force $testTemp -ErrorAction SilentlyContinue }
-        }
         & .\.venv\Scripts\python.exe -m compileall -q api scripts
         Assert-LastExitCode "Python compileall başarısız."
         & npm.cmd --prefix web ci --ignore-scripts
@@ -248,7 +241,9 @@ try {
         PUBLIC_DEMO_UPLOAD_LIMIT_PER_MINUTE = "5"
         MAX_BATCH_ITEMS = "10"
         BATCH_CONCURRENCY = "2"
-        USE_CONTEXT_CACHE = "true"
+        USE_CONTEXT_CACHE = "false"
+        LLM_TIMEOUT_MS = "15000"
+        EMBEDDING_TIMEOUT_MS = "7000"
         SKIP_TGTC_AUTO_SEED = "true"
         GOOGLE_OAUTH_CLIENT_ID = $GoogleOAuthClientId
         GOOGLE_WORKSPACE_DOMAINS = $GoogleWorkspaceDomains

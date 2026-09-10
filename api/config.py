@@ -56,7 +56,12 @@ class Settings(BaseSettings):
     THINKING_BUDGET_EXTRACTOR: int = 0      # Ultra hızlı özellik çıkarımı
     THINKING_BUDGET_VERIFIER: int = 2048   # Derin yasal gerekçelendirme ve dışlama analizi
 
-    USE_CONTEXT_CACHE: bool = os.getenv("USE_CONTEXT_CACHE", "true").lower() == "true"
+    # Context cache hazırlığı büyük TGTC bağlamını Vertex'e yüklediği için kullanıcı
+    # isteğinin sıcak yolunda çalıştırılmaz. Cache gerekiyorsa ayrı bir bakım işiyle
+    # önceden hazırlanmalıdır.
+    USE_CONTEXT_CACHE: bool = os.getenv("USE_CONTEXT_CACHE", "false").lower() == "true"
+    LLM_TIMEOUT_MS: int = int(os.getenv("LLM_TIMEOUT_MS", "15000"))
+    EMBEDDING_TIMEOUT_MS: int = int(os.getenv("EMBEDDING_TIMEOUT_MS", "7000"))
 
     # Cloud Run Secret Manager bağlantıları bu değerleri environment'a enjekte eder.
     # Import sırasında Secret Manager çağrısı yapmak cold-start'ı ve hata yüzeyini büyütür.

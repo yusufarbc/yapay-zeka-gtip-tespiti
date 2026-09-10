@@ -368,26 +368,15 @@ class LLMFactVerifier:
                 "]"
             )
 
-            cached_config = context_cache_manager.get_cached_config(settings.AUDITOR_LLM_MODEL)
             reasoning_config = self._get_reasoning_config()
-            active_config = cached_config or reasoning_config
-
-            try:
-                response = client.models.generate_content(
-                    model=settings.AUDITOR_LLM_MODEL,
-                    contents=prompt,
-                    config=active_config,
-                )
-            except Exception as cache_exc:
-                if not context_cache_manager.is_stale_cache_error(cache_exc):
-                    raise
-                logger.warning("[LLM Predicate Verifier] Stale cache yenileniyor: %s", cache_exc)
-                refreshed_config = context_cache_manager.refresh_cached_config(settings.AUDITOR_LLM_MODEL)
-                response = client.models.generate_content(
-                    model=settings.AUDITOR_LLM_MODEL,
-                    contents=prompt,
-                    config=refreshed_config or reasoning_config,
-                )
+            # Yasal bağlam zaten yalnız aday fasıllarla sınırlandırılıp prompt'a
+            # ekleniyor. İstek içinde global context cache oluşturmak gecikmeyi
+            # onlarca saniye artırdığı için doğrudan çağrı yapılır.
+            response = client.models.generate_content(
+                model=settings.AUDITOR_LLM_MODEL,
+                contents=prompt,
+                config=reasoning_config,
+            )
 
             if response.text:
                 match = re.search(r'\[.*\]', response.text, re.DOTALL)

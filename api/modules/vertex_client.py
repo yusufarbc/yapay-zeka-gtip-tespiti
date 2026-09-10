@@ -35,7 +35,7 @@ def get_genai_client():
                     vertexai=True,
                     project=settings.GCP_PROJECT_ID,
                     location=settings.VERTEX_AI_LOCATION,
-                    http_options={"timeout": 90000},
+                    http_options={"timeout": settings.LLM_TIMEOUT_MS},
                 )
                 logger.info(
                     f"[Vertex AI] İstemci başarıyla başlatıldı (Project: {settings.GCP_PROJECT_ID}, Region: {settings.GCP_REGION})."
@@ -67,8 +67,12 @@ def generate_embedding(text: str, model: str = None) -> List[float]:
     try:
         # text-embedding-005 uses a regional endpoint, independent of Gemini global.
         from google import genai
-        client = genai.Client(vertexai=True, project=settings.GCP_PROJECT_ID,
-                              location=settings.GCP_REGION, http_options={"timeout": 30000})
+        client = genai.Client(
+            vertexai=True,
+            project=settings.GCP_PROJECT_ID,
+            location=settings.GCP_REGION,
+            http_options={"timeout": settings.EMBEDDING_TIMEOUT_MS},
+        )
         response = client.models.embed_content(
             model=target_model,
             contents=text
