@@ -707,19 +707,30 @@ class GTIPWorkflowEngine:
                 local_state_store.save_state(session_id, state_dict)
                 return decision
 
-            selection = llm_verifier.select_candidate(
-                state_dict.get("raw_text", ""), tree_result.candidates,
-                state_dict.get("allowed_chapters") or [],
-                state_dict.get("applied_gir_rules") or [],
-            )
-            if selection.status != CandidateSelectionStatus.SELECT or not selection.selected_candidate_id:
-                return GTIPDecision(
-                    session_id=session_id,
-                    status="MANUAL_REVIEW_REQUIRED",
-                    confidence_score=0.0,
-                    audit_notes=(selection.reasoning_points + selection.missing_information)[:8],
+            locked_digits = re.sub(r"\D", "", str(locked_gtip or ""))
+            exact_locked_candidates = [
+                index for index, candidate in enumerate(tree_result.candidates)
+                if re.sub(r"\D", "", candidate.gtip_code) == locked_digits
+            ]
+            if locked_digits and len(exact_locked_candidates) == 1:
+                # Kullanıcı tarife ağacındaki ayırt edici sorularla tek bir yürürlükteki
+                # 12 haneli yaprağı kilitledi. Aynı tek adayı LLM'ye yeniden seçtirmek
+                # hem sonuç değiştiremez hem de bir tam model çağrısı kadar gecikme yaratır.
+                selected_index = exact_locked_candidates[0]
+            else:
+                selection = llm_verifier.select_candidate(
+                    state_dict.get("raw_text", ""), tree_result.candidates,
+                    state_dict.get("allowed_chapters") or [],
+                    state_dict.get("applied_gir_rules") or [],
                 )
-            selected_index = int(selection.selected_candidate_id[1:]) - 1
+                if selection.status != CandidateSelectionStatus.SELECT or not selection.selected_candidate_id:
+                    return GTIPDecision(
+                        session_id=session_id,
+                        status="MANUAL_REVIEW_REQUIRED",
+                        confidence_score=0.0,
+                        audit_notes=(selection.reasoning_points + selection.missing_information)[:8],
+                    )
+                selected_index = int(selection.selected_candidate_id[1:]) - 1
             if selected_index < 0 or selected_index >= len(tree_result.candidates):
                 raise LookupError("Kilitlenen dal dışında aday seçimi reddedildi.")
             stored_candidates = tree_result.candidates
