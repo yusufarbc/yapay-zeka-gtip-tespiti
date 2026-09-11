@@ -10,6 +10,7 @@ param(
     [string]$IapAudience = "",
     [string[]]$AdditionalCorsOrigins = @(),
     [switch]$AllowPublicDemo,
+    [switch]$PreserveExistingAccess,
     [switch]$AllowDirtyTree,
     [switch]$SkipLocalChecks,
     [switch]$SkipBuild
@@ -134,7 +135,19 @@ try {
             throw "Çalışma ağacı temiz değil. Değişiklikleri commit edin veya bilinçli olarak -AllowDirtyTree kullanın."
         }
     }
-    if (-not $AllowPublicDemo -and -not $GoogleOAuthClientId -and -not $IapAudience) {
+    if ($AllowPublicDemo -and $PreserveExistingAccess) {
+        throw "-AllowPublicDemo ve -PreserveExistingAccess birlikte kullanılamaz."
+    }
+    $PublicDemoEnabled = $AllowPublicDemo.IsPresent
+    if ($PreserveExistingAccess) {
+        $currentBackend = Get-ServiceDescription $BackendService
+        $publicDemoEnv = @($currentBackend.spec.template.spec.containers[0].env) | Where-Object {
+            $_.name -eq "ALLOW_PUBLIC_DEMO_ACCESS"
+        } | Select-Object -First 1
+        $PublicDemoEnabled = $publicDemoEnv -and [string]$publicDemoEnv.value -eq "true"
+        Write-Host "Mevcut erişim kapsamı korunuyor (publicDemo=$PublicDemoEnabled)."
+    }
+    if (-not $PublicDemoEnabled -and -not $GoogleOAuthClientId -and -not $IapAudience) {
         throw "Erişim kapalı kalır: GoogleOAuthClientId/IapAudience verin veya bilinçli olarak -AllowPublicDemo kullanın."
     }
 
@@ -214,7 +227,7 @@ try {
     $BackendImage = Resolve-ImageDigest $BackendTag
     $WebImage = Resolve-ImageDigest $WebTag
 
-    $PublicDemoValue = if ($AllowPublicDemo) { "true" } else { "false" }
+    $PublicDemoValue = if ($PublicDemoEnabled) { "true" } else { "false" }
     $BackendEnv = [ordered]@{
         GCP_PROJECT_ID = $ProjectId
         GCP_REGION = $Region
@@ -259,10 +272,11 @@ try {
     Invoke-GcloudCheck "run services describe $BackendService --region $Region --project $ProjectId"
     $backendExists = ($LASTEXITCODE -eq 0)
     $backendTrafficArgs = if ($backendExists) { @("--tag", $CandidateTag, "--no-traffic") } else { @("--tag", $CandidateTag) }
+    $backendAccessArgs = if ($PreserveExistingAccess) { @() } elseif ($AllowPublicDemo) { @("--allow-unauthenticated") } else { @("--no-allow-unauthenticated") }
     $backendArgs = @(
         "run", "deploy", $BackendService, "--image", $BackendImage,
         "--region", $Region, "--project", $ProjectId, "--platform", "managed",
-        "--allow-unauthenticated", "--execution-environment", "gen2",
+        "--execution-environment", "gen2",
         "--memory", "4Gi", "--cpu", "2", "--concurrency", "8",
         "--min-instances", "1", "--max-instances", "3", "--timeout", "300s",
         "--cpu-boost", "--service-account", $RuntimeServiceAccount,
@@ -273,7 +287,7 @@ try {
         "--readiness-probe", "httpGet.path=/api/v1/ready,httpGet.port=8080,timeoutSeconds=5,periodSeconds=10,failureThreshold=3,successThreshold=1",
         "--liveness-probe", "httpGet.path=/api/v1/health,httpGet.port=8080,initialDelaySeconds=30,timeoutSeconds=5,periodSeconds=30,failureThreshold=3",
         "--labels", "app=gtip,component=backend,release=$Release"
-    ) + $backendTrafficArgs + @("--deploy-health-check", "--quiet")
+    ) + $backendAccessArgs + $backendTrafficArgs + @("--deploy-health-check", "--quiet")
     & gcloud.cmd @backendArgs
     Assert-LastExitCode "Backend candidate deploy başarısız."
     $BackendCandidateUrl = Get-TaggedUrl $BackendService $CandidateTag
@@ -283,7 +297,7 @@ try {
         throw "Backend readiness beklenen içeriği döndürmedi: $($ready.Content)"
     }
     Wait-HttpOk "$BackendCandidateUrl/api/v1/health" | Out-Null
-    if ($AllowPublicDemo) {
+    if ($PublicDemoEnabled) {
         Assert-AnalysisSmoke $BackendCandidateUrl
     }
     & gcloud.cmd run services update-traffic $BackendService --region $Region --project $ProjectId `
@@ -299,10 +313,11 @@ try {
     Invoke-GcloudCheck "run services describe $WebService --region $Region --project $ProjectId"
     $webExists = ($LASTEXITCODE -eq 0)
     $webTrafficArgs = if ($webExists) { @("--tag", $CandidateTag, "--no-traffic") } else { @("--tag", $CandidateTag) }
+    $webAccessArgs = if ($PreserveExistingAccess) { @() } elseif ($AllowPublicDemo) { @("--allow-unauthenticated") } else { @("--no-allow-unauthenticated") }
     $webArgs = @(
         "run", "deploy", $WebService, "--image", $WebImage,
         "--region", $Region, "--project", $ProjectId, "--platform", "managed",
-        "--allow-unauthenticated", "--execution-environment", "gen2",
+        "--execution-environment", "gen2",
         "--memory", "512Mi", "--cpu", "1", "--concurrency", "80",
         "--min-instances", "0", "--max-instances", "5", "--timeout", "300s",
         "--env-vars-file", $WebEnvFile,
@@ -310,7 +325,7 @@ try {
         "--readiness-probe", "httpGet.path=/healthz,httpGet.port=8080,timeoutSeconds=5,periodSeconds=10,failureThreshold=3,successThreshold=1",
         "--liveness-probe", "httpGet.path=/healthz,httpGet.port=8080,initialDelaySeconds=10,timeoutSeconds=5,periodSeconds=30,failureThreshold=3",
         "--labels", "app=gtip,component=web,release=$Release"
-    ) + $webTrafficArgs + @("--deploy-health-check", "--quiet")
+    ) + $webAccessArgs + $webTrafficArgs + @("--deploy-health-check", "--quiet")
     & gcloud.cmd @webArgs
     Assert-LastExitCode "Web candidate deploy başarısız."
     $WebCandidateUrl = Get-TaggedUrl $WebService $CandidateTag
