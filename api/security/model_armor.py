@@ -8,6 +8,8 @@ Kullanıcı veya üçüncü taraf entegrasyonlardan gelen eşya tanımlarındaki
 tespit eder, süzerek modelleri ve karar motorunu korur.
 """
 
+from __future__ import annotations
+
 import re
 import logging
 from typing import Tuple
@@ -92,3 +94,4 @@ class ModelArmorGuardrail:
 
 
 model_armor = ModelArmorGuardrail()
+

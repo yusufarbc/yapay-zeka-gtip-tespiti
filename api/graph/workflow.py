@@ -6,6 +6,7 @@ Aşama 3: Hiyerarşik Hibrit RAG Arama (Fasıl Routing, Dışlama Notu Süzgeci,
 Aşama 4: Yasal Doğrulama ve Predikat Mantığı (Deep Reasoning - Gemini 2.5 Pro / 3.6 Flash).
 Aşama 5: Deterministik Karar ve %5 Eşik HITL Kapısı (No-AI Output Binding).
 """
+from __future__ import annotations
 
 import uuid
 import json

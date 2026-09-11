@@ -4,6 +4,8 @@ Tüm FastAPI uç noktaları, Hiyerarşik Hibrit RAG motoru ve durum depoları i�
 tekil (Singleton) ORM Engine, SessionLocal, Dependency get_db() ve
 vektör/metin hibrit arama fonksiyonları sağlar.
 """
+from __future__ import annotations
+
 import os
 import uuid
 import json

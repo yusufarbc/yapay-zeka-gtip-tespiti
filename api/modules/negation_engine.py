@@ -9,6 +9,8 @@ eşyanın asıl niteliği gereği girmemesi gereken fasılları eler.
 Fasıl 39 elenerek Fasıl 85'e kilitlenir.
 """
 
+from __future__ import annotations
+
 import logging
 import re
 from typing import List, Dict, Any, Tuple, Optional

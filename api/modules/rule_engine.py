@@ -1,4 +1,5 @@
-from typing import List, Dict, Tuple, Any
+from __future__ import annotations
+from typing import List, Dict, Tuple, Any, Optional
 from api.schemas.product import ProductFeatures
 from api.db.tgtc_knowledge_base import match_chapters_from_cache, load_tgtc_chapters, TGTC_CHAPTERS, get_chapter_title
 
