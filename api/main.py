@@ -22,6 +22,7 @@ from api.db.database import (
     GumrukEmsalKararModel, GumrukSiniflandirmaKarariModel, GumrukMevzuatMaddesiModel
 )
 from sqlalchemy.orm import Session
+from api.security.model_armor import model_armor
 
 logger = logging.getLogger(__name__)
 
@@ -348,7 +349,10 @@ async def analyze_product(
             image_uri = await _upload_file_to_gcs(image, destination)
         else:
             image_uri = None
-        decision = await workflow_engine.start_analysis_async(raw_text=product_description, image_uri=image_uri)
+
+        # Vertex AI Model Armor Güvenlik Duvarı Denetimi
+        clean_desc, _ = model_armor.inspect_and_sanitize(product_description)
+        decision = await workflow_engine.start_analysis_async(raw_text=clean_desc, image_uri=image_uri)
         execution_ms = (time.time() - start_time) * 1000
 
         if decision.status == "COMPLETED" and decision.gtip_code:
@@ -356,7 +360,7 @@ async def analyze_product(
                 session_id=decision.session_id,
                 user_email=user_session.email,
                 user_role=user_session.role,
-                product_name=product_description[:50],
+                product_name=clean_desc[:50],
                 initial_gtip_proposed=decision.gtip_code,
                 final_gtip_approved=decision.gtip_code,
                 confidence_score=decision.confidence_score,
@@ -364,7 +368,7 @@ async def analyze_product(
                 execution_time_ms=round(execution_ms, 2)
             )
             background_tasks.add_task(audit_logger.log_decision, audit_entry)
-            background_tasks.add_task(append_continuous_learning_record, decision.session_id, product_description[:60], decision.gtip_code)
+            background_tasks.add_task(append_continuous_learning_record, decision.session_id, clean_desc[:60], decision.gtip_code)
 
         return decision
     except HTTPException:
@@ -390,8 +394,11 @@ async def analyze_product_stream(product_description: Annotated[ProductDescripti
     if not product_description or not product_description.strip():
         raise HTTPException(status_code=400, detail="Geçerli bir ürün açıklaması girmelisiniz.")
 
+    # Vertex AI Model Armor Güvenlik Duvarı Denetimi
+    clean_desc, _ = model_armor.inspect_and_sanitize(product_description)
+
     async def event_generator():
-        async for event_data in workflow_engine.start_analysis_stream(raw_text=product_description.strip()):
+        async for event_data in workflow_engine.start_analysis_stream(raw_text=clean_desc.strip()):
             yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
@@ -407,7 +414,9 @@ async def analyze_product_json(payload: AnalyzeJSONRequest, request: Request, ba
             "analysis",
             settings.PUBLIC_DEMO_RATE_LIMIT_PER_MINUTE,
         )
-        decision = await workflow_engine.start_analysis_async(raw_text=payload.product_description, image_uri=payload.image_uri)
+        # Vertex AI Model Armor Güvenlik Duvarı Denetimi
+        clean_desc, _ = model_armor.inspect_and_sanitize(payload.product_description)
+        decision = await workflow_engine.start_analysis_async(raw_text=clean_desc, image_uri=payload.image_uri)
         execution_ms = (time.time() - start_time) * 1000
 
         if decision.status == "COMPLETED" and decision.gtip_code:

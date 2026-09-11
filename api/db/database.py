@@ -10,6 +10,7 @@ import json
 import logging
 import math
 import re
+import datetime as _datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Generator, List, Dict, Any, Optional, Tuple
@@ -81,6 +82,32 @@ class VectorType(TypeDecorator):
             except Exception:
                 return value
         return value
+
+try:
+    from sqlalchemy.dialects.postgresql import LTREE
+except ImportError:
+    LTREE = None
+
+class LtreeType(TypeDecorator):
+    """
+    PostgreSQL 'ltree' veya yerel/SQLite ortamı için noktalı String tipi.
+    Örn: '85.8518.851830.85183000.851830000000'
+    """
+    impl = Text
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql" and LTREE is not None:
+            return dialect.type_descriptor(LTREE())
+        return dialect.type_descriptor(Text())
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        return str(value).strip()
+
+    def process_result_value(self, value, dialect):
+        return str(value) if value is not None else None
 
 # SQLAlchemy Declarative Base Model
 Base = declarative_base()
@@ -265,6 +292,84 @@ class EmsalBtbKarariModel(Base):
     gecerlilik_tarihi = Column(String(30), nullable=False)
     icerik_vektor = Column(VectorType(768), nullable=True)
 
+# ==============================================================================
+# HEDEF NÖRO-SEMBOLİK TGTC VE ALLOYDB BİLGİ GRAFI MODELLERİ
+# ==============================================================================
+
+class TariffHierarchyModel(Base):
+    """
+    1. Merkezi Hiyerarşik Tarife Ağacı (PostgreSQL ltree & Bi-temporal).
+    Fasıl (2), Pozisyon (4), Alt Pozisyon (6), CN8 (8) ve Milli Açılım (12) hiyerarşisini
+    mikrosaniyeler seviyesinde ltree 'path' üzerinden indeksler.
+    """
+    __tablename__ = "tariff_hierarchy"
+    __table_args__ = (
+        Index("idx_tariff_level", "level"),
+        Index("idx_tariff_parent", "parent_gtip"),
+        Index("idx_tariff_is_leaf", "is_leaf"),
+        Index("idx_tariff_validity", "valid_from", "valid_to"),
+    )
+
+    gtip_code = Column(String(12), primary_key=True)
+    parent_gtip = Column(String(12), nullable=True, index=True)
+    path = Column(LtreeType, nullable=False, index=True)
+    level = Column(Integer, nullable=False)  # 2 (Fasıl), 4 (Poz), 6 (Alt Poz), 8 (CN8), 12 (İstatistik)
+    description_tr = Column(Text, nullable=False)
+    indent_level = Column(Integer, default=0)
+    is_leaf = Column(Boolean, default=False)
+    valid_from = Column(String(30), nullable=False, default="2026-01-01")
+    valid_to = Column(String(30), nullable=True)
+    system_created_at = Column(DateTime, server_default=func.now())
+    metadata_payload = Column("metadata", Text, nullable=True)
+
+
+class ChapterSectionNotesModel(Base):
+    """
+    2. Bölüm ve Fasıl Açıklama & Dışlama (Negation Filter) Notları Kütüphanesi.
+    GYK 1 dışlama kurallarını (örn: Fasıl 39 Not 2(p) elektrikli eşya dışlaması)
+    yapılandırılmış JSON kuralları ve 768-d vektörle saklar.
+    """
+    __tablename__ = "chapter_section_notes"
+    __table_args__ = (
+        Index("idx_notes_target", "target_level", "target_code"),
+        Index("idx_notes_type", "note_type"),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    target_level = Column(String(10), nullable=False)  # 'SECTION' veya 'CHAPTER'
+    target_code = Column(String(10), nullable=False)   # 'XVI' (Bölüm 16) veya '85' (Fasıl 85)
+    note_type = Column(String(20), nullable=False)     # 'EXCLUSION', 'INCLUSION', 'DEF'
+    raw_content = Column(Text, nullable=False)          # Kanuni not metni
+    structured_rules = Column(Text, nullable=True)      # JSON string / dict: {"excluded_keywords": [...], "redirect_chapter": "85"}
+    embedding = Column(VectorType(768), nullable=True)  # text-embedding-005 vektör temsili
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class LegislationAndBtbModel(Base):
+    """
+    3. Hukuki Normlar Hiyerarşisi ve Emsal BTB Havuzu.
+    Norm hiyerarşisi puanı (1: Kanun -> 5: BTB) ile hibrit arama (RRF) destekler.
+    """
+    __tablename__ = "legislation_and_btb"
+    __table_args__ = (
+        Index("idx_leg_gtip", "gtip_code"),
+        Index("idx_leg_doc_type", "doc_type"),
+        Index("idx_leg_rank", "legal_rank"),
+        Index("idx_leg_validity", "valid_from", "valid_to"),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    doc_type = Column(String(30), nullable=False)      # 'BTB', 'SINIFLANDIRMA_KARARI', 'TEBLIG'
+    reference_no = Column(String(50), nullable=True)   # BTB Sayısı veya Resmî Gazete No
+    legal_rank = Column(Integer, default=5)            # Norm Hiyerarşisi Puanı (1: Kanun - 5: BTB)
+    gtip_code = Column(String(12), nullable=True)
+    commercial_name = Column(Text, nullable=False)
+    technical_specs = Column(Text, nullable=True)
+    embedding = Column(VectorType(768), nullable=True)
+    valid_from = Column(String(30), nullable=False, default="2020-01-01")
+    valid_to = Column(String(30), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
 def get_database_url() -> str:
     """GCP Cloud SQL PostgreSQL bağlantı dizesini döndürür."""
     env_db_url = os.getenv("DATABASE_URL")
@@ -315,15 +420,17 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def init_orm_tables():
     """GCP Cloud SQL PostgreSQL veritabanı tablolarını güvenli olarak oluşturur ve pgvector eklentisini hazırlar."""
     try:
-        # 1. PostgreSQL için pgvector eklentisini etkinleştir
+        # 1. PostgreSQL için pgvector, ltree ve uuid eklentilerini etkinleştir
         if engine.dialect.name == "postgresql":
             try:
                 with engine.connect() as conn:
                     conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+                    conn.execute(text("CREATE EXTENSION IF NOT EXISTS \"ltree\";"))
+                    conn.execute(text("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";"))
                     conn.commit()
-                    logger.info("[SQLAlchemy ORM] PostgreSQL 'vector' (pgvector) eklentisi doğrulandı/oluşturuldu.")
+                    logger.info("[SQLAlchemy ORM] PostgreSQL 'vector', 'ltree', 'uuid-ossp' eklentileri doğrulandı.")
             except Exception as ex_vec:
-                logger.warning(f"[SQLAlchemy ORM] pgvector eklenti uyarısı: {ex_vec}")
+                logger.warning(f"[SQLAlchemy ORM] Eklenti yükleme uyarısı: {ex_vec}")
 
         # 2. Tabloları oluştur
         Base.metadata.create_all(bind=engine)
@@ -1021,3 +1128,182 @@ def hybrid_search_headings_and_gtip(
     # RRF skoruna göre sırala ve top_k kadarını döner
     sorted_results = sorted(rrf_candidates.values(), key=lambda x: (x["rrf_score"], x["similarity_score"]), reverse=True)
     return sorted_results[:top_k]
+
+
+# ==============================================================================
+# HİYERARŞİK AĞAÇ VE SIFIR HALÜSİNASYON GÜVENLİK BARİYERİ YARDIMCILARI
+# ==============================================================================
+
+def validate_leaf_gtip(
+    session: Session,
+    gtip_code: str,
+    as_of_date: Optional[str] = None
+) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    """
+    Foreign Key Validation Barrier:
+    Modelin önerdiği 12 haneli GTİP kodunun veritabanında 'is_leaf = TRUE' (veya GTIP)
+    ve verilen tarihte geçerli (bi-temporal) olduğunu doğrular.
+    Doğrulanamazsa Fail-Closed prensibi uyarınca False döner.
+    """
+    clean_code = re.sub(r"\D", "", str(gtip_code or "")).strip()
+    if len(clean_code) != 12:
+        return False, None
+
+    check_date = as_of_date or _datetime.date.today().isoformat()
+
+    # 1. Önce modern tariff_hierarchy tablosunu dene
+    try:
+        query = session.query(TariffHierarchyModel).filter(
+            TariffHierarchyModel.gtip_code == clean_code,
+            TariffHierarchyModel.is_leaf == True,
+            TariffHierarchyModel.valid_from <= check_date,
+            or_(
+                TariffHierarchyModel.valid_to.is_(None),
+                TariffHierarchyModel.valid_to >= check_date
+            )
+        )
+        record = query.first()
+        if record:
+            return True, {
+                "gtip_code": record.gtip_code,
+                "description": record.description_tr,
+                "level": record.level,
+                "path": str(record.path),
+                "is_leaf": True,
+                "valid_from": str(record.valid_from),
+                "valid_to": str(record.valid_to) if record.valid_to else None,
+            }
+    except Exception as exc:
+        logger.debug("tariff_hierarchy sorgusu esnasında istisna (TgtcGtipModel deneniyor): %s", exc)
+
+    # 2. Geriye dönük uyumluluk: TgtcGtipModel üzerinde doğrula
+    try:
+        fallback_query = session.query(TgtcGtipModel).filter(
+            TgtcGtipModel.gtip_code == clean_code,
+            TgtcGtipModel.level == "GTIP",
+            TgtcGtipModel.is_active == True,
+            or_(TgtcGtipModel.gecerlilik_baslangic.is_(None), TgtcGtipModel.gecerlilik_baslangic <= check_date),
+            or_(TgtcGtipModel.gecerlilik_bitis.is_(None), TgtcGtipModel.gecerlilik_bitis >= check_date)
+        )
+        fb_record = fallback_query.first()
+        if fb_record:
+            return True, {
+                "gtip_code": fb_record.gtip_code,
+                "description": fb_record.description,
+                "level": 12,
+                "path": f"{fb_record.gtip_code[:2]}.{fb_record.gtip_code[:4]}.{fb_record.gtip_code[:6]}.{fb_record.gtip_code[:8]}.{fb_record.gtip_code}",
+                "is_leaf": True,
+                "valid_from": fb_record.gecerlilik_baslangic or "2026-01-01",
+                "valid_to": fb_record.gecerlilik_bitis,
+            }
+    except Exception as exc_fb:
+        logger.warning("TgtcGtipModel doğrulama istisnası: %s", exc_fb)
+
+    return False, None
+
+
+def get_subheadings_by_path(
+    session: Session,
+    parent_path: str
+) -> List[Dict[str, Any]]:
+    """
+    Belirli bir ltree path kökünün (örn: '85.8518') doğrudan ve dolaylı alt kırılımlarını döner.
+    PostgreSQL'de GiST ltree <@ operatörü veya LIKE ile aranır.
+    """
+    clean_path = str(parent_path or "").strip()
+    if not clean_path:
+        return []
+
+    try:
+        if session.bind and session.bind.dialect.name == "postgresql":
+            sql = text("SELECT gtip_code, level, description_tr, path::text, indent_level, is_leaf "
+                       "FROM tariff_hierarchy WHERE path <@ :p_path ORDER BY path ASC")
+            results = session.execute(sql, {"p_path": clean_path}).fetchall()
+            return [
+                {
+                    "gtip_code": row[0],
+                    "level": row[1],
+                    "description": row[2],
+                    "path": row[3],
+                    "indent_level": row[4],
+                    "is_leaf": row[5]
+                }
+                for row in results
+            ]
+        else:
+            # SQLite / Fallback
+            records = session.query(TariffHierarchyModel).filter(
+                TariffHierarchyModel.path.like(f"{clean_path}%")
+            ).order_by(TariffHierarchyModel.path.asc()).all()
+            if records:
+                return [
+                    {
+                        "gtip_code": r.gtip_code,
+                        "level": r.level,
+                        "description": r.description_tr,
+                        "path": str(r.path),
+                        "indent_level": r.indent_level,
+                        "is_leaf": r.is_leaf
+                    }
+                    for r in records
+                ]
+    except Exception as exc:
+        logger.debug("get_subheadings_by_path istisnası: %s", exc)
+
+    return []
+
+
+def get_exclusion_notes_for_chapter(
+    session: Session,
+    chapter_code: str
+) -> List[Dict[str, Any]]:
+    """
+    Belirli bir fasıl için GYK 1 dışlama (Negation Filter) notlarını döner.
+    Örn: Fasıl 39 için Not 2(p): 'Fasıl 85 kapsamındaki elektrikli cihazlar bu fasla girmez.'
+    """
+    clean_chap = str(chapter_code or "").strip().zfill(2)
+    notes = []
+
+    # 1. Modern chapter_section_notes tablosunu sorgula
+    try:
+        records = session.query(ChapterSectionNotesModel).filter(
+            ChapterSectionNotesModel.target_code == clean_chap,
+            ChapterSectionNotesModel.note_type == "EXCLUSION"
+        ).all()
+        for r in records:
+            rules = {}
+            if r.structured_rules:
+                try:
+                    rules = json.loads(r.structured_rules) if isinstance(r.structured_rules, str) else r.structured_rules
+                except Exception:
+                    pass
+            notes.append({
+                "id": r.id,
+                "target_code": r.target_code,
+                "raw_content": r.raw_content,
+                "structured_rules": rules,
+                "note_type": r.note_type
+            })
+    except Exception as exc:
+        logger.debug("chapter_section_notes sorgu istisnası: %s", exc)
+
+    # 2. Geriye dönük uyumluluk: tgtc_notes tablosunu sorgula
+    if not notes:
+        try:
+            legacy = session.query(TgtcNoteModel).filter(
+                TgtcNoteModel.chapter_code == clean_chap,
+                TgtcNoteModel.note_type == "EXCLUSION"
+            ).all()
+            for ln in legacy:
+                notes.append({
+                    "id": str(ln.id),
+                    "target_code": ln.chapter_code,
+                    "raw_content": ln.text,
+                    "structured_rules": {},
+                    "note_type": ln.note_type
+                })
+        except Exception:
+            pass
+
+    return notes
+

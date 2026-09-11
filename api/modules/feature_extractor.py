@@ -89,31 +89,44 @@ class FeatureExtractor:
         composition: Any,
     ) -> ProductFeatures:
         normalized = " ".join(raw_text.split())
+        accessories = None
+        for acc_term in ("taşıma kutulu", "şarj kutulu", "özel kılıflı", "kutulu", "kılıflı", "taşıma kutusu", "şarj kutusu", "özel kılıf"):
+            if acc_term in text_lower:
+                accessories = acc_term
+                break
+
         return ProductFeatures(
             product_name=normalized[:2000],
+            commercial_name=normalized[:500],
             primary_material=self._extract_explicit_material(text_lower),
+            function=normalized[:1000],
+            accessories_or_packaging=accessories,
             composition_percentages=composition,
-            # Kullanım amacı yazılmadıysa modelin tahmin etmesi yerine özgün metin
-            # korunur; alt pozisyon ayrımı gerektiğinde HITL bunu netleştirir.
             intended_use=normalized[:1000],
             is_set_or_kit=any(_contains_term(text_lower, w) for w in ("set", "takım", "kit")),
             is_disassembled=any(
                 _contains_term(text_lower, w) for w in ("demonte", "sökülmüş", "parça halinde")
             ),
-            technical_specifications=specs,
+            technical_specifications=specs
         )
 
     def extract_features(self, raw_text: str, image_uri: str = None) -> ProductFeatures:
-        text_lower = raw_text.lower()
-        api_key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
-        
-        # Temel teknik nitelik tespiti
+        text_lower = str(raw_text or "").lower()
         specs = {}
-        if "motor" in text_lower:
-            specs["has_electric_motor"] = "true"
-        if "şarj" in text_lower or "batarya" in text_lower or "5g" in text_lower or "pil" in text_lower:
-            specs["power_source"] = "Bataryalı / Şarjlı"
+        # Teknik parametre tespiti: Voltaj, Güç, Ağırlık, Frekans
+        volt_match = re.search(r'(\d+)\s*(?:v|volt)', text_lower)
+        if volt_match:
+            specs["voltage"] = f"{volt_match.group(1)}V"
+        
+        watt_match = re.search(r'(\d+)\s*(?:w|watt)', text_lower)
+        if watt_match:
+            specs["power"] = f"{watt_match.group(1)}W"
 
+        weight_match = re.search(r'(\d+(?:[.,]\d+)?)\s*(?:kg|kilo|gr|gram)', text_lower)
+        if weight_match:
+            specs["weight"] = weight_match.group(0)
+
+        # Karışım tespiti
         composition = None
         if "pamuk" in text_lower or "cotton" in text_lower:
             cotton_match = re.search(r'%?\s*(\d{2})\s*(?:pamuk|cotton)', text_lower)
@@ -125,9 +138,7 @@ class FeatureExtractor:
             else:
                 composition = {"cotton": 1.0}
 
-        # Açık ve kısa ürün tanımında model çağrısı hukuken yeni bir kanıt
-        # üretmez. Sadece kullanıcının yazdığı olguları taşıyan bu hızlı yol,
-        # sınıflandırmayı RAG + GİR + HITL katmanlarına bırakır.
+        # Açık ve kısa ürün tanımında deterministik hızlı yol
         if self._is_simple_explicit_description(raw_text, image_uri):
             logger.info("Deterministik özellik çıkarımı kullanıldı (kısa açık ürün tanımı).")
             return self._build_explicit_features(raw_text, text_lower, specs, composition)
@@ -142,7 +153,10 @@ class FeatureExtractor:
                 f"Lütfen sadece geçerli bir JSON yanıtı döndür:\n"
                 f"{{\n"
                 f'  "product_name": "ürünün ticari adı",\n'
+                f'  "commercial_name": "marka/model veya ticari adı",\n'
                 f'  "primary_material": "baskın malzeme",\n'
+                f'  "function": "işlev/temel fonksiyon (örn. ses dinleme, kablosuz iletişim)",\n'
+                f'  "accessories_or_packaging": "birlikte verilen ambalaj/kutu (örn. taşıma kutusu, şarj kablosu)",\n'
                 f'  "intended_use": "kullanım amacı",\n'
                 f'  "is_set_or_kit": false,\n'
                 f'  "is_disassembled": false,\n'
@@ -154,15 +168,13 @@ class FeatureExtractor:
                 thinking_config = types.ThinkingConfig(thinking_budget=settings.THINKING_BUDGET_EXTRACTOR)
                 config = types.GenerateContentConfig(
                     thinking_config=thinking_config,
-                    temperature=0.1,
+                    temperature=0.0,
+                    max_output_tokens=1024,
                     response_mime_type="application/json",
                 )
             except Exception:
                 config = None
 
-            # Bu kısa ve ürüne özel prompt için context cache hem faydasızdır hem de
-            # cache yokken devasa TGTC bağlamını senkron oluşturup isteği ~90 sn
-            # bekletebilir. Her zaman doğrudan model çağrısı kullanılır.
             response = client.models.generate_content(
                 model=settings.EXTRACTOR_LLM_MODEL,
                 contents=prompt,
@@ -184,7 +196,10 @@ class FeatureExtractor:
                 llm_specs.update(specs)
                 return ProductFeatures(
                     product_name=data.get("product_name", raw_text[:70]),
+                    commercial_name=data.get("commercial_name", raw_text[:70]),
                     primary_material=data.get("primary_material", self._extract_material_dynamically(text_lower)),
+                    function=data.get("function", raw_text[:100]),
+                    accessories_or_packaging=data.get("accessories_or_packaging"),
                     composition_percentages=composition,
                     intended_use=data.get("intended_use", "Genel Kullanım"),
                     is_set_or_kit=bool(data.get("is_set_or_kit", False)),

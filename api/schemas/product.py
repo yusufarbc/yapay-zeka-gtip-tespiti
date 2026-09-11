@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 
 
 class LegalSource(BaseModel):
@@ -45,7 +45,10 @@ class LegalSource(BaseModel):
 
 class ProductFeatures(BaseModel):
     product_name: str = Field(description="Ürünün ticari adı veya kısa tanımı", min_length=1, max_length=2000)
+    commercial_name: Optional[str] = Field(default=None, description="Ticari eşya adı / marka modeli", max_length=1000)
     primary_material: str = Field(description="Baskın malzeme: Pamuk, Plastik, Çelik, Cam vb.", max_length=500)
+    function: Optional[str] = Field(default=None, description="Eşyanın temel fonksiyonu / işlevi", max_length=1000)
+    accessories_or_packaging: Optional[str] = Field(default=None, description="Birlikte verilen ambalaj, kılıf, kutu veya aksesuarlar", max_length=1000)
     composition_percentages: Optional[Dict[str, float]] = Field(
         default=None, 
         description="Karışım oranları: örn. {'cotton': 0.60, 'polyester': 0.40}"
@@ -59,9 +62,9 @@ class ProductFeatures(BaseModel):
     )
 
 class PrecedentBTB(BaseModel):
-    btb_no: str = Field(description="Ticaret Bakanlığı BTB Karar Numarası", max_length=100)
-    gtip_code: str = Field(description="BTB kararı ile verilen 12 haneli GTİP Kodu", max_length=30)
-    issue_date: str = Field(description="BTB Karar Tarihi", max_length=20)
+    btb_no: str = Field(default="", description="Ticaret Bakanlığı BTB Karar Numarası", max_length=100)
+    gtip_code: str = Field(default="", description="BTB kararı ile verilen 12 haneli GTİP Kodu", max_length=30)
+    issue_date: str = Field(default="", description="BTB Karar Tarihi", max_length=20)
     product_description: str = Field(description="BTB kararındaki ürün tanımı")
     legal_justification: str = Field(description="Bakanlığın yasal gerekçe açıklaması")
     similarity_score: float = Field(description="Vektör benzerlik skoru (0.0 - 1.0)", ge=0.0, le=1.0)
@@ -109,3 +112,6 @@ class GTIPDecision(BaseModel):
     consulted_sources: List[str] = Field(default_factory=list)
     hitl_question: Optional[HITLQuestion] = None
     audit_notes: List[str] = Field(default_factory=list)
+    trade_measures: Optional[Dict[str, Any]] = Field(default=None, description="İGV, TAREKS, KDV, Gözetim vb. tedbir kartları")
+    state_machine_stage: Optional[str] = Field(default=None, description="FSM Durumu (DURUM_0 - DURUM_6)")
+    guardrail_status: Optional[str] = Field(default=None, description="VERIFIED_LEAF | FALLBACK_SUBHEADING | STRICT_CHECK_PASSED")

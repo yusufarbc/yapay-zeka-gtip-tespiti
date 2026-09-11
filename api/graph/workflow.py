@@ -21,12 +21,31 @@ from api.modules.rag_engine import rag_engine
 from api.modules.predicate_registry import predicate_registry
 from api.modules.llm_verifier import llm_verifier
 from api.modules.deterministic_engine import deterministic_engine
-from api.schemas.product import ProductFeatures, GTIPCandidate, GTIPDecision, HITLQuestion, HITLOption
+from api.modules.negation_engine import negation_engine
+from api.schemas.product import ProductFeatures, GTIPCandidate, GTIPDecision, HITLQuestion, HITLOption, PrecedentBTB
 from api.schemas.predicate import CandidateSelectionStatus, PredicateStatus
 from api.db.gcp_emulator import local_state_store
+from api.db.database import SessionLocal, validate_leaf_gtip
 from api.modules.discriminator_engine import DiscriminatorQuestion
 
 logger = logging.getLogger("GTIPWorkflowEngine")
+
+
+def get_customs_trade_measures(gtip_code: Optional[str]) -> Dict[str, Any]:
+    """GTİP koduna ait Ticaret Politikası Önlemlerini (İGV, TAREKS, KDV, Gözetim) döndürür."""
+    clean = re.sub(r"\D", "", str(gtip_code or ""))
+    chap = clean[:2] if len(clean) >= 2 else ""
+    igv = 20.0 if chap in {"85", "84", "64", "39", "94", "73"} else 0.0
+    tareks = "Tüketici Güvenliği ve Denetimi Tebliği" if chap in {"85", "84", "95", "90"} else None
+    kdv = 20.0
+    surveillance = "İthalatta Gözetim Uygulanmasına İlişkin Tebliğ" if chap in {"85", "64", "73"} else None
+    return {
+        "kdv_rate": kdv,
+        "additional_duty_rate": igv,
+        "tareks_required": tareks is not None,
+        "tareks_detail": tareks,
+        "surveillance_measure": surveillance,
+    }
 
 
 def _mark_pipeline_stage(session_id: str, stage: str, started_at: float) -> float:
@@ -247,19 +266,25 @@ class GTIPWorkflowEngine:
         session_id = str(uuid.uuid4())
         stage_started = time.perf_counter()
 
-        # 1. Aşama: Multimodal Özellik Çıkarımı (Fast Model - Gemini 2.5 Flash)
+        # DURUM 0: Varlık & Özellik Ayrıştırma (Gemini Flash-Lite)
         features = feature_extractor.extract_features(raw_text, image_uri)
-        stage_started = _mark_pipeline_stage(session_id, "feature_extraction", stage_started)
+        stage_started = _mark_pipeline_stage(session_id, "durum_0_feature_extraction", stage_started)
 
-        # 2. Aşama: Deterministik Kural Motoru (HARD_RULES_MATRIX & Sıralı GİR 1-6)
+        # DURUM 2: Fasıl Belirleme & GYK 1 Elemesi (Negation Filter)
         allowed_chapters, gir_rules = rule_engine.apply_rules(features)
-        stage_started = _mark_pipeline_stage(session_id, "gir_routing", stage_started)
+        allowed_chapters, exclusions = negation_engine.apply_negation_filter(allowed_chapters, features)
+        for excl in exclusions:
+            gir_rules.append(
+                f"GYK 1 (Hariç Bırakma): {excl['legal_reference']} gereğince "
+                f"Fasıl {excl['excluded_chapter']} elendi -> Fasıl {excl['redirect_chapter']} yönlendirildi."
+            )
+        stage_started = _mark_pipeline_stage(session_id, "durum_2_gyk1_negation", stage_started)
 
-        # 3. Aşama: Hiyerarşik Hibrit RAG Arama (Fasıl Routing ➔ Dışlama Notu Kontrolü ➔ pgvector + BM25 RRF)
+        # DURUM 1 & DURUM 5: Hiyerarşik Hibrit RAG Arama (AlloyDB ScaNN & RRF)
         tree_result = rag_engine.search_candidates_hierarchical(
             session_id, features, allowed_chapters, applied_gir_rules=gir_rules
         )
-        stage_started = _mark_pipeline_stage(session_id, "hierarchical_retrieval", stage_started)
+        stage_started = _mark_pipeline_stage(session_id, "durum_1_rag_retrieval", stage_started)
         if tree_result.discriminator_question:
             return self._pause_for_discriminator(
                 session_id, raw_text, image_uri, features, allowed_chapters, gir_rules, tree_result
@@ -270,8 +295,85 @@ class GTIPWorkflowEngine:
             return GTIPDecision(
                 session_id=session_id,
                 status="MANUAL_REVIEW_REQUIRED",
+                state_machine_stage="DURUM_1_EMPTY",
                 audit_notes=["RAG uzayında uygun emsal karar bulunamadı. Kıdemli Müşavire yönlendirildi."]
             )
+
+        # DURUM 1: BTB Emsal Karar Kontrolü (Fast Exit Check >= 0.92)
+        fast_exit_candidate = None
+        fast_exit_btb = None
+        for c in candidates:
+            for p in getattr(c, "precedents", []):
+                if getattr(p, "similarity_score", 0.0) >= 0.92:
+                    if not fast_exit_btb or p.similarity_score > fast_exit_btb.similarity_score:
+                        fast_exit_btb = p
+                        fast_exit_candidate = c
+
+        if fast_exit_candidate and fast_exit_btb:
+            logger.info("[Fast Exit] BTB Kararı %s benzerlik skoru %.4f >= 0.92. Doğrudan Durum 6'ya atlanıyor.", fast_exit_btb.btb_no, fast_exit_btb.similarity_score)
+            decision = GTIPDecision(
+                session_id=session_id,
+                status="COMPLETED",
+                gtip_code=fast_exit_candidate.gtip_code,
+                confidence_score=round(float(fast_exit_btb.similarity_score), 4),
+                official_statute_text=f"2026 TGTC {fast_exit_candidate.gtip_code}: {fast_exit_candidate.description}",
+                llm_reasoning_commentary=f"Emsal BTB Kararı ({fast_exit_btb.btb_no}) ile yüksek anlamsal benzerlik (%{int(fast_exit_btb.similarity_score * 100)}) sağlandığı için Fast Exit işletildi.",
+                legal_justification=fast_exit_btb.legal_justification or f"BTB Kararı No: {fast_exit_btb.btb_no}",
+                applied_gir_rules=gir_rules + [f"GYK 1: {fast_exit_btb.btb_no} sayılı BTB emsali (Benzerlik: {fast_exit_btb.similarity_score:.2f}) ile doğrudan sınıflandırıldı."],
+                precedent_btbs=[fast_exit_btb],
+                legal_sources=fast_exit_candidate.legal_sources,
+                consulted_sources=fast_exit_candidate.consulted_sources,
+                state_machine_stage="DURUM_1_FAST_EXIT",
+                audit_notes=[f"Durum 1 Fast Exit: {fast_exit_btb.btb_no} numaralı emsal ile doğrudan Durum 6'ya geçildi."]
+            )
+            # DURUM 6: MEVZUAT TEDBİR, DOĞRULAMA & ÇIKIŞ KALKANI (GUARDRAILS)
+            target_gtip_digits = re.sub(r"\D", "", str(decision.gtip_code or ""))
+            try:
+                with SessionLocal() as db_session:
+                    is_valid_leaf, _ = validate_leaf_gtip(db_session, target_gtip_digits)
+                    if is_valid_leaf:
+                        decision.guardrail_status = "VERIFIED_LEAF"
+                    else:
+                        decision.guardrail_status = "FALLBACK_SUBHEADING"
+                        if len(target_gtip_digits) >= 6:
+                            decision.gtip_code = f"{target_gtip_digits[:6]}.00.00.00"
+                            decision.status = "MANUAL_REVIEW_REQUIRED"
+                            decision.audit_notes.append("Foreign Key Barrier: Kod 12 haneli yaprak olarak doğrulanamadığı için 6 haneli alt pozisyona çekildi.")
+            except Exception as ex_val:
+                logger.warning("[Guardrail Barrier] Doğrulama istisnası: %s", ex_val)
+                decision.guardrail_status = "UNCHECKED"
+
+            decision.trade_measures = get_customs_trade_measures(decision.gtip_code)
+            decision.state_machine_stage = "DURUM_6_COMPLETED"
+
+            state_dict: Dict[str, Any] = {
+                "session_id": session_id,
+                "raw_text": raw_text,
+                "image_uri": image_uri,
+                "product_features": features.model_dump(),
+                "allowed_chapters": allowed_chapters,
+                "applied_gir_rules": decision.applied_gir_rules,
+                "candidates": [c.model_dump() for c in candidates],
+                "selected_gtip": decision.gtip_code,
+                "confidence_score": decision.confidence_score,
+                "status": decision.status,
+                "official_statute_text": decision.official_statute_text,
+                "llm_reasoning_commentary": decision.llm_reasoning_commentary,
+                "hitl_question": None,
+                "audit_notes": decision.audit_notes,
+            }
+            local_state_store.save_state(session_id, state_dict)
+            return decision
+
+        # DURUM 3: 4 Haneli Pozisyon Tespiti & GYK 3(a, b, c) Çatışma Çözücü
+        candidate_headings = [{"heading": c.heading or c.gtip_code[:4], "candidate": c} for c in candidates]
+        resolved_heading, gyk3_rules = rule_engine.resolve_gyk3_conflict(candidate_headings, features)
+        if gyk3_rules:
+            gir_rules.extend(gyk3_rules)
+            if resolved_heading and "candidate" in resolved_heading:
+                spec_h = resolved_heading["candidate"].heading
+                candidates = sorted(candidates, key=lambda c: 0 if (c.heading == spec_h) else 1)
+        stage_started = _mark_pipeline_stage(session_id, "durum_3_gyk3_conflict", stage_started)
 
         selected_index = _exact_locked_candidate_index(tree_result, candidates)
         selection_started = time.perf_counter()
@@ -287,6 +389,7 @@ class GTIPWorkflowEngine:
                     session_id=session_id,
                     status="MANUAL_REVIEW_REQUIRED",
                     confidence_score=0.0,
+                    state_machine_stage="DURUM_3_DISAMBIGUATION",
                     audit_notes=(selection.reasoning_points + selection.missing_information)[:8],
                 )
             selected_index = int(selection.selected_candidate_id[1:]) - 1
@@ -295,9 +398,18 @@ class GTIPWorkflowEngine:
             return GTIPDecision(
                 session_id=session_id,
                 status="MANUAL_REVIEW_REQUIRED",
+                state_machine_stage="DURUM_3_CLOSED_SET_FAIL",
                 audit_notes=["Kapalı aday kümesi dışında seçim reddedildi."],
             )
         top_candidate = candidates[selected_index]
+
+        # DURUM 4: GYK 5 Ambalaj ve Muhafaza Kontrolü
+        is_fitted_case, gyk5_justification = rule_engine.evaluate_gyk5_packaging(
+            features, base_heading=top_candidate.heading or top_candidate.gtip_code[:4]
+        )
+        if is_fitted_case and gyk5_justification:
+            gir_rules.append(gyk5_justification)
+        stage_started = _mark_pipeline_stage(session_id, "durum_4_gyk5_packaging", stage_started)
 
         # 3.5. Aşama: Dinamik Kural Denetimi (gcp_architecture_report.md Bölüm 6 - Dynamic Rule Auditor)
         heading_code = top_candidate.heading or top_candidate.gtip_code[:4]
@@ -317,13 +429,13 @@ class GTIPWorkflowEngine:
                     applied_gir_rules=gir_rules,
                     legal_sources=top_candidate.legal_sources,
                     consulted_sources=top_candidate.consulted_sources,
+                    state_machine_stage="DYNAMIC_RULE_FAILED",
                     audit_notes=[
                         "Dinamik tarife koşulu karşılanmadı: "
                         f"{rule_check['missing_parameter']}={rule_check['actual_value']} "
                         f"{rule_check['operator']} {rule_check['expected_value']}"
                     ],
                 )
-            # Eksik parametre tespit edildi: Müşavire dinamik soru yönelt ve durumu askıya al
             opts = []
             for idx, o in enumerate(rule_check.get("options", [])):
                 opt_id = o.get("id", f"OPT_{idx}")
@@ -349,6 +461,7 @@ class GTIPWorkflowEngine:
                 precedent_btbs=top_candidate.precedents,
                 legal_sources=top_candidate.legal_sources,
                 consulted_sources=top_candidate.consulted_sources,
+                state_machine_stage="DYNAMIC_RULE_HITL",
                 audit_notes=[f"Dinamik Kural Motoru: '{rule_check['missing_parameter']}' parametresi eksik. Müşavire soru yöneltildi."]
             )
             state_dict: Dict[str, Any] = {
@@ -389,7 +502,6 @@ class GTIPWorkflowEngine:
                 evidence_context=evidence_context,
             )
         else:
-            # Predikat kaydı yoksa doğrudan TariffVerification yapılandırılmış çıktısı al
             verification_results = llm_verifier.verify_tariff_candidate(
                 raw_text=raw_text,
                 candidate_gtip=top_candidate.gtip_code,
@@ -411,6 +523,30 @@ class GTIPWorkflowEngine:
         )
         _mark_pipeline_stage(session_id, "deterministic_binding", stage_started)
         decision = _bind_legal_sources(decision, top_candidate)
+
+        # DURUM 6: MEVZUAT TEDBİR, DOĞRULAMA & ÇIKIŞ KALKANI (GUARDRAILS)
+        target_gtip_digits = re.sub(r"\D", "", str(decision.gtip_code or ""))
+        try:
+            with SessionLocal() as db_session:
+                is_valid_leaf, verified_record = validate_leaf_gtip(db_session, target_gtip_digits)
+                if is_valid_leaf:
+                    decision.guardrail_status = "VERIFIED_LEAF"
+                else:
+                    logger.warning("[Guardrail Barrier] %s 12 haneli yaprak kod olarak doğrulanamadı!", decision.gtip_code)
+                    decision.guardrail_status = "FALLBACK_SUBHEADING"
+                    if len(target_gtip_digits) >= 6:
+                        decision.gtip_code = f"{target_gtip_digits[:6]}.00.00.00"
+                        decision.status = "MANUAL_REVIEW_REQUIRED"
+                        decision.audit_notes.append(
+                            "Foreign Key Barrier: Kod 12 haneli yaprak olarak doğrulanamadığı için 6 haneli alt pozisyona çekildi."
+                        )
+        except Exception as ex_val:
+            logger.warning("[Guardrail Barrier] Doğrulama istisnası: %s", ex_val)
+            decision.guardrail_status = "UNCHECKED"
+
+        decision.trade_measures = get_customs_trade_measures(decision.gtip_code)
+        decision.state_machine_stage = "DURUM_6_COMPLETED"
+        decision.applied_gir_rules = list(dict.fromkeys(gir_rules))
 
         # State kaydet
         state_dict: Dict[str, Any] = {
@@ -466,6 +602,12 @@ class GTIPWorkflowEngine:
         }
         await asyncio.sleep(0.05)
         allowed_chapters, gir_rules = await asyncio.to_thread(rule_engine.apply_rules, features)
+        allowed_chapters, exclusions = await asyncio.to_thread(negation_engine.apply_negation_filter, allowed_chapters, features)
+        for excl in exclusions:
+            gir_rules.append(
+                f"GYK 1 (Hariç Bırakma): {excl['legal_reference']} gereğince "
+                f"Fasıl {excl['excluded_chapter']} elendi -> Fasıl {excl['redirect_chapter']} yönlendirildi."
+            )
         stage_started = _mark_pipeline_stage(session_id, "gir_routing", stage_started)
 
         yield {
@@ -503,6 +645,85 @@ class GTIPWorkflowEngine:
                 "stage": "COMPLETED",
                 "status": "MANUAL_REVIEW_REQUIRED",
                 "message": "Aşama 4: Uygun emsal bulunamadı, manuel incelemeye yönlendirildi.",
+                "decision": decision.model_dump()
+            }
+            return
+
+        # DURUM 1: BTB Emsal Karar Kontrolü (Fast Exit Check >= 0.92)
+        fast_exit_candidate = None
+        fast_exit_btb = None
+        for c in candidates:
+            for p in getattr(c, "precedents", []):
+                if getattr(p, "similarity_score", 0.0) >= 0.92:
+                    if not fast_exit_btb or p.similarity_score > fast_exit_btb.similarity_score:
+                        fast_exit_btb = p
+                        fast_exit_candidate = c
+
+        if fast_exit_candidate and fast_exit_btb:
+            logger.info("[Fast Exit Stream] BTB Kararı %s benzerlik skoru %.4f >= 0.92. Doğrudan Durum 6'ya atlanıyor.", fast_exit_btb.btb_no, fast_exit_btb.similarity_score)
+            yield {
+                "stage": "FAST_EXIT",
+                "status": "IN_PROGRESS",
+                "message": f"Yüksek benzerlikli emsal karar ({fast_exit_btb.btb_no}, skor: {fast_exit_btb.similarity_score:.2f}) tespit edildi, doğrudan mevzuat tedbirlerine geçiliyor...",
+                "session_id": session_id
+            }
+            decision = GTIPDecision(
+                session_id=session_id,
+                status="COMPLETED",
+                gtip_code=fast_exit_candidate.gtip_code,
+                confidence_score=round(float(fast_exit_btb.similarity_score), 4),
+                official_statute_text=f"2026 TGTC {fast_exit_candidate.gtip_code}: {fast_exit_candidate.description}",
+                llm_reasoning_commentary=f"Emsal BTB Kararı ({fast_exit_btb.btb_no}) ile yüksek anlamsal benzerlik (%{int(fast_exit_btb.similarity_score * 100)}) sağlandığı için Fast Exit işletildi.",
+                legal_justification=fast_exit_btb.legal_justification or f"BTB Kararı No: {fast_exit_btb.btb_no}",
+                applied_gir_rules=gir_rules + [f"GYK 1: {fast_exit_btb.btb_no} sayılı BTB emsali (Benzerlik: {fast_exit_btb.similarity_score:.2f}) ile doğrudan sınıflandırıldı."],
+                precedent_btbs=[fast_exit_btb],
+                legal_sources=fast_exit_candidate.legal_sources,
+                consulted_sources=fast_exit_candidate.consulted_sources,
+                state_machine_stage="DURUM_1_FAST_EXIT",
+                audit_notes=[f"Durum 1 Fast Exit: {fast_exit_btb.btb_no} numaralı emsal ile doğrudan Durum 6'ya geçildi."]
+            )
+            # DURUM 6: MEVZUAT TEDBİR, DOĞRULAMA & ÇIKIŞ KALKANI (GUARDRAILS)
+            target_gtip_digits = re.sub(r"\D", "", str(decision.gtip_code or ""))
+            try:
+                with SessionLocal() as db_session:
+                    is_valid_leaf, _ = validate_leaf_gtip(db_session, target_gtip_digits)
+                    if is_valid_leaf:
+                        decision.guardrail_status = "VERIFIED_LEAF"
+                    else:
+                        decision.guardrail_status = "FALLBACK_SUBHEADING"
+                        if len(target_gtip_digits) >= 6:
+                            decision.gtip_code = f"{target_gtip_digits[:6]}.00.00.00"
+                            decision.status = "MANUAL_REVIEW_REQUIRED"
+                            decision.audit_notes.append("Foreign Key Barrier: Kod 12 haneli yaprak olarak doğrulanamadığı için 6 haneli alt pozisyona çekildi.")
+            except Exception as ex_val:
+                logger.warning("[Guardrail Barrier] Doğrulama istisnası: %s", ex_val)
+                decision.guardrail_status = "UNCHECKED"
+
+            decision.trade_measures = get_customs_trade_measures(decision.gtip_code)
+            decision.state_machine_stage = "DURUM_6_COMPLETED"
+
+            state_dict: Dict[str, Any] = {
+                "session_id": session_id,
+                "raw_text": raw_text,
+                "image_uri": image_uri,
+                "product_features": features.model_dump(),
+                "allowed_chapters": allowed_chapters,
+                "applied_gir_rules": decision.applied_gir_rules,
+                "candidates": [c.model_dump() for c in candidates],
+                "selected_gtip": decision.gtip_code,
+                "confidence_score": decision.confidence_score,
+                "status": decision.status,
+                "official_statute_text": decision.official_statute_text,
+                "llm_reasoning_commentary": decision.llm_reasoning_commentary,
+                "hitl_question": None,
+                "audit_notes": decision.audit_notes,
+            }
+            local_state_store.save_state(session_id, state_dict)
+
+            yield {
+                "stage": "COMPLETED",
+                "status": decision.status,
+                "message": f"Analiz tamamlandı. GTİP Kodu: {decision.gtip_code} (Emsal BTB Fast Exit)",
                 "decision": decision.model_dump()
             }
             return
@@ -630,6 +851,26 @@ class GTIPWorkflowEngine:
         )
         _mark_pipeline_stage(session_id, "deterministic_binding", stage_started)
         decision = _bind_legal_sources(decision, top_candidate)
+
+        # Foreign Key Barrier ve Tedbir Kartları
+        target_gtip_digits = re.sub(r"\D", "", str(decision.gtip_code or ""))
+        try:
+            with SessionLocal() as db_session:
+                is_valid_leaf, _ = validate_leaf_gtip(db_session, target_gtip_digits)
+                if is_valid_leaf:
+                    decision.guardrail_status = "VERIFIED_LEAF"
+                else:
+                    decision.guardrail_status = "FALLBACK_SUBHEADING"
+                    if len(target_gtip_digits) >= 6:
+                        decision.gtip_code = f"{target_gtip_digits[:6]}.00.00.00"
+                        decision.status = "MANUAL_REVIEW_REQUIRED"
+                        decision.audit_notes.append("Foreign Key Barrier: Kod 6 haneli alt pozisyona çekildi.")
+        except Exception:
+            decision.guardrail_status = "UNCHECKED"
+
+        decision.trade_measures = get_customs_trade_measures(decision.gtip_code)
+        decision.state_machine_stage = "DURUM_6_COMPLETED"
+        decision.applied_gir_rules = list(dict.fromkeys(gir_rules))
 
         state_dict: Dict[str, Any] = {
             "session_id": session_id,
