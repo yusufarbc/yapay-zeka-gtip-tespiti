@@ -630,9 +630,11 @@ class GTIPWorkflowEngine:
         # Seçilen yanıt yalnızca sunucunun daha önce imzaladığı seçeneklerden gelir.
         selected_gtip_choice = None
         selected_impact: Dict[str, str] = {}
+        selected_answer_text = ""
         if hitl_q and "options" in hitl_q:
             for opt in hitl_q["options"]:
                 if opt["option_id"] == selected_option_id:
+                    selected_answer_text = str(opt.get("text") or "").strip()
                     selected_impact = dict(opt.get("impact_data", {}))
                     if "selected_gtip" in selected_impact:
                         selected_gtip_choice = selected_impact["selected_gtip"]
@@ -643,6 +645,11 @@ class GTIPWorkflowEngine:
                     features.technical_specifications.update(feature_updates)
                     if "primary_material" in selected_impact:
                         features.primary_material = selected_impact["primary_material"]
+                    missing_parameter = str(hitl_q.get("missing_parameter") or "").strip()
+                    if missing_parameter and selected_answer_text:
+                        # Ayırt edici cevap yalnız dal kilidi olarak kalmamalı. Son hukuki
+                        # doğrulayıcıya kanıt olacak şekilde ürün özelliklerine de yazılır.
+                        features.technical_specifications[missing_parameter] = selected_answer_text
 
         traversal = state_dict.get("discriminator_traversal")
         if traversal:
@@ -844,6 +851,12 @@ class GTIPWorkflowEngine:
             return decision
 
         raw_text = state_dict.get("raw_text", "")
+        verified_product_text = raw_text
+        if features.technical_specifications:
+            verified_product_text += (
+                "\nKullanıcının ayırt edici sorulara verdiği doğrulanmış teknik cevaplar: "
+                + json.dumps(features.technical_specifications, ensure_ascii=False, sort_keys=True)
+            )
         chapter_note = next(
             (source.excerpt for source in top_candidate.legal_sources if source.source_type == "IZAHNAME"), ""
         )
@@ -854,7 +867,7 @@ class GTIPWorkflowEngine:
         )
         evidence_context = _format_evidence_context(top_candidate)
         verification_results = llm_verifier.verify_predicates(
-            raw_text=raw_text,
+            raw_text=verified_product_text,
             predicates=predicates,
             allowed_chapters=allowed_chapters,
             evidence_context=evidence_context,
