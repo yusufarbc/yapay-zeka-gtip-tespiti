@@ -264,7 +264,7 @@ try {
         "--region", $Region, "--project", $ProjectId, "--platform", "managed",
         "--allow-unauthenticated", "--execution-environment", "gen2",
         "--memory", "4Gi", "--cpu", "2", "--concurrency", "8",
-        "--min-instances", "0", "--max-instances", "3", "--timeout", "300s",
+        "--min-instances", "1", "--max-instances", "3", "--timeout", "300s",
         "--cpu-boost", "--service-account", $RuntimeServiceAccount,
         "--set-cloudsql-instances", $CloudSqlConnection,
         "--env-vars-file", $BackendEnvFile,

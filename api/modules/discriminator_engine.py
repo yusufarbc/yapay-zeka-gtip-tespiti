@@ -148,6 +148,11 @@ class DiscriminatorExtractor:
         if first_upholstered != second_upholstered:
             return "dosemeli_mi", "Sandalye/koltuğun oturma veya sırt bölümü dolgu ya da kumaş/deri ile döşenmiş midir?"
 
+        first_for_children = "çocuk" in first_text
+        second_for_children = "çocuk" in second_text
+        if first_for_children != second_for_children:
+            return "cocuklar_icin_mi", "Ürün özellikle çocukların kullanımına yönelik ölçü ve tasarımda mıdır?"
+
         materials = [
             material for material in self._MATERIALS
             if (material in first_text) != (material in second_text)

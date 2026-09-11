@@ -190,6 +190,12 @@ def iter_official_btbs(
                 continue
 
             parsed_date = _parse_date(detail["issue_date"]) or issue_date
+            if parsed_date and issue_date and abs((parsed_date - issue_date).days) > 31:
+                logger.warning(
+                    "BTB %s detay/list tarihleri uyuşmuyor (%s / %s); liste tarihi kullanılıyor.",
+                    detail["btb_no"], parsed_date, issue_date,
+                )
+                parsed_date = issue_date
             yield {
                 "btb_no": detail["btb_no"],
                 "gtip_code": _format_gtip(detail["gtip_code"]),
@@ -252,14 +258,17 @@ def upsert_btbs(records: Iterable[Dict[str, Any]]) -> Dict[str, int]:
 
 def run(max_pages: int = 1000, max_records: Optional[int] = None) -> Dict[str, int]:
     init_orm_tables()
+    today = datetime.date.today()
     with SessionLocal() as db:
         existing_refs = {
-            ref
-            for (ref,) in db.query(GumrukEmsalKararModel.referans_no).filter(
+            ref for ref, issue_date in db.query(
+                GumrukEmsalKararModel.referans_no,
+                GumrukEmsalKararModel.yayin_tarihi,
+            ).filter(
                 GumrukEmsalKararModel.karar_tipi == "BTB",
                 GumrukEmsalKararModel.referans_no.isnot(None),
             )
-            if ref
+            if ref and (_parse_date(str(issue_date or "")) or today) <= today
         }
     logger.info("Cloud SQL'de %s mevcut BTB referansı bulundu.", len(existing_refs))
     result = upsert_btbs(

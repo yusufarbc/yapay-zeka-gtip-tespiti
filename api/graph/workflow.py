@@ -665,19 +665,26 @@ class GTIPWorkflowEngine:
             pending_level = traversal.get("pending_level")
             locked_heading = traversal.get("locked_heading")
             locked_subheading = traversal.get("locked_subheading")
+            locked_gtip = traversal.get("locked_gtip")
             if pending_level == "HEADING":
                 locked_heading = selected_branch
                 locked_subheading = None
+                locked_gtip = None
             elif pending_level == "SUBHEADING":
                 locked_subheading = selected_branch
+                locked_gtip = None
+            elif pending_level == "GTIP":
+                locked_gtip = selected_branch
 
             tree_result = rag_engine.search_candidates_hierarchical(
                 session_id=session_id,
                 features=features,
-                allowed_chapters=state_dict.get("allowed_chapters") or [],
+                allowed_chapters=traversal.get("retained_chapters") or state_dict.get("allowed_chapters") or [],
                 applied_gir_rules=state_dict.get("applied_gir_rules") or [],
                 locked_heading=locked_heading,
                 locked_subheading=locked_subheading,
+                locked_gtip=locked_gtip,
+                query_vector=traversal.get("query_vector"),
             )
             if tree_result.discriminator_question:
                 return self._pause_for_discriminator(

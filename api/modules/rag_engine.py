@@ -168,19 +168,31 @@ class RAGEngine:
         applied_gir_rules: Optional[List[str]] = None,
         locked_heading: Optional[str] = None,
         locked_subheading: Optional[str] = None,
+        locked_gtip: Optional[str] = None,
+        query_vector: Optional[List[float]] = None,
     ) -> HierarchicalSearchResult:
         """4→6→12 ağacını sırayla dolaşır ve belirsizlikte yaprak aramadan durur."""
         query_text = f"{features.product_name} {features.primary_material} {features.intended_use}"
-        query_vector = get_text_embedding(query_text)
+        # HITL devam isteklerinde ilk turda hesaplanan embedding'i yeniden kullan.
+        # Böylece her ayırt edici cevapta Vertex AI ve fasıl dışlama LLM çağrıları
+        # tekrarlanmaz; seçilmiş tarife dalı zaten hukuken kilitlidir.
+        if query_vector is None:
+            query_vector = get_text_embedding(query_text)
         is_hard_locked = any("[HARD LOCK]" in rule for rule in (applied_gir_rules or []))
-        chapters = self.detect_candidate_chapters(
-            query_text, query_vector, allowed_chapters, is_hard_locked
-        )
-        chapters = self.filter_excluded_chapters(query_text, chapters)
+        if locked_heading:
+            chapters = list(allowed_chapters or [str(locked_heading)[:2]])
+        else:
+            chapters = self.detect_candidate_chapters(
+                query_text, query_vector, allowed_chapters, is_hard_locked
+            )
+            chapters = self.filter_excluded_chapters(query_text, chapters)
         if is_hard_locked and allowed_chapters:
             chapters = [value for value in chapters if value in allowed_chapters] or list(allowed_chapters)
 
-        traversal: Dict[str, Any] = {"retained_chapters": chapters}
+        traversal: Dict[str, Any] = {
+            "retained_chapters": chapters,
+            "query_vector": query_vector,
+        }
         with SessionLocal() as session:
             if not locked_heading:
                 headings = hybrid_search_headings_and_gtip(
@@ -214,11 +226,27 @@ class RAGEngine:
                 locked_subheading = str(subheadings[0]["gtip_code"])
             traversal["locked_subheading"] = locked_subheading
 
+            if not locked_gtip:
+                leaves = hybrid_search_headings_and_gtip(
+                    session=session, query_text=query_text, query_vector=query_vector,
+                    allowed_chapters=chapters, search_level="GTIP",
+                    parent_codes=[locked_subheading], top_k=8, rrf_k=settings.RRF_K,
+                )
+                question = discriminator_extractor.extract(session_id, leaves)
+                if question:
+                    traversal["pending_level"] = "GTIP"
+                    traversal["branches"] = leaves[:2]
+                    return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
+                if not leaves:
+                    return HierarchicalSearchResult(traversal_state=traversal)
+                locked_gtip = str(leaves[0]["gtip_code"])
+            traversal["locked_gtip"] = locked_gtip
+
         candidates = self.search_candidates(
             features,
             chapters,
             applied_gir_rules,
-            locked_parent_code=locked_subheading,
+            locked_parent_code=locked_gtip,
             skip_chapter_filter=True,
             query_vector=query_vector,
         )

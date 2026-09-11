@@ -614,9 +614,10 @@ async def get_audit_logs(request: Request, limit: int = Query(default=50, ge=1, 
 
 @app.get("/api/v1/customs-data/btbs")
 async def get_customs_btbs(
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
     chapter: Optional[str] = Query(None),
+    decision_type: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
     """
@@ -645,6 +646,7 @@ async def get_customs_btbs(
     try:
         query = db.query(
             GumrukEmsalKararModel.referans_no,
+            GumrukEmsalKararModel.karar_tipi,
             GumrukEmsalKararModel.gtip_kodu,
             GumrukEmsalKararModel.chapter_code,
             GumrukEmsalKararModel.yayin_tarihi,
@@ -655,9 +657,11 @@ async def get_customs_btbs(
         if chapter:
             chap_clean = str(chapter).strip().zfill(2)
             query = query.filter(GumrukEmsalKararModel.chapter_code == chap_clean)
+        if decision_type:
+            query = query.filter(GumrukEmsalKararModel.karar_tipi == decision_type.strip().upper())
 
         emsal_rows = query.order_by(GumrukEmsalKararModel.yayin_tarihi.desc()).offset(offset).limit(limit).all()
-        for ref_no, gtip_kodu, chapter_code, pub_date, esya_tanimi, hukuki_gerekce, kaynak_url in emsal_rows:
+        for ref_no, karar_tipi, gtip_kodu, chapter_code, pub_date, esya_tanimi, hukuki_gerekce, kaynak_url in emsal_rows:
             if not esya_tanimi or len(esya_tanimi.strip()) < 3:
                 continue
             gtip_clean = str(gtip_kodu or "").replace(".", "").strip()
@@ -676,6 +680,7 @@ async def get_customs_btbs(
 
                 results.append({
                     "btb_no": btb_id,
+                    "source_type": karar_tipi,
                     "gtip_code": gtip_kodu,
                     "chapter": chap,
                     "issue_date": pub_date_str,
@@ -688,7 +693,7 @@ async def get_customs_btbs(
         logger.warning(f"[get_customs_btbs] Emsal kararları okunurken uyarı: {e_e}")
 
     # 2. Cloud SQL gumruk_siniflandirma_kararlari Tablosundan Eksikleri Tamamla (Varsa ek unique olanlar)
-    if len(results) < limit:
+    if not decision_type and len(results) < limit:
         remaining = limit - len(results)
         try:
             sinif_query = db.query(
@@ -776,8 +781,8 @@ async def get_heading_items(heading_code: str, db: Session = Depends(get_db)):
         return {"items": [], "error": "Geçersiz pozisyon kodu. 4 haneli rakam olmalıdır."}
     
     items_query = db.query(TgtcGtipModel).filter(
-        TgtcGtipModel.level == 'GTIP',
-        TgtcGtipModel.parent_code == h
+        TgtcGtipModel.level.in_(['SUBHEADING', 'GTIP']),
+        TgtcGtipModel.gtip_code.like(f"{h}%")
     ).order_by(TgtcGtipModel.gtip_code).all()
 
     results = []

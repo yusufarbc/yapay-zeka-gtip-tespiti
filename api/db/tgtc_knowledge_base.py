@@ -384,7 +384,7 @@ def load_btb_catalog() -> List[Dict[str, Any]]:
                 GumrukEmsalKararModel.kaynak_url,
                 GumrukEmsalKararModel.valid_until,
                 GumrukEmsalKararModel.embedding,
-            ).limit(2500).all()
+            ).all()
             for ref_no, er_id, gtip_kodu, pub_date, esya_tanimi, karar_tipi, hukuki_gerekce, rg_sayisi, kaynak_url, valid_until, embedding in emsal_rows:
                 all_raw_items.append({
                     "btb_no": ref_no or f"EMS-{er_id}",

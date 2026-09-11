@@ -72,7 +72,10 @@ export const getAuditLogs = async () => {
 
 export const getCustomsBTBs = async () => {
   try {
-    const response = await axios.get(`${API_BASE_URL}/customs-data/btbs`);
+    const response = await axios.get(`${API_BASE_URL}/customs-data/btbs`, {
+      params: { limit: 3000, decision_type: 'BTB' },
+      timeout: 30000
+    });
     return Array.isArray(response.data) ? response.data : [];
   } catch (err) {
     console.error("Error fetching BTBs:", err);

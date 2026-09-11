@@ -951,7 +951,28 @@ def hybrid_search_headings_and_gtip(
     # Tüm adayların Sparse & Dense Rank'lerini birleştir
     all_gtips = set(sparse_ranks.keys()).union(set(dense_ranks.keys()))
     if not all_gtips:
-        # Kanıtsız/arbitrary ilk satırı GTİP adayı yapmak yerine fail-closed.
+        # Kilitli bir yasal dalın yaprakları çoğu zaman yalnız "Çocuklar için"
+        # ve "Diğerleri" gibi üst bağlamdan bağımsız metinler taşır. Bu durumda
+        # dalı boş saymak yerine eşit skorlu seçenekleri discriminator'a ver;
+        # kilit yoksa kanıtsız/arbitrary sonuç üretme.
+        if clean_parents and target_level in {"SUBHEADING", "GTIP"}:
+            return [
+                {
+                    "gtip_code": item["gtip_code"],
+                    "description": item.get("description", ""),
+                    "branch_context": item.get("branch_context", ""),
+                    "chapter": item.get("chapter_code") or item["gtip_code"][:2],
+                    "heading": item["gtip_code"][:4],
+                    "level": item.get("level", target_level),
+                    "tax_rate": item.get("tax_rate"),
+                    "unit": item.get("unit"),
+                    "rrf_score": 0.0,
+                    "similarity_score": 0.5,
+                    "sparse_rank": None,
+                    "dense_rank": None,
+                }
+                for item in sorted(candidate_records, key=lambda value: value["gtip_code"])
+            ][:top_k]
         return []
 
     for gtip in all_gtips:
