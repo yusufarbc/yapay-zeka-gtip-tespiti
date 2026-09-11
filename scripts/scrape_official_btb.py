@@ -123,6 +123,15 @@ def _parse_date(value: str) -> Optional[datetime.date]:
     return None
 
 
+def _reference_year(reference_no: Any) -> Optional[int]:
+    """TR + bölge(6) + yıl(2) + sıra(4) biçimindeki BTB yılını çözer."""
+    match = re.fullmatch(r"TR\d{6}(\d{2})\d{4}", str(reference_no or "").strip().upper())
+    if not match:
+        return None
+    year = 2000 + int(match.group(1))
+    return year if 2020 <= year <= datetime.date.today().year else None
+
+
 def _format_gtip(value: str) -> str:
     digits = re.sub(r"[^0-9]", "", value)
     if len(digits) == 12:
@@ -196,6 +205,14 @@ def iter_official_btbs(
                     detail["btb_no"], parsed_date, issue_date,
                 )
                 parsed_date = issue_date
+            if parsed_date and parsed_date > datetime.date.today():
+                inferred_year = _reference_year(detail["btb_no"])
+                if inferred_year:
+                    logger.warning(
+                        "BTB %s gelecekte tarihli (%s); referans yılından %s olarak düzeltiliyor.",
+                        detail["btb_no"], parsed_date, inferred_year,
+                    )
+                    parsed_date = parsed_date.replace(year=inferred_year)
             yield {
                 "btb_no": detail["btb_no"],
                 "gtip_code": _format_gtip(detail["gtip_code"]),
