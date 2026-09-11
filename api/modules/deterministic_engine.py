@@ -49,7 +49,7 @@ class DeterministicDecisionEngine:
             f"Bağlı Olduğu Fasıl {chap_code}: {chap_title}. (Statik Mevzuat Kütüphanesi Kaydı)"
         )
         if chap_note:
-            official_statute += f"\nResmî Bakanlık İzahname ve Hukuki Uygulama Notu: {chap_note}"
+            official_statute += f"\nTGTC Fasıl Notu: {chap_note}"
 
         applied_rules = [
             f"GİR 1 & GİR 6: TGTC Yasal Tarife Eşleştirmesi.",

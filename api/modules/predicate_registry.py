@@ -45,7 +45,7 @@ class PredicateRegistryEngine:
 
         predicates = []
 
-        # 1. Genel Yasal Pozisyon Koşulu (TGTC İzahnamesi & GİR 1/6)
+        # 1. Genel Yasal Pozisyon Koşulu (TGTC pozisyon metni & GİR 1/6)
         predicates.append(
             LegalPredicate(
                 predicate_id=f"P_{pos4}_1",
@@ -54,7 +54,7 @@ class PredicateRegistryEngine:
                     f"şu resmi tanımına uygun mudur: {(official_description or 'resmi pozisyon tanımı')[:800]}"
                 ),
                 required_value="TRUE",
-                statute_reference=f"TGTC Fasıl {chap2} İzahnamesi & GİR 1"
+                statute_reference=f"TGTC Fasıl {chap2} ve Pozisyon {pos4} metni & GİR 1"
             )
         )
 
@@ -80,7 +80,7 @@ class PredicateRegistryEngine:
                         f"{chapter_note[:800]}"
                     ),
                     required_value="FALSE",
-                    statute_reference=f"TGTC Fasıl {chap2} dışlama ve uygulama notları",
+                    statute_reference=f"TGTC Fasıl {chap2} dışlama ve fasıl notları",
                 )
             )
 

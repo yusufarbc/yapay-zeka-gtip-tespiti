@@ -1,5 +1,5 @@
 """
-Modül 4: LLM Predicate & Tariff Fact Verifier (Gemini 3.7 Flash + Reasoning/Thinking Budget: 2048).
+Modül 4: LLM Predicate & Tariff Fact Verifier (kapalı-küme, görev bazlı düşünme bütçesi).
 Yapay zekaya asla serbest GTİP tahmini veya özgüven skoru uydurtmaz.
 Temel Görevleri:
 1. Fasıl Dışlama Notu Kontrolü (Chapter Exclusion Check - Adım 2 - Reasoning Mode)
@@ -27,11 +27,12 @@ class LLMFactVerifier:
     Çok Modlu ve Yapılandırılmış Yasal Yüklem Doğrulayıcısı (Gemini 3.7 Flash Deep Reasoning).
     """
 
-    def _get_reasoning_config(self) -> Optional[Any]:
-        """Gemini 3.7 Flash için 2048 token akıl yürütme (thinking) yapılandırmasını üretir."""
+    def _get_reasoning_config(self, thinking_budget: Optional[int] = None) -> Optional[Any]:
+        """Görevin karmaşıklığına göre sınırlı düşünme bütçesi üretir."""
         try:
             from google.genai import types
-            thinking_cfg = types.ThinkingConfig(thinking_budget=settings.THINKING_BUDGET_VERIFIER)
+            budget = settings.THINKING_BUDGET_VERIFIER if thinking_budget is None else thinking_budget
+            thinking_cfg = types.ThinkingConfig(thinking_budget=budget)
             return types.GenerateContentConfig(
                 thinking_config=thinking_cfg,
                 temperature=0.1,
@@ -147,7 +148,8 @@ class LLMFactVerifier:
         """
         Adım 2: Belirli bir faslın dışlama notlarını ('Bu fasıl şunları kapsamaz...') inceleyerek
         ürünün bu fasıldan yasal olarak dışlanıp dışlanmadığını (is_excluded) doğrular.
-        Gemini 3.7 Flash derin akıl yürütme (thinking_budget=2048) ile çalışır.
+        Dışlama kontrolü, tam hukuki doğrulamadan daha küçük ve sınırlı bir
+        düşünme bütçesiyle çalışır.
         """
         chap_2d = str(chapter_code).zfill(2)
         if not exclusion_notes:
@@ -161,7 +163,7 @@ class LLMFactVerifier:
             client = get_genai_client()
 
             prompt = (
-                f"Sen Türk Gümrük Mevzuatı İzahname Denetçisisin (Tariff Statutory Arbiter).\n"
+                f"Sen Türk Gümrük Mevzuatı Fasıl Notu Denetçisisin (Tariff Statutory Arbiter).\n"
                 f"Fasıl {chap_2d} için yürürlükteki DIŞLAMA NOTLARI aşağıdadır:\n"
                 f"{json.dumps(exclusion_notes, ensure_ascii=False, indent=2)}\n\n"
                 f"ÜRÜN METNİ:\n\"\"\"{raw_text}\"\"\"\n\n"
@@ -175,7 +177,7 @@ class LLMFactVerifier:
                 f"}}"
             )
 
-            config = self._get_reasoning_config()
+            config = self._get_reasoning_config(settings.THINKING_BUDGET_EXCLUSION)
             if config:
                 response = client.models.generate_content(
                     model=settings.REASONING_LLM_MODEL,
@@ -337,7 +339,6 @@ class LLMFactVerifier:
         """
         try:
             from api.modules.vertex_client import get_genai_client
-            from api.modules.context_cache_manager import context_cache_manager
             client = get_genai_client()
                 
             predicates_payload = [
@@ -345,13 +346,12 @@ class LLMFactVerifier:
                 for p in predicates
             ]
             
-            scoped_context = context_cache_manager.get_scoped_context_text(allowed_chapters)
-
             prompt = (
                 "Sen Türk Gümrük Mevzuatı Hakem ve Doğrulama Ajanısın (Legal Fact Verifier).\n"
                 "GÖREVİN: Aşağıda verilen ürün metnini dikkatle incele ve Yasal Koşul Listesindeki her soruyu değerlendir.\n\n"
-                f"DİNAMİK YASAL FASIL BAĞLAMI:\n{scoped_context}\n\n"
-                f"SON 6 YILLIK BTB / SINIFLANDIRMA KARARLARI / GÜMRÜK MEVZUATI KANITLARI:\n{evidence_context[:8000]}\n\n"
+                "Yalnız aşağıdaki aday-spesifik kanıt alanını kullan; listelenmeyen başka pozisyonları varsayma.\n"
+                "BTB bireysel bir karardır ve yalnız destekleyici emsaldir; TGTC/GİR/fasıl notunun önüne geçmez.\n\n"
+                f"ADAY-SPESİFİK HUKUKİ KANITLAR:\n{evidence_context[:6000]}\n\n"
                 f"ÜRÜN METNİ:\n\"\"\"{raw_text}\"\"\"\n\n"
                 f"DOĞRULANACAK YASAL KOŞULLAR:\n{json.dumps(predicates_payload, ensure_ascii=False, indent=2)}\n\n"
                 "ÇOK KATI KURALLAR:\n"

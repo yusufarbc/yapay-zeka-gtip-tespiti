@@ -1,7 +1,7 @@
 """
 Vertex AI Context Caching Yöneticisi (Google GenAI SDK).
-TGTC 99 Fasıl İzahnameleri ve Genel Yorum Kurallarını (GİR 1-6) 
-Vertex AI Context Cache üzerinde saklar, sıfır ek gecikme (0 ms) ve %80 maliyet tasarrufu sağlar.
+Mevcut TGTC fasıl/pozisyon metinleri ile Genel Yorum Kurallarını (GİR 1-6)
+çevrimdışı bakım işiyle Vertex AI Context Cache üzerinde saklayabilir.
 
 Cloud Run multi-worker uyumluluğu: Cache adı SQLite paylaşımlı durumda saklanır,
 böylece 4 worker da aynı cache'i kullanır (her worker ayrı cache oluşturmaz).
@@ -69,7 +69,7 @@ class ContextCacheManager:
 
     def initialize_cache(self, model_name: str = None) -> Optional[str]:
         """
-        TGTC 99 Fasıl ve GİR Mevzuat metinlerini Vertex AI Context Cache'e yükler.
+        Mevcut TGTC fasıl/pozisyon ve GİR metinlerini Vertex AI Context Cache'e yükler.
         Modele özel cache anahtarı kullanır.
         """
         if not settings.USE_CONTEXT_CACHE:
@@ -91,8 +91,7 @@ class ContextCacheManager:
 
             target_model = model_name or settings.REASONING_LLM_MODEL
             self.client = get_genai_client()
-            # TGTC Mevzuat İzahnamelerini, Yorum Kurallarını ve Fasıl Notlarını Yükle
-            # TGTC Mevzuat İzahnamelerini, Yorum Kurallarını ve Fasıl Notlarını Yükle
+            # TGTC yorum kuralları, fasıl notları ve pozisyon metinlerini yükle.
             from api.db.tgtc_knowledge_base import GIR_RULES, TGTC_CHAPTERS, load_tgtc_rules_and_notes, get_local_tgtc_headings
             
             rules_db = load_tgtc_rules_and_notes()
@@ -102,7 +101,7 @@ class ContextCacheManager:
             if not official_rules:
                 official_rules = "\n".join([f"{k}: {v}" for k, v in GIR_RULES.items()])
                 
-            # Fasıl Notları ve İzahnameleri
+            # Fasıl notları (tam pozisyon İzahnamesi değildir)
             chapter_notes_dict = rules_db.get("fasil_notlari", {})
             chapters_lines = []
             for k, v in TGTC_CHAPTERS.items():
@@ -123,7 +122,7 @@ class ContextCacheManager:
             full_context_text = (
                 f"TÜRK GÜMRÜK TARİFE CETVELİ (TGTC) 2026 VE GENEL YORUM KURALLARI (GİR 1-6 & FASIL NOTLARI & POZİSYONLAR)\n\n"
                 f"=== 2026 RESMİ GENEL YORUM KURALLARI ===\n{official_rules}\n\n"
-                f"=== 99 FASIL TANIMLARI VE BAKANLIK HUKUKİ İZAHNAME NOTLARI ===\n{chapters_text}\n\n"
+                f"=== TGTC FASIL TANIMLARI VE FASIL NOTLARI ===\n{chapters_text}\n\n"
                 f"=== 2026 RESMİ 4-HANELİ TARİFE POZİSYON KÜTÜPHANESİ ===\n{headings_text}"
             )
 
@@ -250,7 +249,7 @@ class ContextCacheManager:
         return (
             f"=== DİNAMİK FASIL BAZLI RESMİ MEVZUAT BAĞLAMI (SCOPED CONTEXT) ===\n"
             f"--- GENEL YORUM KURALLARI ---\n{official_rules}\n\n"
-            f"--- HEDEF FASIL TANIMLARI VE RESMİ İZAHNAME NOTLARI ---\n{chapters_text}\n\n"
+            f"--- HEDEF FASIL TANIMLARI VE FASIL NOTLARI ---\n{chapters_text}\n\n"
             f"--- İLGİLİ TARİFE POZİSYON KÜTÜPHANESİ ---\n{headings_text}"
         )
 

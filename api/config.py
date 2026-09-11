@@ -54,7 +54,10 @@ class Settings(BaseSettings):
 
     # Gemini Flash Thinking Parametreleri
     THINKING_BUDGET_EXTRACTOR: int = 0      # Ultra hızlı özellik çıkarımı
-    THINKING_BUDGET_VERIFIER: int = 2048   # Derin yasal gerekçelendirme ve dışlama analizi
+    # Kapalı-küme dışlama ve predikat görevleri için ayrı bütçeler. Önceki tek
+    # 2048 bütçe, birkaç boolean koşulda gereksiz gecikme yaratıyordu.
+    THINKING_BUDGET_EXCLUSION: int = int(os.getenv("THINKING_BUDGET_EXCLUSION", "384"))
+    THINKING_BUDGET_VERIFIER: int = int(os.getenv("THINKING_BUDGET_VERIFIER", "1024"))
 
     # Context cache hazırlığı büyük TGTC bağlamını Vertex'e yüklediği için kullanıcı
     # isteğinin sıcak yolunda çalıştırılmaz. Cache gerekiyorsa ayrı bir bakım işiyle

@@ -2,7 +2,8 @@ from typing import List, Dict, Tuple, Any
 from api.schemas.product import ProductFeatures
 from api.db.tgtc_knowledge_base import match_chapters_from_cache, load_tgtc_chapters, TGTC_CHAPTERS, get_chapter_title
 
-# Katı Fasıl Kilit Matrisi (Hard Rules Matrix) - Sıfır Halüsinasyon Güvencesi
+# Kategori yönlendirme matrisi. Yalnız çok dar ve açık tanımlar ``exclusive``
+# olabilir; genel ürün anahtar sözcükleri hukuken fasıl kilidi sayılmaz.
 HARD_RULES_MATRIX = [
     {
         "keywords": [
@@ -11,13 +12,14 @@ HARD_RULES_MATRIX = [
         ],
         "materials": [],
         "locked_chapter": "85",
-        "description": "Elektrikli su ısıtıcıları ve kettle tipi elektrotermik ev cihazları (Fasıl 85) katı kural kilidi."
+        "exclusive": True,
+        "description": "Elektrikli su ısıtıcıları ve kettle tipi elektrotermik ev cihazları Fasıl 85 yönlendirmesi."
     },
     {
         "keywords": ["ayakkabı", "footwear", "bot ", "terlik", "babet", "çizme", "sneaker"],
         "materials": ["deri", "leather", "kauçuk", "tekstil", "sentetik", "plastik"],
         "locked_chapter": "64",
-        "description": "Ayakkabılar, botlar, terlikler ve ayak giyecekleri (Fasıl 64) katı kural kilidi."
+        "description": "Ayakkabılar, botlar, terlikler ve ayak giyecekleri Fasıl 64 yönlendirmesi."
     },
     {
         "keywords": [
@@ -29,7 +31,7 @@ HARD_RULES_MATRIX = [
         ],
         "materials": [],
         "locked_chapter": "85",
-        "description": "Elektrikli ve elektronik makine, cihaz, yarı iletkenler ve entegre devreler (Fasıl 85) katı kural kilidi."
+        "description": "Elektrikli ve elektronik makine, cihaz, yarı iletkenler ve entegre devreler Fasıl 85 yönlendirmesi."
     },
     {
         "keywords": [
@@ -38,27 +40,35 @@ HARD_RULES_MATRIX = [
         ],
         "materials": [],
         "locked_chapter": "84",
-        "description": "Kazanlar, makina, mekanik cihazlar ve bilgisayar aksamları (Fasıl 84) katı kural kilidi."
+        "description": "Kazanlar, makina, mekanik cihazlar ve bilgisayar aksamları Fasıl 84 yönlendirmesi."
     },
     {
         "keywords": ["oyuncak", "oyun", "spor", "oyun konsol"],
         "materials": [],
         "locked_chapter": "95",
-        "description": "Oyuncaklar, oyun ve spor malzemeleri (Fasıl 95) katı kural kilidi."
+        "description": "Oyuncaklar, oyun ve spor malzemeleri Fasıl 95 yönlendirmesi."
     },
     {
-        "keywords": ["mobilya", "koltuk", "sandalye", "masa", "yatak", "aydınlatma", "avize"],
+        "keywords": ["mobilya", "koltuk", "sandalye"],
         "materials": [],
         "locked_chapter": "94",
-        "description": "Mobilyalar, yatak takımları ve aydınlatma cihazları (Fasıl 94) katı kural kilidi."
+        "exclusive": True,
+        "description": "Mobilyalar ve oturmaya mahsus eşya için Fasıl 94 yönlendirmesi."
+    },
+    {
+        "keywords": ["masa", "yatak", "aydınlatma", "avize"],
+        "materials": [],
+        "locked_chapter": "94",
+        "description": "Masa, yatak ve aydınlatma eşyası için Fasıl 94 aday yönlendirmesi."
     }
 ]
 
 class RuleEngine:
     """
     Modül 2: Deterministik Kural Motoru (Python Logic Engine & Hard Rules Matrix).
-    Türk Gümrük Tarife Yorum Kurallarını (GİR 1-6) katı sırayla ve önbellekteki 97 Fasıl İzahnamelerini çalıştırır.
-    SIFIR HALÜSİNASYON: Katı kuralla kilitlenen fasıllar dışına asla inisiyatif tanımaz.
+    Türk Gümrük Tarife Yorum Kurallarını (GİR 1-6) sıralı uygular ve
+    fasıl/pozisyon metinlerinden aday kapsamı üretir. Genel kategori sözcükleri
+    aday yönlendirmesidir; tek başına hukuki fasıl kilidi değildir.
     """
 
     def apply_rules(self, features: ProductFeatures) -> Tuple[List[str], List[str]]:
@@ -68,17 +78,36 @@ class RuleEngine:
 
         text_combo = f"{features.product_name} {features.primary_material} {features.intended_use}".lower()
 
-        # 1. GİR 1 [HARD RULES MATRIX]: Açıkça Belirlenmiş Tanım ve Tarife Kilidi
+        # 1. GİR 1: Açık tanımdan fasıl adayı üret. Anahtar sözcük eşleşmesi
+        # tek başına bağlayıcı sınıflandırma değildir; istisnalar fasıl notu ve
+        # pozisyon metniyle denetlenir.
+        matched_rules = []
         for rule in HARD_RULES_MATRIX:
             kw_match = any(kw in text_combo for kw in rule["keywords"])
             if kw_match:
                 mat_match = not rule["materials"] or any(m in text_combo for m in rule["materials"])
                 if mat_match:
-                    chap = rule["locked_chapter"]
-                    if chap not in allowed_chapters:
-                        allowed_chapters.append(chap)
-                    applied_rules.append(f"GİR 1 [HARD LOCK]: {rule['description']} (Fasıl {chap} dışı aramalar engellendi).")
-                    is_hard_locked = True
+                    matched_rules.append(rule)
+
+        for rule in matched_rules:
+            chap = rule["locked_chapter"]
+            if chap not in allowed_chapters:
+                allowed_chapters.append(chap)
+
+        is_hard_locked = bool(
+            len(matched_rules) == 1 and matched_rules[0].get("exclusive", False)
+        )
+        for rule in matched_rules:
+            chap = rule["locked_chapter"]
+            if is_hard_locked:
+                applied_rules.append(
+                    f"GİR 1 [HARD LOCK]: {rule['description']} (Fasıl {chap} dışı aramalar engellendi)."
+                )
+            else:
+                applied_rules.append(
+                    f"GİR 1 [GUIDED ROUTE]: {rule['description']} Fasıl {chap} aday kapsama alındı; "
+                    "fasıl/pozisyon notları doğrulanmadan kilitlenmedi."
+                )
 
         # 2. GİR 2a: Demonte / Sökülmüş veya Eksik Eşya Kuralı
         if features.is_disassembled or "demonte" in text_combo or "sökülmüş" in text_combo or "parça halinde" in text_combo:
@@ -115,7 +144,7 @@ class RuleEngine:
             if is_hard_locked:
                 applied_rules.append(f"GİR 6: Katı kural zırhıyla kilitlenen hedef fasıl: {', '.join(chap_names)}.")
             else:
-                applied_rules.append(f"GİR 6: TGTC İzahnamelerine göre dinamik belirlenen fasıllar: {', '.join(chap_names)}.")
+                applied_rules.append(f"GİR 6: TGTC fasıl ve alt pozisyon metinlerine göre dinamik belirlenen fasıllar: {', '.join(chap_names)}.")
 
         return allowed_chapters, applied_rules
 

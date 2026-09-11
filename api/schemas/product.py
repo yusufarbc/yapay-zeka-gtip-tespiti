@@ -5,7 +5,7 @@ from typing import Optional, Dict, List
 class LegalSource(BaseModel):
     """GTİP kararında gerçekten sorgulanan ve kullanıcıya gösterilebilen hukuki kaynak."""
     source_type: str = Field(
-        description="TGTC_2026 | GIR | IZAHNAME | BTB | SINIFLANDIRMA_KARARI | GUMRUK_MEVZUATI",
+        description="TGTC_2026 | GIR | FASIL_NOTU | IZAHNAME | BTB | SINIFLANDIRMA_KARARI | GUMRUK_MEVZUATI",
         max_length=50,
     )
     reference_no: str = Field(default="", max_length=150)
@@ -13,6 +13,11 @@ class LegalSource(BaseModel):
     publication_date: Optional[str] = Field(default=None, max_length=30)
     excerpt: str = Field(default="")
     source_url: Optional[str] = None
+    legal_role: str = Field(
+        default="CONTEXT",
+        description="NORMATIVE | INTERPRETIVE | INDIVIDUAL_PRECEDENT | CONTEXT",
+        max_length=40,
+    )
 
     @field_validator("source_type", mode="before")
     @classmethod

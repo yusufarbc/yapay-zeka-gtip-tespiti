@@ -159,7 +159,7 @@ class TgtcRuleModel(Base):
     text = Column(Text, nullable=False)
 
 class TgtcNoteModel(Base):
-    """SQLAlchemy ORM Model for TGTC Fasıl Notları, Dışlama Notları ve İzahnameler."""
+    """SQLAlchemy ORM Model for TGTC Fasıl, Dışlama ve Tanım Notları."""
     __tablename__ = "tgtc_notes"
     __table_args__ = (
         Index("idx_tgtc_notes_chapter_type", "chapter_code", "note_type"),
@@ -541,7 +541,7 @@ def search_chapter_notes_and_exclusions(
     chapter_codes: List[str]
 ) -> Dict[str, Dict[str, Any]]:
     """
-    Hedeflenen fasılların Bakanlık Genel İzahnamesini ve 'Bu fasıl kapsamaz...' Dışlama Notlarını çeker.
+    Hedeflenen fasılların TGTC notlarını ve 'Bu fasıl kapsamaz...' dışlama hükümlerini çeker.
     Dönen sözlük formatı: { '64': {'general_notes': '...', 'exclusions': ['Kauçuk ayakkabı tabanı...', ...]} }
     """
     result: Dict[str, Dict[str, Any]] = {}
@@ -571,7 +571,7 @@ def search_chapter_notes_and_exclusions(
                     if any(kw in line_lower for kw in ["kapsamaz", "dahil değildir", "bu fasla girmez", "hariçtir"]):
                         result[chap]["exclusions"].append(line.strip())
     except Exception as e:
-        logger.warning(f"[DB Notes Search] İzahname/Dışlama notu sorgu uyarısı: {e}")
+        logger.warning(f"[DB Notes Search] Fasıl/dışlama notu sorgu uyarısı: {e}")
 
     # Fallback: Yerel json rules & notes
     if not result:

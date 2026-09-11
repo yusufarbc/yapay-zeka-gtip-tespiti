@@ -8,6 +8,35 @@ from api.config import settings
 
 logger = logging.getLogger("FeatureExtractor")
 
+
+# Kısa ürün tanımlarında yalnız kullanıcının açıkça yazdığı malzemeyi çıkarır.
+# Bu sözlük sınıflandırma kararı vermez; LLM'nin "ahşap sandalye" gibi açık
+# bir girdiyi yeniden yorumlayıp gecikme ve örtük varsayım üretmesini önler.
+_EXPLICIT_MATERIALS = {
+    "ahşap": ("ahşap", "ahsap", "wood", "wooden"),
+    "plastik": ("plastik", "plastic"),
+    "çelik": ("çelik", "celik", "steel"),
+    "demir": ("demir", "iron"),
+    "alüminyum": ("alüminyum", "aluminyum", "aluminium", "aluminum"),
+    "cam": ("cam", "glass"),
+    "kauçuk": ("kauçuk", "kaucuk", "rubber"),
+    "deri": ("deri", "leather"),
+    "pamuk": ("pamuk", "cotton"),
+    "yün": ("yün", "yun", "wool"),
+    "polyester": ("polyester",),
+    "seramik": ("seramik", "ceramic"),
+    "bakır": ("bakır", "bakir", "copper"),
+}
+
+_DOCUMENT_MARKERS = (
+    "fatura no", "invoice", "packing list", "proforma", "kalem no",
+    "model no", "stok kodu", "ürün kodu", "product code",
+)
+
+
+def _contains_term(text: str, term: str) -> bool:
+    return re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text, re.IGNORECASE) is not None
+
 class FeatureExtractor:
     """
     Modül 1: Multimodal & Dynamic Feature Extractor (Gemini 3.7 Flash - Thinking Budget: 0).
@@ -25,6 +54,54 @@ class FeatureExtractor:
         if filtered:
             return " / ".join(filtered[:2])
         return "Genel Sanayi ve Ticaret Eşyası"
+
+    def _extract_explicit_material(self, text_lower: str) -> str:
+        matches = [
+            canonical
+            for canonical, aliases in _EXPLICIT_MATERIALS.items()
+            if any(_contains_term(text_lower, alias) for alias in aliases)
+        ]
+        return " / ".join(dict.fromkeys(matches)) if matches else "Belirtilmedi"
+
+    def _is_simple_explicit_description(self, raw_text: str, image_uri: str = None) -> bool:
+        """Tek ürünlük kısa tanımı belge/teknik veri metninden ayırır."""
+        if image_uri:
+            return False
+        normalized = " ".join(str(raw_text or "").split())
+        if not normalized or len(normalized) > 240:
+            return False
+        if len(re.findall(r"[0-9a-zA-ZçğıöşüÇĞİÖŞÜ]+", normalized)) > 24:
+            return False
+        lowered = normalized.lower()
+        if any(marker in lowered for marker in _DOCUMENT_MARKERS):
+            return False
+        # Uzun teknik değer kümeleri veya tablo benzeri girdiler yapılandırılmış
+        # çıkarıcıya bırakılır. Tek bir ölçü/değer kısa yolu engellemez.
+        if str(raw_text).count("\n") > 1 or normalized.count(":") > 2:
+            return False
+        return True
+
+    def _build_explicit_features(
+        self,
+        raw_text: str,
+        text_lower: str,
+        specs: Dict[str, str],
+        composition: Any,
+    ) -> ProductFeatures:
+        normalized = " ".join(raw_text.split())
+        return ProductFeatures(
+            product_name=normalized[:2000],
+            primary_material=self._extract_explicit_material(text_lower),
+            composition_percentages=composition,
+            # Kullanım amacı yazılmadıysa modelin tahmin etmesi yerine özgün metin
+            # korunur; alt pozisyon ayrımı gerektiğinde HITL bunu netleştirir.
+            intended_use=normalized[:1000],
+            is_set_or_kit=any(_contains_term(text_lower, w) for w in ("set", "takım", "kit")),
+            is_disassembled=any(
+                _contains_term(text_lower, w) for w in ("demonte", "sökülmüş", "parça halinde")
+            ),
+            technical_specifications=specs,
+        )
 
     def extract_features(self, raw_text: str, image_uri: str = None) -> ProductFeatures:
         text_lower = raw_text.lower()
@@ -47,6 +124,13 @@ class FeatureExtractor:
                 composition = {"cotton": c_val, "polyester": p_val}
             else:
                 composition = {"cotton": 1.0}
+
+        # Açık ve kısa ürün tanımında model çağrısı hukuken yeni bir kanıt
+        # üretmez. Sadece kullanıcının yazdığı olguları taşıyan bu hızlı yol,
+        # sınıflandırmayı RAG + GİR + HITL katmanlarına bırakır.
+        if self._is_simple_explicit_description(raw_text, image_uri):
+            logger.info("Deterministik özellik çıkarımı kullanıldı (kısa açık ürün tanımı).")
+            return self._build_explicit_features(raw_text, text_lower, specs, composition)
 
         try:
             from api.modules.vertex_client import get_genai_client

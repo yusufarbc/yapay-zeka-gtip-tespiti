@@ -11,6 +11,7 @@ import uuid
 import json
 import logging
 import re
+import time
 from decimal import Decimal, InvalidOperation
 from typing import Dict, Any, Tuple, Optional, List
 from api.graph.state import GTIPState, CustomsState
@@ -26,6 +27,18 @@ from api.db.gcp_emulator import local_state_store
 from api.modules.discriminator_engine import DiscriminatorQuestion
 
 logger = logging.getLogger("GTIPWorkflowEngine")
+
+
+def _mark_pipeline_stage(session_id: str, stage: str, started_at: float) -> float:
+    """Her pahalı aşamayı Cloud Logging'de ayrı ölçülebilir hale getirir."""
+    now = time.perf_counter()
+    logger.info(
+        "[PipelineTiming] session=%s stage=%s duration_ms=%.2f",
+        session_id,
+        stage,
+        (now - started_at) * 1000,
+    )
+    return now
 
 
 def _as_hitl_question(question: DiscriminatorQuestion) -> HITLQuestion:
@@ -49,7 +62,7 @@ def _format_evidence_context(candidate: GTIPCandidate) -> str:
     parts = []
     for source in candidate.legal_sources:
         parts.append(
-            f"[{source.source_type}] {source.reference_no} | {source.publication_date or '-'} | "
+            f"[{source.source_type} | {source.legal_role}] {source.reference_no} | {source.publication_date or '-'} | "
             f"{source.title}\n{source.excerpt}"
         )
     return "\n\n".join(parts)
@@ -59,6 +72,19 @@ def _bind_legal_sources(decision: GTIPDecision, candidate: GTIPCandidate) -> GTI
     decision.legal_sources = list(candidate.legal_sources)
     decision.consulted_sources = list(candidate.consulted_sources)
     return decision
+
+
+def _exact_locked_candidate_index(tree_result, candidates: List[GTIPCandidate]) -> Optional[int]:
+    """Hiyerarşik ağacın kilitlediği tek yaprağı kapalı-küme modeline tekrar seçtirmez."""
+    locked_gtip = str((tree_result.traversal_state or {}).get("locked_gtip") or "")
+    locked_digits = re.sub(r"\D", "", locked_gtip)
+    if len(locked_digits) != 12:
+        return None
+    matches = [
+        index for index, candidate in enumerate(candidates)
+        if re.sub(r"\D", "", candidate.gtip_code) == locked_digits
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 def _comparable_value(value: Any) -> Any:
     raw = str(value or "").strip().lower().replace(",", ".")
@@ -219,17 +245,21 @@ class GTIPWorkflowEngine:
 
     def start_analysis(self, raw_text: str, image_uri: str = None) -> GTIPDecision:
         session_id = str(uuid.uuid4())
+        stage_started = time.perf_counter()
 
         # 1. Aşama: Multimodal Özellik Çıkarımı (Fast Model - Gemini 2.5 Flash)
         features = feature_extractor.extract_features(raw_text, image_uri)
+        stage_started = _mark_pipeline_stage(session_id, "feature_extraction", stage_started)
 
         # 2. Aşama: Deterministik Kural Motoru (HARD_RULES_MATRIX & Sıralı GİR 1-6)
         allowed_chapters, gir_rules = rule_engine.apply_rules(features)
+        stage_started = _mark_pipeline_stage(session_id, "gir_routing", stage_started)
 
         # 3. Aşama: Hiyerarşik Hibrit RAG Arama (Fasıl Routing ➔ Dışlama Notu Kontrolü ➔ pgvector + BM25 RRF)
         tree_result = rag_engine.search_candidates_hierarchical(
             session_id, features, allowed_chapters, applied_gir_rules=gir_rules
         )
+        stage_started = _mark_pipeline_stage(session_id, "hierarchical_retrieval", stage_started)
         if tree_result.discriminator_question:
             return self._pause_for_discriminator(
                 session_id, raw_text, image_uri, features, allowed_chapters, gir_rules, tree_result
@@ -243,21 +273,24 @@ class GTIPWorkflowEngine:
                 audit_notes=["RAG uzayında uygun emsal karar bulunamadı. Kıdemli Müşavire yönlendirildi."]
             )
 
-        selection = llm_verifier.select_candidate(
-            raw_text=raw_text,
-            candidates=candidates,
-            allowed_chapters=allowed_chapters,
-            gir_rules=gir_rules,
-        )
-        if selection.status != CandidateSelectionStatus.SELECT or not selection.selected_candidate_id:
-            return GTIPDecision(
-                session_id=session_id,
-                status="MANUAL_REVIEW_REQUIRED",
-                confidence_score=0.0,
-                audit_notes=(selection.reasoning_points + selection.missing_information)[:8],
+        selected_index = _exact_locked_candidate_index(tree_result, candidates)
+        selection_started = time.perf_counter()
+        if selected_index is None:
+            selection = llm_verifier.select_candidate(
+                raw_text=raw_text,
+                candidates=candidates,
+                allowed_chapters=allowed_chapters,
+                gir_rules=gir_rules,
             )
-
-        selected_index = int(selection.selected_candidate_id[1:]) - 1
+            if selection.status != CandidateSelectionStatus.SELECT or not selection.selected_candidate_id:
+                return GTIPDecision(
+                    session_id=session_id,
+                    status="MANUAL_REVIEW_REQUIRED",
+                    confidence_score=0.0,
+                    audit_notes=(selection.reasoning_points + selection.missing_information)[:8],
+                )
+            selected_index = int(selection.selected_candidate_id[1:]) - 1
+        stage_started = _mark_pipeline_stage(session_id, "candidate_selection", selection_started)
         if selected_index < 0 or selected_index >= min(5, len(candidates)):
             return GTIPDecision(
                 session_id=session_id,
@@ -273,6 +306,7 @@ class GTIPWorkflowEngine:
             features.technical_specifications,
             candidate_gtip=top_candidate.gtip_code,
         )
+        stage_started = _mark_pipeline_stage(session_id, "dynamic_rule_audit", stage_started)
         if rule_check:
             if rule_check.get("status") == "FAILED":
                 return GTIPDecision(
@@ -336,7 +370,7 @@ class GTIPWorkflowEngine:
 
         # 4. Aşama: Yasal Yüklem ve Yapılandırılmış Doğrulama (Deep Reasoning - Gemini 2.5 Pro / 3.6 Flash)
         chapter_note = next(
-            (source.excerpt for source in top_candidate.legal_sources if source.source_type == "IZAHNAME"),
+            (source.excerpt for source in top_candidate.legal_sources if source.source_type == "FASIL_NOTU"),
             "",
         )
         predicates = predicate_registry.get_predicates_for_gtip(
@@ -361,11 +395,12 @@ class GTIPWorkflowEngine:
                 candidate_gtip=top_candidate.gtip_code,
                 heading_desc=top_candidate.description,
                 chapter_notes=next(
-                    (s.excerpt for s in top_candidate.legal_sources if s.source_type == "IZAHNAME"), "",
+                    (s.excerpt for s in top_candidate.legal_sources if s.source_type == "FASIL_NOTU"), "",
                 ),
                 gir_rules=gir_rules,
                 evidence_context=evidence_context,
             )
+        stage_started = _mark_pipeline_stage(session_id, "legal_predicate_verification", stage_started)
 
         # 5. Aşama: Deterministik Sembolik Karar Motoru (%5 Eşik Kuralı & No-AI Output Binding)
         decision = deterministic_engine.evaluate_decision(
@@ -374,6 +409,7 @@ class GTIPWorkflowEngine:
             verification_results=verification_results,
             candidates=candidates
         )
+        _mark_pipeline_stage(session_id, "deterministic_binding", stage_started)
         decision = _bind_legal_sources(decision, top_candidate)
 
         # State kaydet
@@ -410,6 +446,7 @@ class GTIPWorkflowEngine:
         """
         import asyncio
         session_id = str(uuid.uuid4())
+        stage_started = time.perf_counter()
 
         yield {
             "stage": "FEATURE_EXTRACTION",
@@ -419,6 +456,7 @@ class GTIPWorkflowEngine:
         }
         await asyncio.sleep(0.05)
         features = await asyncio.to_thread(feature_extractor.extract_features, raw_text, image_uri)
+        stage_started = _mark_pipeline_stage(session_id, "feature_extraction", stage_started)
 
         yield {
             "stage": "RULE_ENGINE",
@@ -428,6 +466,7 @@ class GTIPWorkflowEngine:
         }
         await asyncio.sleep(0.05)
         allowed_chapters, gir_rules = await asyncio.to_thread(rule_engine.apply_rules, features)
+        stage_started = _mark_pipeline_stage(session_id, "gir_routing", stage_started)
 
         yield {
             "stage": "RAG_SEARCH",
@@ -440,6 +479,7 @@ class GTIPWorkflowEngine:
             rag_engine.search_candidates_hierarchical,
             session_id, features, allowed_chapters, gir_rules,
         )
+        stage_started = _mark_pipeline_stage(session_id, "hierarchical_retrieval", stage_started)
         if tree_result.discriminator_question:
             decision = self._pause_for_discriminator(
                 session_id, raw_text, image_uri, features, allowed_chapters, gir_rules, tree_result
@@ -467,23 +507,28 @@ class GTIPWorkflowEngine:
             }
             return
 
-        selection = await asyncio.to_thread(
-            llm_verifier.select_candidate, raw_text, candidates, allowed_chapters, gir_rules
-        )
-        if selection.status != CandidateSelectionStatus.SELECT or not selection.selected_candidate_id:
-            decision = GTIPDecision(
-                session_id=session_id,
-                status="MANUAL_REVIEW_REQUIRED",
-                audit_notes=(selection.reasoning_points + selection.missing_information)[:8],
+        selected_index = _exact_locked_candidate_index(tree_result, candidates)
+        selection_started = time.perf_counter()
+        if selected_index is None:
+            selection = await asyncio.to_thread(
+                llm_verifier.select_candidate, raw_text, candidates, allowed_chapters, gir_rules
             )
-            yield {
-                "stage": "COMPLETED",
-                "status": decision.status,
-                "message": "Kapalı aday kümesinde güvenilir seçim yapılamadı.",
-                "decision": decision.model_dump(),
-            }
-            return
-        top_candidate = candidates[int(selection.selected_candidate_id[1:]) - 1]
+            if selection.status != CandidateSelectionStatus.SELECT or not selection.selected_candidate_id:
+                decision = GTIPDecision(
+                    session_id=session_id,
+                    status="MANUAL_REVIEW_REQUIRED",
+                    audit_notes=(selection.reasoning_points + selection.missing_information)[:8],
+                )
+                yield {
+                    "stage": "COMPLETED",
+                    "status": decision.status,
+                    "message": "Kapalı aday kümesinde güvenilir seçim yapılamadı.",
+                    "decision": decision.model_dump(),
+                }
+                return
+            selected_index = int(selection.selected_candidate_id[1:]) - 1
+        stage_started = _mark_pipeline_stage(session_id, "candidate_selection", selection_started)
+        top_candidate = candidates[selected_index]
 
         rule_check = await asyncio.to_thread(
             check_dynamic_gtip_rules,
@@ -491,6 +536,7 @@ class GTIPWorkflowEngine:
             features.technical_specifications,
             top_candidate.gtip_code,
         )
+        stage_started = _mark_pipeline_stage(session_id, "dynamic_rule_audit", stage_started)
         if rule_check:
             if rule_check.get("status") == "FAILED":
                 decision = GTIPDecision(
@@ -550,7 +596,7 @@ class GTIPWorkflowEngine:
         }
         await asyncio.sleep(0.05)
         chapter_note = next(
-            (source.excerpt for source in top_candidate.legal_sources if source.source_type == "IZAHNAME"), ""
+            (source.excerpt for source in top_candidate.legal_sources if source.source_type == "FASIL_NOTU"), ""
         )
         predicates = await asyncio.to_thread(
             predicate_registry.get_predicates_for_gtip,
@@ -573,14 +619,16 @@ class GTIPWorkflowEngine:
             verification_results = await asyncio.to_thread(
                 llm_verifier.verify_tariff_candidate,
                 raw_text, top_candidate.gtip_code, top_candidate.description,
-                next((s.excerpt for s in top_candidate.legal_sources if s.source_type == "IZAHNAME"), ""),
+                next((s.excerpt for s in top_candidate.legal_sources if s.source_type == "FASIL_NOTU"), ""),
                 gir_rules,
                 evidence_context,
             )
+        stage_started = _mark_pipeline_stage(session_id, "legal_predicate_verification", stage_started)
 
         decision = await asyncio.to_thread(
             deterministic_engine.evaluate_decision, session_id, top_candidate, verification_results, candidates
         )
+        _mark_pipeline_stage(session_id, "deterministic_binding", stage_started)
         decision = _bind_legal_sources(decision, top_candidate)
 
         state_dict: Dict[str, Any] = {
@@ -612,6 +660,7 @@ class GTIPWorkflowEngine:
         """
         Kullanıcı HITL sorusunu yanıtladığında akışı askıdan alıp (resume) tamamlar.
         """
+        resume_started = time.perf_counter()
         state_dict = local_state_store.get_state(session_id)
         if not state_dict:
             raise ValueError(f"Oturum bulunamadı: {session_id}")
@@ -683,6 +732,7 @@ class GTIPWorkflowEngine:
             elif pending_level == "GTIP":
                 locked_gtip = selected_branch
 
+            retrieval_started = time.perf_counter()
             tree_result = rag_engine.search_candidates_hierarchical(
                 session_id=session_id,
                 features=features,
@@ -693,6 +743,7 @@ class GTIPWorkflowEngine:
                 locked_gtip=locked_gtip,
                 query_vector=traversal.get("query_vector"),
             )
+            _mark_pipeline_stage(session_id, "resume_hierarchical_retrieval", retrieval_started)
             if tree_result.discriminator_question:
                 return self._pause_for_discriminator(
                     session_id,
@@ -858,7 +909,7 @@ class GTIPWorkflowEngine:
                 + json.dumps(features.technical_specifications, ensure_ascii=False, sort_keys=True)
             )
         chapter_note = next(
-            (source.excerpt for source in top_candidate.legal_sources if source.source_type == "IZAHNAME"), ""
+            (source.excerpt for source in top_candidate.legal_sources if source.source_type == "FASIL_NOTU"), ""
         )
         predicates = predicate_registry.get_predicates_for_gtip(
             top_candidate.gtip_code,
@@ -866,12 +917,14 @@ class GTIPWorkflowEngine:
             chapter_note,
         )
         evidence_context = _format_evidence_context(top_candidate)
+        verification_started = time.perf_counter()
         verification_results = llm_verifier.verify_predicates(
             raw_text=verified_product_text,
             predicates=predicates,
             allowed_chapters=allowed_chapters,
             evidence_context=evidence_context,
         )
+        _mark_pipeline_stage(session_id, "resume_legal_predicate_verification", verification_started)
         predicate_answer = selected_impact.get("predicate_verified")
         answered_predicate = hitl_q.get("missing_parameter")
         if predicate_answer in {"TRUE", "FALSE"}:
@@ -884,6 +937,7 @@ class GTIPWorkflowEngine:
             session_id, top_candidate, verification_results, evaluation_candidates
         )
         decision = _bind_legal_sources(decision, top_candidate)
+        _mark_pipeline_stage(session_id, "resume_total", resume_started)
 
         state_dict["status"] = decision.status
         state_dict["product_features"] = features.model_dump()

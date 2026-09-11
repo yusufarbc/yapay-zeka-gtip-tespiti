@@ -38,7 +38,7 @@ class HierarchicalSearchResult:
 CONSULTED_SOURCE_LAYERS = [
     "TGTC_2026",
     "GIR_1_6",
-    "FASIL_IZAHNAME",
+    "FASIL_NOTLARI",
     "BTB_LAST_6_YEARS",
     "SINIFLANDIRMA_KARARLARI_LAST_6_YEARS",
     "GUMRUK_MEVZUATI_LAST_6_YEARS",
@@ -67,6 +67,9 @@ def _decision_source(item: Dict[str, Any]) -> LegalSource:
             f"Hukuki gerekçe: {str(item.get('legal_justification') or '').strip()}"
         )[:2400],
         source_url=item.get("source_url"),
+        legal_role=(
+            "INDIVIDUAL_PRECEDENT" if source_type == "BTB" else "INTERPRETIVE"
+        ),
     )
 
 
@@ -93,9 +96,6 @@ class RAGEngine:
         """
         # Katı Fasıl Kilidi varsa (Örn: Ayakkabı -> Fasıl 64), dışına ASLA çıkılmaz
         if is_hard_locked and allowed_chapters:
-            return [str(c).zfill(2) for c in allowed_chapters]
-
-        if allowed_chapters and len(allowed_chapters) <= 3:
             return [str(c).zfill(2) for c in allowed_chapters]
 
         detected_chaps = []
@@ -380,6 +380,7 @@ class RAGEngine:
                     title=f"2026 TGTC Pozisyon {heading}",
                     publication_date="2026-01-01",
                     excerpt=str(hr.get("description") or ""),
+                    legal_role="NORMATIVE",
                 ),
                 LegalSource(
                     source_type="GIR",
@@ -387,19 +388,24 @@ class RAGEngine:
                     title="Tarifenin Yorumu ile İlgili Genel Kurallar",
                     publication_date="2026-01-01",
                     excerpt="\n".join(str(rule) for rule in rules_db.get("yorum_kurallari", []))[:1600],
+                    legal_role="NORMATIVE",
                 ),
             ]
             if chap_note:
                 legal_sources.append(LegalSource(
-                    source_type="IZAHNAME",
+                    source_type="FASIL_NOTU",
                     reference_no=f"Fasıl {res_chap}",
-                    title=f"2026 TGTC Fasıl {res_chap} Notları ve İzahnamesi",
+                    title=f"2026 TGTC Fasıl {res_chap} Notları",
                     publication_date="2026-01-01",
                     excerpt=str(chap_note)[:1600],
+                    legal_role="NORMATIVE",
                 ))
             legal_sources.extend(_decision_source(item) for item in matching_btbs[:3])
             legal_sources.extend(_decision_source(item) for item in matching_classifications[:3])
-            legal_sources.extend(LegalSource(source_type="GUMRUK_MEVZUATI", **item) for item in legislation_results)
+            legal_sources.extend(
+                LegalSource(source_type="GUMRUK_MEVZUATI", legal_role="CONTEXT", **item)
+                for item in legislation_results
+            )
 
             btb_support = max((float(item.get("similarity_score") or 0.0) for item in matching_btbs), default=0.0)
             # Doğrulanmış BTB varsa 40/60 birleşim, yoksa doğrudan TGTC skoru.
