@@ -102,6 +102,22 @@ BUILTIN_EXCLUSION_RULES = [
             "Fasıl 95 Not 1(p) Hükmü: Fasıl 88 kapsamına giren insansız hava araçları "
             "oyuncak olarak kabul edilmez."
         )
+    },
+    {
+        "id": "NOTE_CH44_1O",
+        "target_chapter": "44",
+        "note_reference": "Fasıl 44 Not 1(o)",
+        "condition_type": "FURNITURE",
+        "keywords": [
+            "mobilya", "sandalye", "koltuk", "masa", "yatak", "dolap", "sehpa",
+            "komodin", "kitaplık", "karyola", "tabure", "kanepe", "divan"
+        ],
+        "excluded_chapter": "44",
+        "redirect_chapter": "94",
+        "legal_text": (
+            "Fasıl 44 Not 1(o) Hükmü: Fasıl 94'e giren eşya (örneğin mobilyalar, "
+            "aydınlatma cihazları...) bu fasla (Fasıl 44) dahil değildir."
+        )
     }
 ]
 

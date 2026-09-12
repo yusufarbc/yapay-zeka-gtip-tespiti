@@ -149,9 +149,10 @@ class RAGEngine:
         if is_hard_locked and allowed_chapters:
             return [str(c).zfill(2) for c in allowed_chapters]
 
-        detected_chaps = []
         if allowed_chapters:
-            detected_chaps = [str(c).zfill(2) for c in allowed_chapters]
+            return [str(c).zfill(2) for c in allowed_chapters]
+
+        detected_chaps = []
 
         # Vektör ve anahtar kelime eşleşmesi ile 97 fasıl taranır
         query_lower = query_text.lower()
@@ -309,10 +310,9 @@ class RAGEngine:
                     return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
                 if not leaves:
                     return HierarchicalSearchResult(traversal_state=traversal)
-                locked_gtip = str(leaves[0]["gtip_code"])
                 if len(leaves) == 1:
                     locked_gtip = str(leaves[0]["gtip_code"])
-            traversal["locked_gtip"] = locked_gtip
+                    traversal["locked_gtip"] = locked_gtip
 
         candidates = self.search_candidates(
             features,

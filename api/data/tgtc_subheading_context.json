@@ -95,6 +95,26 @@
       "description": "Diğer çok komponentli entegre devreler",
       "required_terms": ["mco", "çok komponentli", "cok komponentli", "multi-component"],
       "missing_qualifier_penalty": 0.25
+    },
+    "9403": {
+      "description": "Diğer mobilyalar ve bunların aksam ve parçaları: masalar, yemek masaları, yazı masaları, çalışma masaları, dolaplar, kitaplıklar, büro mobilyaları, mutfak mobilyaları, yatak odası mobilyaları, yemek odası ve oturma odası mobilyaları, ahşap mobilyalar",
+      "required_terms": [],
+      "missing_qualifier_penalty": 0.0
+    },
+    "940360": {
+      "description": "Diğer ahşap mobilyalar: yemek masaları, salon ve oturma odası masaları, sehpalar, büfe, konsol ve vitrinler",
+      "required_terms": [],
+      "missing_qualifier_penalty": 0.0
+    },
+    "851713": {
+      "description": "Akıllı telefonlar ve akıllı cihazlar",
+      "required_terms": [],
+      "missing_qualifier_penalty": 0.0
+    },
+    "851713000019": {
+      "description": "Diğer akıllı telefonlar, cep telefonları, dokunmatik ekranlı hücresel telefonlar",
+      "required_terms": [],
+      "missing_qualifier_penalty": 0.0
     }
   }
 }

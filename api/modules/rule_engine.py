@@ -50,17 +50,17 @@ HARD_RULES_MATRIX = [
         "description": "Oyuncaklar, oyun ve spor malzemeleri Fasıl 95 yönlendirmesi."
     },
     {
-        "keywords": ["mobilya", "koltuk", "sandalye"],
+        "keywords": ["mobilya", "koltuk", "sandalye", "masa", "yatak", "dolap", "sehpa", "komodin", "karyola", "kitaplık", "tabure", "kanepe", "divan"],
         "materials": [],
         "locked_chapter": "94",
         "exclusive": True,
         "description": "Mobilyalar ve oturmaya mahsus eşya için Fasıl 94 yönlendirmesi."
     },
     {
-        "keywords": ["masa", "yatak", "aydınlatma", "avize"],
+        "keywords": ["aydınlatma", "avize", "abajur", "aplik"],
         "materials": [],
         "locked_chapter": "94",
-        "description": "Masa, yatak ve aydınlatma eşyası için Fasıl 94 aday yönlendirmesi."
+        "description": "Aydınlatma cihazları için Fasıl 94 aday yönlendirmesi."
     }
 ]
 

@@ -45,13 +45,25 @@ class PredicateRegistryEngine:
 
         predicates = []
 
-        # 1. Genel Yasal Pozisyon Koşulu (TGTC pozisyon metni & GİR 1/6)
+        # 1. Genel Yasal Pozisyon Koşulu (TGTC 4 haneli pozisyon metni & GİR 1)
+        heading_desc = ""
+        try:
+            from api.db.database import SessionLocal, TgtcGtipModel
+            with SessionLocal() as db_session:
+                h_item = db_session.query(TgtcGtipModel).filter(TgtcGtipModel.gtip_code == pos4).first()
+                if h_item and h_item.description:
+                    heading_desc = h_item.description.strip()
+        except Exception:
+            pass
+        if not heading_desc:
+            heading_desc = official_description or "resmi pozisyon tanımı"
+
         predicates.append(
             LegalPredicate(
                 predicate_id=f"P_{pos4}_1",
                 description=(
                     f"Eşya, TGTC Fasıl {chap2} ({chap_title}) kapsamındaki {pos4} pozisyonunun "
-                    f"şu resmi tanımına uygun mudur: {(official_description or 'resmi pozisyon tanımı')[:800]}"
+                    f"şu resmi tanımına uygun mudur: {heading_desc[:800]}"
                 ),
                 required_value="TRUE",
                 statute_reference=f"TGTC Fasıl {chap2} ve Pozisyon {pos4} metni & GİR 1"
