@@ -199,10 +199,56 @@ class RuleEngine:
                 "specific_heading": "9025",
                 "keywords": ["termometre", "hidrometre", "nem ölçer"],
                 "reason": "GYK 3(a): 90.25 pozisyonu termometreleri özel olarak tanımlar."
-            }
+            },
+            {
+                "general_heading": "8504",
+                "specific_heading": "8542",
+                "keywords": ["pmic", "power management", "entegre", "çip", "chip", "integrated circuit", "ic", "mikroçip", "güç entegre"],
+                "reason": "TGTC Fasıl 85 Not 9(b) & GYK 3(a): 85.42 elektronik entegre devreler (PMIC, güç yönetimi vb.), "
+                          "işlevleri gereği kapsayabilecek diğer pozisyonlara (85.04 statik konvertörler/transformatörler dahil) göre önceliklidir."
+            },
+            {
+                "general_heading": "8543",
+                "specific_heading": "8542",
+                "keywords": ["pmic", "entegre", "çip", "chip", "integrated circuit", "ic", "mikroçip", "mikrodenetleyici", "işlemci"],
+                "reason": "TGTC Fasıl 85 Not 9(b) & GYK 3(a): 85.42 elektronik entegre devreler, "
+                          "85.43 genel elektrikli cihazlar pozisyonuna göre önceliklidir."
+            },
+            {
+                "general_heading": "8517",
+                "specific_heading": "8542",
+                "keywords": ["entegre", "çip", "chip", "integrated circuit", "ic", "transceiver", "modem çipi", "rf çip", "wi-fi çip"],
+                "reason": "TGTC Fasıl 85 Not 9(b) & GYK 3(a): 85.42 elektronik entegre devreler, "
+                          "85.17 haberleşme cihazları pozisyonuna göre önceliklidir."
+            },
+            {
+                "general_heading": "8471",
+                "specific_heading": "8542",
+                "keywords": ["entegre", "çip", "chip", "integrated circuit", "ic", "mikroişlemci", "mikrodenetleyici", "cpu", "gpu"],
+                "reason": "TGTC Fasıl 85 Not 9(b) & GYK 3(a): 85.42 elektronik entegre devreler, "
+                          "84.71 bilgi işlem makineleri pozisyonuna göre önceliklidir."
+            },
+            {
+                "general_heading": "8504",
+                "specific_heading": "8541",
+                "keywords": ["diyot", "transistör", "mosfet", "igbt", "tristör", "yarı iletken", "semiconductor"],
+                "reason": "TGTC Fasıl 85 Not 9(b) & GYK 3(a): 85.41 yarı iletken tertibat (diyot, transistör, MOSFET), "
+                          "85.04 statik konvertörler pozisyonuna göre önceliklidir."
+            },
         ]
 
         heading_codes = [str(h.get("heading") or h.get("gtip_code", "")[:4]).replace(".", "") for h in candidate_headings]
+
+        # TGTC Fasıl 85 Not 9(b) Önceliği: Entegre devreler (85.42) diğer tüm fonksiyonel pozisyonlara göre önceliklidir.
+        ic_keywords = ["pmic", "power management", "entegre", "çip", "chip", "integrated circuit", "mikroçip", "güç entegre"]
+        if "8542" in heading_codes and any(kw in text_corpus for kw in ic_keywords):
+            candidate_8542 = next((h for h in candidate_headings if str(h.get("heading") or h.get("gtip_code", "")[:4]).replace(".", "") == "8542"), None)
+            if candidate_8542 and len(heading_codes) > 1:
+                applied_rules.append(
+                    "TGTC Fasıl 85 Not 9(b) & GYK 3(a): 85.42 elektronik entegre devreler pozisyonu, "
+                    "eşyayı işlevine göre kapsayabilecek diğer tüm tarife pozisyonlarına göre öncelik alır."
+                )
+                return candidate_8542, applied_rules
 
         # 1. GYK 3(a) Özel Tanım Önceliği
         for rule in SPECIFIC_HEADINGS_MAP:

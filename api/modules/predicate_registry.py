@@ -60,10 +60,20 @@ class PredicateRegistryEngine:
 
         # 2. Alt Pozisyon Nitelik Koşulu (GİR 6)
         if len(clean_code) >= 6:
+            sub_desc = ""
+            try:
+                from api.db.database import SessionLocal, TgtcGtipModel
+                with SessionLocal() as db_session:
+                    sub_item = db_session.query(TgtcGtipModel).filter(TgtcGtipModel.gtip_code == hs6).first()
+                    if sub_item and sub_item.description:
+                        sub_desc = f": {sub_item.description.strip()}"
+            except Exception:
+                pass
+
             predicates.append(
                 LegalPredicate(
                     predicate_id=f"P_{hs6}_2",
-                    description=f"Eşyanın malzeme bileşeni, çalışma prensibi veya kullanım amacı {gtip_code[:7]} alt pozisyon şartını karşılıyor mu?",
+                    description=f"Eşya, TGTC {gtip_code[:7]} alt pozisyonunun şu resmi tanım ve şartlarına uygun mudur{sub_desc}",
                     required_value="TRUE",
                     statute_reference=f"TGTC {gtip_code[:7]} Alt Pozisyon Notları & GİR 6"
                 )

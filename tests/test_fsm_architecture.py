@@ -279,4 +279,42 @@ def test_durum1_btb_fast_exit():
         assert any("Fast Exit" in note for note in decision.audit_notes)
 
 
+def test_pmic_chapter85_note9b_priority():
+    """
+    TGTC Fasıl 85 Not 9(b) & GYK 3(a) Testi:
+    Güç dönüştürücü/yönetici entegre devre (PMIC) için hem 85.04 hem 85.42
+    aday olarak geldiğinde, Fasıl 85 Not 9(b) gereğince 85.42 seçilmelidir.
+    """
+    features = ProductFeatures(
+        product_name="PMIC power management integrated circuit güç entegre çipi",
+        primary_material="Silikon",
+        function="Güç yönetimi, voltaj regülasyonu",
+        intended_use="Elektronik devrelerde güç dağıtımı ve dönüştürme",
+    )
 
+    candidate_headings = [
+        {"heading": "8504", "description": "Elektrik transformatörleri, statik konvertörler ve endüktörler"},
+        {"heading": "8542", "description": "Elektronik entegre devreler"}
+    ]
+
+    selected, rules = rule_engine.resolve_gyk3_conflict(candidate_headings, features)
+    assert selected is not None
+    assert str(selected.get("heading") or selected.get("gtip_code", "")[:4]) == "8542"
+    assert any("Fasıl 85 Not 9(b)" in r for r in rules)
+
+
+def test_discriminator_no_generic_quiz():
+    """
+    Ayırt Edici Motor (Discriminator) Testi:
+    İki tarife dalı arasında somut fiziksel kriter (voltaj, güç, malzeme, döşeme)
+    bulunmadığında kullanıcıya yapay tarife seçimi sorulmamalı, None dönmelidir.
+    """
+    from api.modules.discriminator_engine import discriminator_extractor, TariffBranch
+
+    branches = [
+        TariffBranch(code="850410", description="Deşarj ampulleri veya tüpleri için balastlar", score=0.5),
+        TariffBranch(code="850421", description="Gücü 650 kVA.yı geçmeyenler", score=0.5),
+    ]
+
+    question = discriminator_extractor.extract("session_test", branches)
+    assert question is None, "Objektif fiziksel kriter yoksa tarife dalı sorusu kullanıcıya sorulmamalıdır."

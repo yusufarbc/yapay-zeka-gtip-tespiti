@@ -940,6 +940,7 @@ def hybrid_search_headings_and_gtip(
     except Exception as ex_db:
         logger.debug(f"[Hybrid DB Query] {ex_db}")
 
+    headings_dict: Dict[str, str] = {}
     # TGTC 4-Haneli Pozisyonlar sözlüğü ile zenginleştir (01-97 Fasıllar)
     try:
         from api.db.tgtc_knowledge_base import get_local_tgtc_headings
@@ -978,7 +979,13 @@ def hybrid_search_headings_and_gtip(
     for item in candidate_records:
         chapter_notes = notes_by_chapter.get(str(item.get("chapter_code") or "").zfill(2), "")
         code = str(item.get("gtip_code") or "")
-        subheading_context = _load_subheading_contexts().get(code, {})
+        subheading_context = (
+            _load_subheading_contexts().get(code)
+            or _load_subheading_contexts().get(code[:8])
+            or _load_subheading_contexts().get(code[:6])
+            or _load_subheading_contexts().get(code[:4])
+            or {}
+        )
         item["branch_context"] = str(subheading_context.get("description") or "")
         item["required_terms"] = [
             _normalize_search_text(term)
@@ -991,9 +998,11 @@ def hybrid_search_headings_and_gtip(
         relevant_note_lines = " ".join(
             line for line in chapter_notes.splitlines() if code and code in re.sub(r"\D", "", line)
         )
+        parent_heading_desc = headings_dict.get(code[:4], "") if len(code) > 4 else ""
         item["searchable_text"] = " ".join([
             str(item.get("description") or ""),
             item["branch_context"],
+            parent_heading_desc,
             relevant_note_lines,
         ])
 
@@ -1012,6 +1021,7 @@ def hybrid_search_headings_and_gtip(
 
     sparse_scores: List[Tuple[float, Any]] = []
     for item in candidate_records:
+        code = str(item.get("gtip_code") or "")
         desc_lower = _normalize_search_text(item["searchable_text"])
         # Nadir ve ayırt edici terimler (örn. "kettle") genel terimlerden
         # (örn. "elektrikli") daha yüksek ağırlık alır.
@@ -1026,6 +1036,10 @@ def hybrid_search_headings_and_gtip(
             if score <= 0.0:
                 continue
             sparse_scores.append((score, item))
+        elif clean_parents and belongs_to_locked_branch(code):
+            # Kilitli dalın doğrudan yaprakları ('Diğerleri' sepeti dahil)
+            # arama metninde doğrudan token geçmese bile aday havuzuna taban skorla dahil edilir.
+            sparse_scores.append((0.01, item))
 
     sparse_scores.sort(key=lambda x: x[0], reverse=True)
     sparse_ranks = {item["gtip_code"]: rank + 1 for rank, (_, item) in enumerate(sparse_scores)}

@@ -85,6 +85,16 @@
       "description": "Oturmaya mahsus mobilyaların diğer aksam ve parçaları",
       "required_terms": ["aksam", "parça", "yedek parça", "bileşen"],
       "missing_qualifier_penalty": 0.2
+    },
+    "85423111": {
+      "description": "Çok komponentli entegre devreler (MCO'lar)",
+      "required_terms": ["mco", "çok komponentli", "cok komponentli", "multi-component"],
+      "missing_qualifier_penalty": 0.25
+    },
+    "85423119": {
+      "description": "Diğer çok komponentli entegre devreler",
+      "required_terms": ["mco", "çok komponentli", "cok komponentli", "multi-component"],
+      "missing_qualifier_penalty": 0.25
     }
   }
 }

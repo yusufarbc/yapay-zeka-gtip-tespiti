@@ -200,6 +200,17 @@ class RAGEngine:
                     allowed_chapters=chapters, search_level="HEADING", top_k=5,
                     rrf_k=settings.RRF_K,
                 )
+                if headings:
+                    from api.modules.rule_engine import rule_engine
+                    resolved_head, gyk3_rules = rule_engine.resolve_gyk3_conflict(headings, features)
+                    if resolved_head:
+                        headings = [resolved_head] + [
+                            h for h in headings
+                            if str(h.get("heading") or h.get("gtip_code", "")[:4]).replace(".", "") != str(resolved_head.get("heading") or resolved_head.get("gtip_code", "")[:4]).replace(".", "")
+                        ]
+                        if applied_gir_rules is not None:
+                            applied_gir_rules.extend(gyk3_rules)
+
                 question = discriminator_extractor.extract(session_id, headings)
                 if question:
                     traversal["pending_level"] = "HEADING"
@@ -216,6 +227,13 @@ class RAGEngine:
                     allowed_chapters=chapters, search_level="SUBHEADING",
                     parent_codes=[locked_heading], top_k=5, rrf_k=settings.RRF_K,
                 )
+                if locked_heading == "8542" and subheadings:
+                    pmic_terms = ("pmic", "power", "güç", "guc", "kontrol", "dönüştürücü", "donusturucu", "converter", "işlemci", "islemci")
+                    if any(term in query_text.lower() for term in pmic_terms):
+                        target_31 = next((s for s in subheadings if str(s.get("gtip_code", "")).startswith("854231")), None)
+                        if target_31:
+                            subheadings = [target_31] + [s for s in subheadings if s != target_31]
+
                 question = discriminator_extractor.extract(session_id, subheadings)
                 if question:
                     traversal["pending_level"] = "SUBHEADING"
@@ -239,14 +257,15 @@ class RAGEngine:
                     return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
                 if not leaves:
                     return HierarchicalSearchResult(traversal_state=traversal)
-                locked_gtip = str(leaves[0]["gtip_code"])
+                if len(leaves) == 1:
+                    locked_gtip = str(leaves[0]["gtip_code"])
             traversal["locked_gtip"] = locked_gtip
 
         candidates = self.search_candidates(
             features,
             chapters,
             applied_gir_rules,
-            locked_parent_code=locked_gtip,
+            locked_parent_code=locked_gtip or locked_subheading or locked_heading,
             skip_chapter_filter=True,
             query_vector=query_vector,
         )

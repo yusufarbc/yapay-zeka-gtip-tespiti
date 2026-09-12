@@ -356,7 +356,7 @@ class LLMFactVerifier:
                 f"DOĞRULANACAK YASAL KOŞULLAR:\n{json.dumps(predicates_payload, ensure_ascii=False, indent=2)}\n\n"
                 "ÇOK KATI KURALLAR:\n"
                 "1. Cevabın SADECE 'TRUE', 'FALSE' veya 'UNKNOWN' olabilir.\n"
-                "2. EĞER METİNDE BİLGİ AÇIKÇA GEÇMİYORSA VEYA BELİRSİZSE SAKIN TAHMİN ETMENİN; 'UNKNOWN' DE.\n"
+                "2. Ürün metnindeki teknik terimlerin (örneğin PMIC = Power Management IC = Güç Yönetimi/Dönüştürücü Entegre Devresi, CPU = İşlemci vb.) yerleşik teknik ve ticari karşılıklarını gözet. Ürünün teknik tanımı yasal pozisyon/alt pozisyonun kapsamına (örneğin entegre devreler, kontrolörler, dönüştürücüler) giriyorsa 'TRUE' de; sadece metinde gerçekten bilinmeyen eksik teknik parametreler için 'UNKNOWN' de.\n"
                 "3. 'evidence_quote' alanında metinden alıntı yap.\n\n"
                 "Yanıtını sadece geçerli bir JSON dizisi (array of objects) olarak ver:\n"
                 "[\n"
@@ -415,10 +415,15 @@ class LLMFactVerifier:
             status = PredicateStatus.UNKNOWN
             quote = None
 
-            if "entegre" in p.description.lower() or "monolitik" in p.description.lower():
-                if any(w in text_lower for w in ["entegre", "pdip", "smd", "çip", "cip", "yarı iletken", "yari iletken", "ic"]):
+            if (
+                "entegre" in p.description.lower()
+                or "monolitik" in p.description.lower()
+                or "8542" in p.predicate_id
+                or "8542" in p.description
+            ):
+                if any(w in text_lower for w in ["pmic", "entegre", "pdip", "smd", "çip", "cip", "yarı iletken", "yari iletken", "ic", "circuit", "işlemci", "islemci", "kontrolör", "kontrolor", "dönüştürücü", "donusturucu", "converter"]):
                     status = PredicateStatus.TRUE
-                    quote = "entegre / pdip / yarı iletken"
+                    quote = "entegre / PMIC / yarı iletken devresi"
                 else:
                     status = PredicateStatus.FALSE
 
