@@ -20,6 +20,18 @@ class LegalSource(BaseModel):
         description="NORMATIVE | INTERPRETIVE | INDIVIDUAL_PRECEDENT | CONTEXT",
         max_length=40,
     )
+    authority_level: int = Field(
+        default=9,
+        ge=1,
+        le=9,
+        description="1=TGTC/GYK/yasal not, 2=tebliğ, 3=kişiye özgü BTB, 4+=yorum/emsal",
+    )
+    effective_from: Optional[str] = Field(default=None, max_length=30)
+    effective_to: Optional[str] = Field(default=None, max_length=30)
+    is_binding: bool = Field(
+        default=False,
+        description="Kaynağın bu ürün/sorgu için bağlayıcı olup olmadığı; başka kişilerin BTB'si false olmalıdır.",
+    )
 
     @field_validator("source_type", mode="before")
     @classmethod
@@ -117,3 +129,8 @@ class GTIPDecision(BaseModel):
     trade_measures: Optional[Dict[str, Any]] = Field(default=None, description="İGV, TAREKS, KDV, Gözetim vb. tedbir kartları")
     state_machine_stage: Optional[str] = Field(default=None, description="FSM Durumu (DURUM_0 - DURUM_6)")
     guardrail_status: Optional[str] = Field(default=None, description="VERIFIED_LEAF | FALLBACK_SUBHEADING | STRICT_CHECK_PASSED")
+    tariff_year: str = Field(default="2026", max_length=10)
+    legal_validation_status: Optional[str] = Field(
+        default=None,
+        description="PASSED | MISSING_NORMATIVE_EVIDENCE | EXPIRED_EVIDENCE | MANUAL_REVIEW",
+    )

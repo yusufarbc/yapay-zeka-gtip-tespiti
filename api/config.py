@@ -79,8 +79,11 @@ class Settings(BaseSettings):
     CORS_ALLOWED_ORIGINS: str = os.getenv("CORS_ALLOWED_ORIGINS", "")
 
     # RAG & Decision Settings
-    BTB_WEIGHT: float = 0.70
-    TGTC_WEIGHT: float = 0.30
+    # BTB'ler retrieval/reranking için değerli emsallerdir; ancak üçüncü kişiler
+    # bakımından normatif bir kaynak değildir. Bu yüzden nihai aday skoruna ağırlık
+    # olarak katılmazlar. Yasal notlar/GYK ayrı deterministic kapıda uygulanır.
+    BTB_WEIGHT: float = 0.0
+    TGTC_WEIGHT: float = 1.0
     CONFIDENCE_THRESHOLD: float = 0.90
     RRF_K: int = 60
 

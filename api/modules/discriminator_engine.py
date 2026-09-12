@@ -102,6 +102,8 @@ class DiscriminatorExtractor:
         else:
             parameter, question = self._infer_criterion(first, second)
 
+        if not question:
+            question = "Ürün aşağıdaki resmi tarife tanımlarından hangisini karşılıyor?"
         if not question or parameter == "tarife_dali":
             return None
 
@@ -161,6 +163,7 @@ class DiscriminatorExtractor:
             material = materials[0]
             return f"{material}_orani", f"Ürünün baskın malzemesi veya ağırlıkça ana bileşeni {material} mudur?"
 
+        return "tarife_dali", "Ürün aşağıdaki resmi tarife tanımlarından hangisini karşılıyor?"
         return "tarife_dali", ""
 
 

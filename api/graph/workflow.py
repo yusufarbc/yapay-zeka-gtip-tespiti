@@ -28,6 +28,7 @@ from api.schemas.predicate import CandidateSelectionStatus, PredicateStatus
 from api.db.gcp_emulator import local_state_store
 from api.db.database import SessionLocal, validate_leaf_gtip
 from api.modules.discriminator_engine import DiscriminatorQuestion
+from api.modules.legal_authority import validate_candidate_evidence
 
 logger = logging.getLogger("GTIPWorkflowEngine")
 
@@ -300,7 +301,33 @@ class GTIPWorkflowEngine:
                 audit_notes=["RAG uzayında uygun emsal karar bulunamadı. Kıdemli Müşavire yönlendirildi."]
             )
 
-        # DURUM 1: BTB Emsal Karar Kontrolü (Fast Exit Check >= 0.92)
+        # Hukuki kaynak otoritesi benzerlik skorundan üstündür. Aktif TGTC/GYK
+        # dayanağı olmayan bir aday, BTB benzerliği ne kadar yüksek olursa olsun
+        # otomatik karar akışına giremez.
+        eligible_candidates = []
+        evidence_failures = []
+        for candidate in candidates:
+            is_eligible, evidence_status, ordered_sources = validate_candidate_evidence(candidate)
+            candidate.legal_sources = ordered_sources
+            if is_eligible:
+                eligible_candidates.append(candidate)
+            else:
+                evidence_failures.append(f"{candidate.gtip_code}: {evidence_status}")
+        candidates = eligible_candidates
+        if not candidates:
+            return GTIPDecision(
+                session_id=session_id,
+                status="MANUAL_REVIEW_REQUIRED",
+                state_machine_stage="DURUM_2_LEGAL_EVIDENCE_GATE",
+                legal_validation_status="MISSING_NORMATIVE_EVIDENCE",
+                audit_notes=[
+                    "Aktif TGTC/GYK dayanağı bulunmayan adaylar otomatik karardan çıkarıldı.",
+                    *evidence_failures[:5],
+                ],
+            )
+
+        # BTB yalnızca destekleyici emsaldir. Fast exit yasaktır: her aday GYK,
+        # yasal not, kapalı-aday seçimi ve bağımsız doğrulama katmanlarından geçer.
         fast_exit_candidate = None
         fast_exit_btb = None
         for c in candidates:
@@ -310,7 +337,7 @@ class GTIPWorkflowEngine:
                         fast_exit_btb = p
                         fast_exit_candidate = c
 
-        if fast_exit_candidate and fast_exit_btb:
+        if False and fast_exit_candidate and fast_exit_btb:  # legacy branch intentionally disabled
             logger.info("[Fast Exit] BTB Kararı %s benzerlik skoru %.4f >= 0.92. Doğrudan Durum 6'ya atlanıyor.", fast_exit_btb.btb_no, fast_exit_btb.similarity_score)
             decision = GTIPDecision(
                 session_id=session_id,
@@ -524,6 +551,7 @@ class GTIPWorkflowEngine:
         )
         _mark_pipeline_stage(session_id, "deterministic_binding", stage_started)
         decision = _bind_legal_sources(decision, top_candidate)
+        decision.legal_validation_status = "PASSED"
 
         # DURUM 6: MEVZUAT TEDBİR, DOĞRULAMA & ÇIKIŞ KALKANI (GUARDRAILS)
         target_gtip_digits = re.sub(r"\D", "", str(decision.gtip_code or ""))
@@ -650,7 +678,35 @@ class GTIPWorkflowEngine:
             }
             return
 
-        # DURUM 1: BTB Emsal Karar Kontrolü (Fast Exit Check >= 0.92)
+        # SSE yolu da senkron akışla aynı hukuk kapısından geçer; emsal BTB
+        # yalnız başına otomatik karar üretemez.
+        eligible_candidates = []
+        evidence_failures = []
+        for candidate in candidates:
+            is_eligible, evidence_status, ordered_sources = validate_candidate_evidence(candidate)
+            candidate.legal_sources = ordered_sources
+            if is_eligible:
+                eligible_candidates.append(candidate)
+            else:
+                evidence_failures.append(f"{candidate.gtip_code}: {evidence_status}")
+        candidates = eligible_candidates
+        if not candidates:
+            decision = GTIPDecision(
+                session_id=session_id,
+                status="MANUAL_REVIEW_REQUIRED",
+                state_machine_stage="DURUM_2_LEGAL_EVIDENCE_GATE",
+                legal_validation_status="MISSING_NORMATIVE_EVIDENCE",
+                audit_notes=["Aktif TGTC/GYK dayanağı olmayan adaylar otomatik karardan çıkarıldı.", *evidence_failures[:5]],
+            )
+            yield {
+                "stage": "COMPLETED",
+                "status": decision.status,
+                "message": "Aktif normatif dayanak olmadığı için uzman incelemesi gerekiyor.",
+                "decision": decision.model_dump(),
+            }
+            return
+
+        # BTB yalnızca destekleyici emsaldir; tüm adaylar doğrulama katmanına gider.
         fast_exit_candidate = None
         fast_exit_btb = None
         for c in candidates:
@@ -660,7 +716,7 @@ class GTIPWorkflowEngine:
                         fast_exit_btb = p
                         fast_exit_candidate = c
 
-        if fast_exit_candidate and fast_exit_btb:
+        if False and fast_exit_candidate and fast_exit_btb:  # legacy branch intentionally disabled
             logger.info("[Fast Exit Stream] BTB Kararı %s benzerlik skoru %.4f >= 0.92. Doğrudan Durum 6'ya atlanıyor.", fast_exit_btb.btb_no, fast_exit_btb.similarity_score)
             yield {
                 "stage": "FAST_EXIT",
@@ -852,6 +908,7 @@ class GTIPWorkflowEngine:
         )
         _mark_pipeline_stage(session_id, "deterministic_binding", stage_started)
         decision = _bind_legal_sources(decision, top_candidate)
+        decision.legal_validation_status = "PASSED"
 
         # Foreign Key Barrier ve Tedbir Kartları
         target_gtip_digits = re.sub(r"\D", "", str(decision.gtip_code or ""))

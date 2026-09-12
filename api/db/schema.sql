@@ -63,8 +63,68 @@ CREATE INDEX IF NOT EXISTS idx_leg_doc_type ON legislation_and_btb(doc_type);
 CREATE INDEX IF NOT EXISTS idx_leg_rank ON legislation_and_btb(legal_rank);
 CREATE INDEX IF NOT EXISTS idx_leg_validity ON legislation_and_btb(valid_from, valid_to);
 
+-- Hukuki kaynak envanteri. Otorite ve yürürlük, similarity skorundan önce gelir.
+CREATE TABLE IF NOT EXISTS legal_source (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    source_type VARCHAR(40) NOT NULL,                          -- TGTC, GIR, FASIL_NOTU, TEBLIG, BTB, IZAHNAME...
+    authority_level SMALLINT NOT NULL CHECK (authority_level BETWEEN 1 AND 9),
+    is_binding BOOLEAN NOT NULL DEFAULT FALSE,
+    reference_no VARCHAR(150),
+    title TEXT NOT NULL,
+    source_url TEXT,
+    source_document_id VARCHAR(150),
+    tariff_year VARCHAR(10),
+    effective_from DATE NOT NULL,
+    effective_to DATE,
+    supersedes_id UUID REFERENCES legal_source(id),
+    content_hash VARCHAR(128) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (source_type, reference_no, effective_from, content_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_legal_source_effective
+    ON legal_source(source_type, authority_level, effective_from, effective_to);
+
+-- Hybrid retrieval metni; her chunk kendi hukuki kaynağına ve GTİP kapsamına bağlıdır.
+CREATE TABLE IF NOT EXISTS document_chunk (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    legal_source_id UUID NOT NULL REFERENCES legal_source(id),
+    gtip_code VARCHAR(12) REFERENCES tariff_hierarchy(gtip_code),
+    chunk_type VARCHAR(40) NOT NULL,
+    content TEXT NOT NULL,
+    embedding vector(768),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_chunk_gtip ON document_chunk(gtip_code);
+
+-- Her karar tekrar üretilebilir bir audit kaydıdır; model cevabı tek başına hukuk dayanağı değildir.
+CREATE TABLE IF NOT EXISTS classification_run (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    session_id VARCHAR(255) NOT NULL,
+    query_text TEXT NOT NULL,
+    extracted_facts JSONB NOT NULL,
+    candidate_codes JSONB NOT NULL,
+    selected_gtip VARCHAR(12),
+    status VARCHAR(40) NOT NULL,
+    confidence_score NUMERIC(5,4),
+    tariff_year VARCHAR(10) NOT NULL,
+    model_version VARCHAR(100),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS evidence_link (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    classification_run_id UUID NOT NULL REFERENCES classification_run(id),
+    legal_source_id UUID NOT NULL REFERENCES legal_source(id),
+    candidate_gtip VARCHAR(12),
+    evidence_role VARCHAR(30) NOT NULL,                         -- NORMATIVE | INTERPRETIVE | PRECEDENT
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_evidence_link_run ON evidence_link(classification_run_id);
+
 -- Geriye Dönük Uyumluluk Tabloları
-CREATE TABLE IF NOT EXISTS tgtc_hierarchy (
 
 CREATE TABLE IF NOT EXISTS tgtc_gtip_versions (
     id BIGSERIAL PRIMARY KEY,

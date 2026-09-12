@@ -22,7 +22,8 @@ INJECTION_PATTERNS = [
     # Kural ve Sistem Atlatma
     r"(?i)ignore\s+(all\s+)?(previous|prior|above)\s+(instructions|prompts|rules)",
     r"(?i)disregard\s+(all\s+)?(previous|prior|above)",
-    r"(?i)(tüm|bütün)\s+(önceki\s+)?(talimatları|kuralları|komutları)\s+(unut|yok\s+say|sil)",
+    r"(?i)((tüm|bütün)\s+)?önceki\s+(talimatları|kuralları|komutları)\s+(unut|yok\s+say|sil)",
+    r"(?i)(talimatları|kuralları|komutları)\s+(unut|yok\s+say|sil).{0,80}(gtip|tarife|kod)",
     r"(?i)sistem\s+(talimatlarını|kurallarını)\s+(yok\s+say|atla|değiştir)",
     r"(?i)you\s+are\s+now\s+(in\s+)?(dan|jailbreak|unrestricted)\s+mode",
     r"(?i)artık\s+(kısıtlamasız|filtresiz)\s+bir\s+(moddasın|yapay\s+zekasın)",
@@ -38,6 +39,7 @@ INJECTION_PATTERNS = [
     r"(?i)bana\s+(kesinlikle|zorunlu\s+olarak)\s+[0-9]{12}\s+kodunu\s+ver",
     r"(?i)override\s+(gtip|tariff|classification)\s+to\s+[0-9]{4,12}",
     r"(?i)force\s+classification\s+as\s+[0-9]{4,12}",
+    r"(?i)(gtip|tarife)\s+[0-9]{4,12}\s+(yaz|ver|ata|seç)",
     
     # Kod ve SQL Saldırıları
     r"(?i)<\s*script[^>]*>",
@@ -94,4 +96,3 @@ class ModelArmorGuardrail:
 
 
 model_armor = ModelArmorGuardrail()
-

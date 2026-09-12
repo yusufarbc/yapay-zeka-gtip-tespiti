@@ -372,6 +372,75 @@ class LegislationAndBtbModel(Base):
     valid_to = Column(String(30), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
+
+class LegalSourceModel(Base):
+    """Tekilleştirilmiş hukuki kaynak envanteri; retrieval belgelerinin kanonik üst kaydı."""
+    __tablename__ = "legal_source"
+    __table_args__ = (
+        UniqueConstraint("source_type", "reference_no", "effective_from", "content_hash", name="uq_legal_source_version"),
+        Index("idx_legal_source_effective", "source_type", "authority_level", "effective_from", "effective_to"),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_type = Column(String(40), nullable=False, index=True)
+    authority_level = Column(Integer, nullable=False, default=9, index=True)
+    is_binding = Column(Boolean, nullable=False, default=False)
+    reference_no = Column(String(150), nullable=True)
+    title = Column(Text, nullable=False)
+    source_url = Column(Text, nullable=True)
+    source_document_id = Column(String(150), nullable=True)
+    tariff_year = Column(String(10), nullable=True, index=True)
+    effective_from = Column(String(30), nullable=False, index=True)
+    effective_to = Column(String(30), nullable=True, index=True)
+    supersedes_id = Column(String(36), nullable=True)
+    content_hash = Column(String(128), nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class DocumentChunkModel(Base):
+    """Hybrid RAG chunk'ı; bağımsız bir norm değil, legal_source'a bağlı kanıttır."""
+    __tablename__ = "document_chunk"
+    __table_args__ = (Index("idx_document_chunk_gtip", "gtip_code"),)
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    legal_source_id = Column(String(36), nullable=False, index=True)
+    gtip_code = Column(String(12), nullable=True, index=True)
+    chunk_type = Column(String(40), nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    embedding = Column(VectorType(768), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class ClassificationRunModel(Base):
+    """Zaman-bağımlı değerlendirme ve audit için değişmez sınıflandırma çalışması."""
+    __tablename__ = "classification_run"
+    __table_args__ = (Index("idx_classification_run_session", "session_id", "created_at"),)
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_id = Column(String(255), nullable=False, index=True)
+    query_text = Column(Text, nullable=False)
+    extracted_facts = Column(Text, nullable=False)
+    candidate_codes = Column(Text, nullable=False)
+    selected_gtip = Column(String(12), nullable=True, index=True)
+    status = Column(String(40), nullable=False, index=True)
+    confidence_score = Column(Float, nullable=True)
+    tariff_year = Column(String(10), nullable=False)
+    model_version = Column(String(100), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class EvidenceLinkModel(Base):
+    """Karar çıktısı ile kullanılan yasal kaynağın izlenebilir bağlantısı."""
+    __tablename__ = "evidence_link"
+    __table_args__ = (Index("idx_evidence_link_run", "classification_run_id"),)
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    classification_run_id = Column(String(36), nullable=False, index=True)
+    legal_source_id = Column(String(36), nullable=False, index=True)
+    candidate_gtip = Column(String(12), nullable=True, index=True)
+    evidence_role = Column(String(30), nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
 def get_database_url() -> str:
     """GCP Cloud SQL PostgreSQL bağlantı dizesini döndürür."""
     env_db_url = os.getenv("DATABASE_URL")
@@ -720,12 +789,13 @@ def calculate_dynamic_candidate_score(
     btb_support: float = 0.0,
     verified_btb_count: int = 0,
 ) -> float:
-    """BTB yokluğunda TGTC kanıtını seyrelmeden koruyan nihai puan."""
+    """Nihai aday puanı yalnızca aktif TGTC retrieval sinyalinden türetilir.
+
+    BTB benzerliği sonuç listesine emsal olarak eklenir; başka bir kişiye ait BTB
+    hukuki norm olmadığından adayın normatif puanını yükseltemez.
+    """
     tgtc = min(1.0, max(0.0, float(tgtc_similarity or 0.0)))
-    if int(verified_btb_count or 0) < 1:
-        return tgtc
-    btb = min(1.0, max(0.0, float(btb_support or 0.0)))
-    return round(tgtc * 0.40 + btb * 0.60, 12)
+    return round(tgtc, 12)
 
 
 def upsert_tgtc_temporal_version(
@@ -979,6 +1049,7 @@ def hybrid_search_headings_and_gtip(
     for item in candidate_records:
         chapter_notes = notes_by_chapter.get(str(item.get("chapter_code") or "").zfill(2), "")
         code = str(item.get("gtip_code") or "")
+        subheading_context = _load_subheading_contexts().get(code, {})
         subheading_context = (
             _load_subheading_contexts().get(code)
             or _load_subheading_contexts().get(code[:8])
@@ -1322,4 +1393,3 @@ def get_exclusion_notes_for_chapter(
             pass
 
     return notes
-

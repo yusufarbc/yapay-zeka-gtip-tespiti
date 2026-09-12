@@ -44,6 +44,24 @@ CONSULTED_SOURCE_LAYERS = [
     "GUMRUK_MEVZUATI_LAST_6_YEARS",
 ]
 
+# Açık emtia adları için GYK 1 pozisyon metni önceliği. Bunlar serbest GTİP
+# üretmez; yalnızca aramayı doğru 4-haneli resmi pozisyona sabitler. Daha dar
+# 6/12-hane ayrımı yine teknik özellik/HITL ile yapılır.
+_EXACT_HEADING_TERMS = (
+    ("buğday unu", "1101"),
+    ("wheat flour", "1101"),
+    ("mısır unu", "1102"),
+    ("corn flour", "1102"),
+    ("buğday", "1001"),
+    ("mahlut", "1001"),
+    ("çavdar", "1002"),
+    ("arpa", "1003"),
+    ("yulaf", "1004"),
+    ("mısır", "1005"),
+    ("pirinç", "1006"),
+    ("sandalye", "9401"),
+)
+
 
 def _six_year_cutoff(today: Optional[datetime.date] = None) -> datetime.date:
     today = today or datetime.date.today()
@@ -70,6 +88,8 @@ def _decision_source(item: Dict[str, Any]) -> LegalSource:
         legal_role=(
             "INDIVIDUAL_PRECEDENT" if source_type == "BTB" else "INTERPRETIVE"
         ),
+        authority_level=3 if source_type == "BTB" else 4,
+        is_binding=False,
     )
 
 
@@ -83,6 +103,37 @@ class RAGEngine:
     """
     Hiyerarşik Hibrit Arama ve Reciprocal Rank Fusion (RRF) Motoru.
     """
+
+    @staticmethod
+    def _apply_explicit_heading_gate(query_text: str, headings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Açık ürün adı, farklı bir un/işlenmiş ürün heading'ine kaymasın."""
+        normalized = " ".join(str(query_text or "").lower().split())
+        target_code = next((code for term, code in _EXACT_HEADING_TERMS if term in normalized), None)
+        if not target_code:
+            return headings
+
+        from api.db.tgtc_knowledge_base import get_local_tgtc_headings
+        target = next(
+            (item for item in headings if re.sub(r"\D", "", str(item.get("gtip_code") or item.get("heading") or "")) == target_code),
+            None,
+        )
+        if target is None:
+            target = {
+                "gtip_code": target_code,
+                "heading": target_code,
+                "chapter": target_code[:2],
+                "description": get_local_tgtc_headings().get(target_code, f"TGTC Pozisyon {target_code}"),
+                "similarity_score": 0.99,
+                "level": "HEADING",
+            }
+        else:
+            target = dict(target)
+            target["similarity_score"] = max(float(target.get("similarity_score") or 0.0), 0.99)
+
+        # Açık ürün adında başka bir heading ile GYK 3 sıralaması yapılmaz;
+        # örneğin "buğday" 1001 iken "diğer hububat" 1008'e kaydırılamaz.
+        # Sonraki 6/12-hane ayrımı aynı heading altında devam eder.
+        return [target]
 
     def detect_candidate_chapters(
         self,
@@ -200,6 +251,7 @@ class RAGEngine:
                     allowed_chapters=chapters, search_level="HEADING", top_k=5,
                     rrf_k=settings.RRF_K,
                 )
+                headings = self._apply_explicit_heading_gate(query_text, headings)
                 if headings:
                     from api.modules.rule_engine import rule_engine
                     resolved_head, gyk3_rules = rule_engine.resolve_gyk3_conflict(headings, features)
@@ -257,6 +309,7 @@ class RAGEngine:
                     return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
                 if not leaves:
                     return HierarchicalSearchResult(traversal_state=traversal)
+                locked_gtip = str(leaves[0]["gtip_code"])
                 if len(leaves) == 1:
                     locked_gtip = str(leaves[0]["gtip_code"])
             traversal["locked_gtip"] = locked_gtip
@@ -265,7 +318,11 @@ class RAGEngine:
             features,
             chapters,
             applied_gir_rules,
-            locked_parent_code=locked_gtip or locked_subheading or locked_heading,
+            # Son GTİP yaprağı yalnızca traversal için bir öneridir. Retrieval'ı o
+            # tek yaprağa yeniden kilitlemek, veri/format farklarında aday kümesini
+            # boşaltıyordu. GYK 6 karşılaştırması için aynı 6-haneli sibling dalı
+            # kapalı aday kümesi olarak korunur.
+            locked_parent_code=locked_subheading or locked_heading,
             skip_chapter_filter=True,
             query_vector=query_vector,
         )
@@ -400,6 +457,9 @@ class RAGEngine:
                     publication_date="2026-01-01",
                     excerpt=str(hr.get("description") or ""),
                     legal_role="NORMATIVE",
+                    authority_level=1,
+                    effective_from="2026-01-01",
+                    is_binding=True,
                 ),
                 LegalSource(
                     source_type="GIR",
@@ -408,6 +468,9 @@ class RAGEngine:
                     publication_date="2026-01-01",
                     excerpt="\n".join(str(rule) for rule in rules_db.get("yorum_kurallari", []))[:1600],
                     legal_role="NORMATIVE",
+                    authority_level=1,
+                    effective_from="2026-01-01",
+                    is_binding=True,
                 ),
             ]
             if chap_note:
@@ -418,6 +481,9 @@ class RAGEngine:
                     publication_date="2026-01-01",
                     excerpt=str(chap_note)[:1600],
                     legal_role="NORMATIVE",
+                    authority_level=1,
+                    effective_from="2026-01-01",
+                    is_binding=True,
                 ))
             legal_sources.extend(_decision_source(item) for item in matching_btbs[:3])
             legal_sources.extend(_decision_source(item) for item in matching_classifications[:3])
@@ -426,17 +492,8 @@ class RAGEngine:
                 for item in legislation_results
             )
 
-            btb_support = max((float(item.get("similarity_score") or 0.0) for item in matching_btbs), default=0.0)
-            # Doğrulanmış BTB varsa 40/60 birleşim, yoksa doğrudan TGTC skoru.
-            # Sınıflandırma kararları hukuki bağlamdır fakat BTB desteği sayılmaz.
-            verified_btbs = [
-                item for item in matching_btbs
-                if item.get("btb_no") and item.get("gtip_code") and item.get("product_description")
-            ]
             combined_score = calculate_dynamic_candidate_score(
                 tgtc_similarity=sim,
-                btb_support=btb_support,
-                verified_btb_count=len(verified_btbs),
             )
 
             candidate = GTIPCandidate(
