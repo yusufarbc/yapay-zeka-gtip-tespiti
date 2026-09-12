@@ -365,3 +365,68 @@ def test_discriminator_no_generic_quiz():
 
     question = discriminator_extractor.extract("session_test", branches)
     assert question is None, "Objektif fiziksel kriter yoksa tarife dalı sorusu kullanıcıya sorulmamalıdır."
+
+
+def test_candidate_selection_insufficient_information_triggers_hitl(monkeypatch):
+    """
+    Kullanıcı ürün açıklamasında iki alt tarife ayrımını (örn. çocuklar için vs diğerleri)
+    belirtmediğinde sistem MANUAL_REVIEW_REQUIRED'a düşmek yerine WAITING_FOR_USER
+    durumuna geçerek kullanıcıya netleştirici soru yöneltmelidir.
+    """
+    from api.graph.workflow import workflow_engine
+    from api.modules.llm_verifier import CandidateSelection, CandidateSelectionStatus
+    from api.schemas.product import GTIPCandidate, LegalSource
+
+    normative_sources = [
+        LegalSource(source_type="TGTC_2026", reference_no="9401", title="TGTC", excerpt="Mobilyalar", legal_role="NORMATIVE", authority_level=1, effective_from="2026-01-01", is_binding=True),
+        LegalSource(source_type="GIR", reference_no="GYK1", title="GIR 1", excerpt="Yasal notlar", legal_role="NORMATIVE", authority_level=1, effective_from="2026-01-01", is_binding=True),
+    ]
+
+    c1 = GTIPCandidate(
+        gtip_code="940169000011",
+        description="Çocuklar için olanlar",
+        chapter="94",
+        heading="9401",
+        score=0.95,
+        legal_sources=normative_sources,
+    )
+    c2 = GTIPCandidate(
+        gtip_code="940169000019",
+        description="Diğerleri",
+        chapter="94",
+        heading="9401",
+        score=0.94,
+        legal_sources=normative_sources,
+    )
+
+    def mock_select(*args, **kwargs):
+        return CandidateSelection(
+            status=CandidateSelectionStatus.INSUFFICIENT_INFORMATION,
+            selected_candidate_id=None,
+            reasoning_points=["Ürün çocuklar için mi yoksa genel kullanım için mi belirtilmemiştir."],
+            missing_information=["Sandalye çocuklar için mi yoksa genel kullanım için mi tasarlanmıştır?"]
+        )
+
+    monkeypatch.setattr("api.modules.llm_verifier.llm_verifier.select_candidate", mock_select)
+    monkeypatch.setattr(
+        "api.modules.rag_engine.rag_engine.search_candidates_hierarchical",
+        lambda *args, **kwargs: type("Result", (), {"candidates": [c1, c2], "discriminator_question": None, "traversal_state": {}})()
+    )
+
+    decision = workflow_engine.start_analysis("döşemesiz ahşap sandalye")
+    assert decision.status == "WAITING_FOR_USER", "Eksik teknik bilgide kullanıcıya soru sorulmalıdır!"
+    assert decision.hitl_question is not None
+    assert decision.hitl_question.question_text == "Sandalye çocuklar için mi yoksa genel kullanım için mi tasarlanmıştır?"
+    assert len(decision.hitl_question.options) >= 2
+
+    # Kullanıcı C1 seçeneğini ("Çocuklar için olanlar") yanıtlar:
+    resumed = workflow_engine.resume_analysis(
+        session_id=decision.session_id,
+        selected_option_id="C1",
+        question_id=decision.hitl_question.question_id
+    )
+    assert resumed.status in ("COMPLETED", "WAITING_FOR_USER"), "Kullanıcı yanıtı geçerli bir sonraki adıma geçmelidir."
+    if resumed.status == "COMPLETED":
+        assert resumed.gtip_code == "940169000011"
+
+

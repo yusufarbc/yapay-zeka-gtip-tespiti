@@ -264,6 +264,82 @@ class GTIPWorkflowEngine:
         })
         return decision
 
+    def _pause_for_candidate_disambiguation(
+        self,
+        session_id: str,
+        raw_text: str,
+        image_uri: Optional[str],
+        features: ProductFeatures,
+        allowed_chapters: List[str],
+        gir_rules: List[str],
+        candidates: List[GTIPCandidate],
+        selection: Any,
+    ) -> GTIPDecision:
+        question_text = ""
+        if getattr(selection, "missing_information", None):
+            question_text = str(selection.missing_information[0]).strip()
+        if not question_text:
+            question_text = "Ürününüz aşağıdaki GTİP ayrımlarından hangisine uygundur?"
+
+        options: List[HITLOption] = []
+        for idx, cand in enumerate(candidates[:4]):
+            cand_id = f"C{idx + 1}"
+            options.append(
+                HITLOption(
+                    option_id=cand_id,
+                    text=f"{cand.gtip_code} — {cand.description[:400]}",
+                    impact_data={
+                        "selected_gtip": cand.gtip_code,
+                        "selected_branch": cand.gtip_code,
+                    },
+                )
+            )
+        options.append(
+            HITLOption(
+                option_id="UNKNOWN",
+                text="Bilinmiyor / Emin değilim (Gümrük Müşaviri İncelemesi)",
+                impact_data={"selected_branch": ""},
+            )
+        )
+
+        hitl_question = HITLQuestion(
+            question_id=f"disambig_{session_id[:8]}",
+            question_text=question_text,
+            missing_parameter="tarife_ayrimi",
+            options=options,
+        )
+
+        provisional_code = candidates[0].gtip_code if candidates else None
+        provisional_description = candidates[0].description if candidates else ""
+
+        decision = GTIPDecision(
+            session_id=session_id,
+            status="WAITING_FOR_USER",
+            gtip_code=provisional_code,
+            confidence_score=0.0,
+            official_statute_text=f"2026 TGTC {provisional_code}: {provisional_description}",
+            hitl_question=hitl_question,
+            applied_gir_rules=gir_rules,
+            audit_notes=(getattr(selection, "reasoning_points", []) or [])[:4],
+        )
+
+        state_dict: Dict[str, Any] = {
+            "session_id": session_id,
+            "raw_text": raw_text,
+            "image_uri": image_uri,
+            "product_features": features.model_dump(),
+            "allowed_chapters": allowed_chapters,
+            "applied_gir_rules": gir_rules,
+            "candidates": [c.model_dump() for c in candidates],
+            "selected_gtip": None,
+            "confidence_score": 0.0,
+            "status": decision.status,
+            "hitl_question": hitl_question.model_dump(),
+            "audit_notes": decision.audit_notes,
+        }
+        local_state_store.save_state(session_id, state_dict)
+        return decision
+
     def start_analysis(self, raw_text: str, image_uri: str = None) -> GTIPDecision:
         session_id = str(uuid.uuid4())
         stage_started = time.perf_counter()
@@ -412,6 +488,10 @@ class GTIPWorkflowEngine:
                 allowed_chapters=allowed_chapters,
                 gir_rules=gir_rules,
             )
+            if selection.status == CandidateSelectionStatus.INSUFFICIENT_INFORMATION and candidates:
+                return self._pause_for_candidate_disambiguation(
+                    session_id, raw_text, image_uri, features, allowed_chapters, gir_rules, candidates, selection
+                )
             if selection.status != CandidateSelectionStatus.SELECT or not selection.selected_candidate_id:
                 return GTIPDecision(
                     session_id=session_id,
@@ -791,6 +871,17 @@ class GTIPWorkflowEngine:
             selection = await asyncio.to_thread(
                 llm_verifier.select_candidate, raw_text, candidates, allowed_chapters, gir_rules
             )
+            if selection.status == CandidateSelectionStatus.INSUFFICIENT_INFORMATION and candidates:
+                decision = self._pause_for_candidate_disambiguation(
+                    session_id, raw_text, image_uri, features, allowed_chapters, gir_rules, candidates, selection
+                )
+                yield {
+                    "stage": "COMPLETED",
+                    "status": decision.status,
+                    "message": "Aday GTİP pozisyonunu kesinleştirmek için kullanıcı netleştirmesi bekleniyor.",
+                    "decision": decision.model_dump(),
+                }
+                return
             if selection.status != CandidateSelectionStatus.SELECT or not selection.selected_candidate_id:
                 decision = GTIPDecision(
                     session_id=session_id,
@@ -998,6 +1089,21 @@ class GTIPWorkflowEngine:
                         # Ayırt edici cevap yalnız dal kilidi olarak kalmamalı. Son hukuki
                         # doğrulayıcıya kanıt olacak şekilde ürün özelliklerine de yazılır.
                         features.technical_specifications[missing_parameter] = selected_answer_text
+
+        if selected_option_id == "UNKNOWN" or (not state_dict.get("discriminator_traversal") and not selected_gtip_choice and not state_dict.get("selected_gtip")):
+            decision = GTIPDecision(
+                session_id=session_id,
+                status="MANUAL_REVIEW_REQUIRED",
+                confidence_score=0.0,
+                audit_notes=["Kullanıcı ayırt edici tarife bilgisini bilinmiyor olarak işaretledi. Gümrük Müşaviri incelemesi gerekiyor."],
+            )
+            state_dict.update({
+                "status": decision.status,
+                "hitl_question": None,
+                "audit_notes": decision.audit_notes,
+            })
+            local_state_store.save_state(session_id, state_dict)
+            return decision
 
         traversal = state_dict.get("discriminator_traversal")
         if traversal:
