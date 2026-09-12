@@ -1186,6 +1186,17 @@ class GTIPWorkflowEngine:
                     state_dict.get("allowed_chapters") or [],
                     state_dict.get("applied_gir_rules") or [],
                 )
+                if selection.status == CandidateSelectionStatus.INSUFFICIENT_INFORMATION and tree_result.candidates:
+                    return self._pause_for_candidate_disambiguation(
+                        session_id,
+                        state_dict.get("raw_text", ""),
+                        state_dict.get("image_uri"),
+                        features,
+                        state_dict.get("allowed_chapters") or [],
+                        state_dict.get("applied_gir_rules") or [],
+                        tree_result.candidates,
+                        selection,
+                    )
                 if selection.status != CandidateSelectionStatus.SELECT or not selection.selected_candidate_id:
                     return GTIPDecision(
                         session_id=session_id,
@@ -1223,6 +1234,17 @@ class GTIPWorkflowEngine:
             selection = llm_verifier.select_candidate(
                 state_dict.get("raw_text", ""), candidates, allowed_chapters, gir_rules
             )
+            if selection.status == CandidateSelectionStatus.INSUFFICIENT_INFORMATION and candidates:
+                return self._pause_for_candidate_disambiguation(
+                    session_id,
+                    state_dict.get("raw_text", ""),
+                    state_dict.get("image_uri"),
+                    features,
+                    allowed_chapters,
+                    gir_rules,
+                    candidates,
+                    selection,
+                )
             if selection.status != CandidateSelectionStatus.SELECT or not selection.selected_candidate_id:
                 return GTIPDecision(
                     session_id=session_id,
