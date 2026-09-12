@@ -413,7 +413,7 @@ def test_candidate_selection_insufficient_information_triggers_hitl(monkeypatch)
         lambda *args, **kwargs: type("Result", (), {"candidates": [c1, c2], "discriminator_question": None, "traversal_state": {}})()
     )
 
-    decision = workflow_engine.start_analysis("döşemesiz ahşap sandalye")
+    decision = workflow_engine.start_analysis("ahşap sandalye")
     assert decision.status == "WAITING_FOR_USER", "Eksik teknik bilgide kullanıcıya soru sorulmalıdır!"
     assert decision.hitl_question is not None
     assert decision.hitl_question.question_text == "Sandalye çocuklar için mi yoksa genel kullanım için mi tasarlanmıştır?"
@@ -425,8 +425,7 @@ def test_candidate_selection_insufficient_information_triggers_hitl(monkeypatch)
         selected_option_id="C1",
         question_id=decision.hitl_question.question_id
     )
-    assert resumed.status in ("COMPLETED", "WAITING_FOR_USER"), "Kullanıcı yanıtı geçerli bir sonraki adıma geçmelidir."
-    if resumed.status == "COMPLETED":
-        assert resumed.gtip_code == "940169000011"
+    assert resumed.status == "COMPLETED", "Kullanıcı yanıtından sonra analiz tamamlanmalıdır!"
+    assert resumed.gtip_code == "940169000011"
 
 
