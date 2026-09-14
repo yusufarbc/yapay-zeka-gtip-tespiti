@@ -1,32 +1,37 @@
-"""
-Modül 3: Hiyerarşik Hibrit RAG Engine (Hierarchical Hybrid Routing & RRF).
-Düz vektör araması yerine 4 aşamalı hiyerarşik karar boru hattı işletir:
-1. Adım 1 (Fasıl Seviyesi 2-Hane Routing): text-embedding-005 + HARD_RULES_MATRIX ile 97 fasıldan en uygun ilk 2-3 Faslı belirler.
-2. Adım 2 (Dışlama Notu Kontrolü - Exclusion Check): 'Bu fasıl şunları kapsamaz...' hükümlerini LLM ile denetler, dışlanan fasılları eler.
-3. Adım 3 (Hibrit Pozisyon & 12-Haneli GTİP Araması): pgvector Dense + BM25 Sparse hibrit tarama yapar, sonuçları RRF ile birleştirir.
-4. Adım 4 (Top-K Re-ranking & Emsal Sentezi): Emsal BTB (%70) ve TGTC (%30) ağırlıklarıyla aday listesini üretir.
+"""Closed-set traversal of the official 2026 TGTC catalog.
+
+The model never creates a tariff code. At each level it returns an opaque
+option id; this module resolves that id to a server-owned chapter, heading,
+subheading or 12-digit leaf. The workflow performs the final active-leaf check.
 """
 
-import datetime
+from __future__ import annotations
+
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
-from api.schemas.product import ProductFeatures, GTIPCandidate, PrecedentBTB, LegalSource
-from api.db.gcp_emulator import local_vector_store, get_text_embedding
-from api.db.tgtc_knowledge_base import (
-    TGTC_CHAPTERS, get_local_tgtc_headings, load_tgtc_rules_and_notes
-)
-from api.db.database import (
-    SessionLocal, hybrid_search_headings_and_gtip,
-    calculate_dynamic_candidate_score, search_chapter_notes_and_exclusions,
-    search_recent_customs_legislation,
-)
-from api.modules.discriminator_engine import DiscriminatorQuestion, discriminator_extractor
-from api.modules.llm_verifier import llm_verifier
-from api.config import settings
+from datetime import date
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-logger = logging.getLogger("HierarchicalRAGEngine")
+from sqlalchemy import or_
+
+from api.db.database import (
+    SessionLocal,
+    GumrukEmsalKararModel,
+    TariffHierarchyModel,
+    TgtcGtipModel,
+    _load_subheading_contexts,
+    validate_leaf_gtip,
+)
+from api.db.tgtc_knowledge_base import get_local_tgtc_headings, load_tgtc_chapters
+from api.modules.discriminator_engine import DiscriminatorQuestion
+from api.modules.llm_verifier import llm_verifier
+from api.schemas.predicate import CandidateSelection, CandidateSelectionStatus
+from api.schemas.product import GTIPCandidate, LegalSource, PrecedentBTB, ProductFeatures
+
+
+logger = logging.getLogger("ClosedSetTariffSelector")
 
 
 @dataclass
@@ -35,427 +40,407 @@ class HierarchicalSearchResult:
     discriminator_question: Optional[DiscriminatorQuestion] = None
     traversal_state: Dict[str, Any] = field(default_factory=dict)
 
-CONSULTED_SOURCE_LAYERS = [
-    "TGTC_2026",
-    "GIR_1_6",
-    "FASIL_NOTLARI",
-    "BTB_LAST_6_YEARS",
-    "SINIFLANDIRMA_KARARLARI_LAST_6_YEARS",
-    "GUMRUK_MEVZUATI_LAST_6_YEARS",
-]
 
-# Açık emtia adları için GYK 1 pozisyon metni önceliği. Bunlar serbest GTİP
-# üretmez; yalnızca aramayı doğru 4-haneli resmi pozisyona sabitler. Daha dar
-# 6/12-hane ayrımı yine teknik özellik/HITL ile yapılır.
-_EXACT_HEADING_TERMS = (
-    ("buğday unu", "1101"),
-    ("wheat flour", "1101"),
-    ("mısır unu", "1102"),
-    ("corn flour", "1102"),
-    ("buğday", "1001"),
-    ("mahlut", "1001"),
-    ("çavdar", "1002"),
-    ("arpa", "1003"),
-    ("yulaf", "1004"),
-    ("mısır", "1005"),
-    ("pirinç", "1006"),
-    ("sandalye", "9401"),
-)
+def _digits(value: Any) -> str:
+    return re.sub(r"\D", "", str(value or ""))
 
 
-def _six_year_cutoff(today: Optional[datetime.date] = None) -> datetime.date:
-    today = today or datetime.date.today()
-    try:
-        return today.replace(year=today.year - 6)
-    except ValueError:
-        return today.replace(year=today.year - 6, day=28)
+def _description(node: Dict[str, Any]) -> str:
+    return str(node.get("branch_context") or node.get("description") or "").strip()
 
 
-def _decision_source(item: Dict[str, Any]) -> LegalSource:
-    source_type = str(item.get("source_type") or "BTB").upper()
-    description = str(item.get("product_description") or source_type).strip()
-    reference_no = str(item.get("btb_no") or "").strip()
-    return LegalSource(
-        source_type=source_type,
-        reference_no=reference_no,
-        title=f"{source_type} {reference_no}: {description}" if reference_no else description,
-        publication_date=str(item.get("issue_date") or ""),
-        excerpt=(
-            f"Ürün tanımı: {description}\n"
-            f"Hukuki gerekçe: {str(item.get('legal_justification') or '').strip()}"
-        )[:2400],
-        source_url=item.get("source_url"),
-        legal_role=(
-            "INDIVIDUAL_PRECEDENT" if source_type == "BTB" else "INTERPRETIVE"
-        ),
-        authority_level=3 if source_type == "BTB" else 4,
-        is_binding=False,
-    )
+def _normalize_product_text(value: Any) -> str:
+    text = str(value or "").replace("ı", "i").replace("İ", "I")
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(char for char in text if not unicodedata.combining(char)).lower()
+    return " ".join(re.findall(r"[a-z0-9]+", text))
 
 
-def _format_current_gtip(value: Any) -> str:
-    digits = re.sub(r"[^0-9]", "", str(value or ""))
-    if len(digits) == 12:
-        return f"{digits[:4]}.{digits[4:6]}.{digits[6:8]}.{digits[8:10]}.{digits[10:12]}"
-    return str(value or "")
+def _formatted_code(value: Any) -> str:
+    code = _digits(value)
+    if len(code) == 12:
+        return f"{code[:4]}.{code[4:6]}.{code[6:8]}.{code[8:10]}.{code[10:12]}"
+    return code
+
 
 class RAGEngine:
-    """
-    Hiyerarşik Hibrit Arama ve Reciprocal Rank Fusion (RRF) Motoru.
-    """
+    """Thin catalog adapter retained under the old name for API compatibility."""
 
     @staticmethod
-    def _apply_explicit_heading_gate(query_text: str, headings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Açık ürün adı, farklı bir un/işlenmiş ürün heading'ine kaymasın."""
-        normalized = " ".join(str(query_text or "").lower().split())
-        target_code = next((code for term, code in _EXACT_HEADING_TERMS if term in normalized), None)
-        if not target_code:
-            return headings
+    def _product_text(features: ProductFeatures) -> str:
+        parts = [
+            features.product_name,
+            features.commercial_name,
+            features.primary_material,
+            features.function,
+            features.intended_use,
+            features.accessories_or_packaging,
+            " ".join(
+                f"{key}: {value}"
+                for key, value in (features.technical_specifications or {}).items()
+            ),
+        ]
+        return "\n".join(str(part).strip() for part in parts if part and str(part).strip())
 
-        from api.db.tgtc_knowledge_base import get_local_tgtc_headings
-        target = next(
-            (item for item in headings if re.sub(r"\D", "", str(item.get("gtip_code") or item.get("heading") or "")) == target_code),
-            None,
-        )
-        if target is None:
-            target = {
-                "gtip_code": target_code,
-                "heading": target_code,
-                "chapter": target_code[:2],
-                "description": get_local_tgtc_headings().get(target_code, f"TGTC Pozisyon {target_code}"),
-                "similarity_score": 0.99,
+    @staticmethod
+    def search_btb_precedents(product_text: str, top_k: int = 5) -> List[PrecedentBTB]:
+        """Search real BTB rows without mixing tariff-catalog pseudo records."""
+        normalized_query = _normalize_product_text(product_text)
+        raw_terms = [
+            term
+            for term in re.findall(r"[0-9A-Za-zÇĞİÖŞÜçğıöşü]+", str(product_text or ""))
+            if len(term) >= 3
+        ]
+        if not normalized_query or not raw_terms:
+            return []
+
+        try:
+            with SessionLocal() as session:
+                clauses = [
+                    GumrukEmsalKararModel.esya_tanimi.ilike(f"%{term}%")
+                    for term in sorted(set(raw_terms), key=len, reverse=True)[:6]
+                ]
+                rows = session.query(
+                    GumrukEmsalKararModel.referans_no,
+                    GumrukEmsalKararModel.gtip_kodu,
+                    GumrukEmsalKararModel.yayin_tarihi,
+                    GumrukEmsalKararModel.esya_tanimi,
+                    GumrukEmsalKararModel.hukuki_gerekce,
+                    GumrukEmsalKararModel.kaynak_url,
+                    GumrukEmsalKararModel.valid_until,
+                ).filter(
+                    GumrukEmsalKararModel.karar_tipi == "BTB",
+                    or_(*clauses),
+                ).order_by(GumrukEmsalKararModel.yayin_tarihi.desc()).limit(200).all()
+        except Exception as exc:
+            logger.warning("BTB precedent search could not be completed: %s", exc)
+            return []
+
+        query_tokens = set(normalized_query.split())
+        today = date.today().isoformat()
+        matches: List[PrecedentBTB] = []
+        seen = set()
+        for ref_no, gtip, issue_date, description, legal, source_url, valid_until in rows:
+            code = _digits(gtip)
+            desc_normalized = _normalize_product_text(description)
+            if len(code) != 12 or not desc_normalized:
+                continue
+            if valid_until and str(valid_until) != "9999-12-31" and str(valid_until) < today:
+                continue
+            key = (str(ref_no or ""), code)
+            if key in seen:
+                continue
+            seen.add(key)
+            description_tokens = set(desc_normalized.split())
+            overlap = len(query_tokens & description_tokens)
+            coverage = overlap / max(1, len(query_tokens))
+            precision = overlap / max(1, len(description_tokens))
+            if normalized_query == desc_normalized:
+                score = 1.0
+            elif normalized_query in desc_normalized or desc_normalized in normalized_query:
+                score = 0.96
+            else:
+                score = 0.7 * coverage + 0.3 * precision
+            if score < 0.30:
+                continue
+            matches.append(PrecedentBTB(
+                btb_no=str(ref_no or "EMSAL-BTB"),
+                gtip_code=_formatted_code(code),
+                issue_date=str(issue_date or ""),
+                product_description=str(description or ""),
+                legal_justification=str(legal or ""),
+                similarity_score=round(min(1.0, score), 4),
+                source_type="BTB",
+                source_url=str(source_url) if source_url else None,
+            ))
+        return sorted(matches, key=lambda item: item.similarity_score, reverse=True)[:top_k]
+
+    @classmethod
+    def exact_btb_candidate(cls, precedents: Sequence[PrecedentBTB]) -> Optional[GTIPCandidate]:
+        """Accept an exact BTB match only when all exact records agree on one active leaf."""
+        exact = [item for item in precedents if item.similarity_score >= 0.999]
+        exact_codes = {_digits(item.gtip_code) for item in exact}
+        if len(exact_codes) != 1:
+            return None
+        code = next(iter(exact_codes))
+        try:
+            with SessionLocal() as session:
+                valid, record = validate_leaf_gtip(session, code)
+        except Exception as exc:
+            logger.warning("Exact BTB leaf validation failed: %s", exc)
+            return None
+        if not valid or not record:
+            return None
+
+        candidate = cls._candidate({
+            "gtip_code": code,
+            "description": str(record.get("description") or exact[0].product_description),
+        })
+        candidate.score = 0.99
+        candidate.precedents = [item for item in exact if _digits(item.gtip_code) == code][:3]
+        candidate.consulted_sources = ["BTB", "TGTC_2026", "GIR_1_6"]
+        candidate.legal_sources.extend([
+            LegalSource(
+                source_type="BTB",
+                reference_no=item.btb_no,
+                title=f"Emsal BTB {item.btb_no}",
+                publication_date=item.issue_date or None,
+                excerpt=item.product_description,
+                source_url=item.source_url,
+                legal_role="INDIVIDUAL_PRECEDENT",
+                authority_level=3,
+                is_binding=False,
+            )
+            for item in candidate.precedents
+        ])
+        return candidate
+
+    @staticmethod
+    def _chapter_nodes() -> List[Dict[str, Any]]:
+        headings = get_local_tgtc_headings()
+        chapter_labels = load_tgtc_chapters()
+        grouped: Dict[str, List[Tuple[str, str]]] = {}
+        for code, value in headings.items():
+            clean_code = _digits(code)
+            grouped.setdefault(clean_code[:2], []).append((clean_code, str(value).strip()))
+
+        nodes: List[Dict[str, Any]] = []
+        for chapter in sorted(chapter_labels):
+            # The catalog has no separate chapter-title rows. This compact
+            # synopsis gives the model the real scope without product rules.
+            scope = "; ".join(
+                f"{code}: {value[:55]}"
+                for code, value in grouped.get(chapter, [])
+            )[:900]
+            nodes.append({
+                "gtip_code": chapter,
+                "description": f"{chapter_labels[chapter]}. Pozisyon kapsamı: {scope}",
+                "level": "CHAPTER",
+            })
+        return nodes
+
+    @staticmethod
+    def _heading_nodes(chapter: str) -> List[Dict[str, Any]]:
+        clean_chapter = _digits(chapter).zfill(2)
+        return [
+            {
+                "gtip_code": _digits(code),
+                "description": description,
                 "level": "HEADING",
             }
-        else:
-            target = dict(target)
-            target["similarity_score"] = max(float(target.get("similarity_score") or 0.0), 0.99)
-
-        # Açık ürün adında başka bir heading ile GYK 3 sıralaması yapılmaz;
-        # örneğin "buğday" 1001 iken "diğer hububat" 1008'e kaydırılamaz.
-        # Sonraki 6/12-hane ayrımı aynı heading altında devam eder.
-        return [target]
-
-    def detect_candidate_chapters(
-        self,
-        query_text: str,
-        query_vector: Optional[List[float]],
-        allowed_chapters: Optional[List[str]] = None,
-        is_hard_locked: bool = False
-    ) -> List[str]:
-        """
-        Adım 1: Kullanıcı girdisinden en yüksek olasılıklı 2-3 Faslı (Chapter) tespit eder.
-        """
-        # Katı Fasıl Kilidi varsa (Örn: Ayakkabı -> Fasıl 64), dışına ASLA çıkılmaz
-        if is_hard_locked and allowed_chapters:
-            return [str(c).zfill(2) for c in allowed_chapters]
-
-        if allowed_chapters:
-            return [str(c).zfill(2) for c in allowed_chapters]
-
-        detected_chaps = []
-
-        # Vektör ve anahtar kelime eşleşmesi ile 97 fasıl taranır
-        query_lower = query_text.lower()
-        headings_map = get_local_tgtc_headings()
-        chap_scores: Dict[str, float] = {}
-
-        for code, desc in headings_map.items():
-            chap = str(code)[:2].zfill(2)
-            desc_lower = desc.lower()
-            overlap = sum(1 for token in query_lower.split() if len(token) > 2 and token in desc_lower)
-            if overlap > 0:
-                chap_scores[chap] = chap_scores.get(chap, 0.0) + overlap * 1.5
-
-        if chap_scores:
-            sorted_by_kw = sorted(chap_scores.items(), key=lambda x: x[1], reverse=True)
-            for chap, _ in sorted_by_kw[:3]:
-                if chap not in detected_chaps:
-                    detected_chaps.append(chap)
-
-        # Fallback genel fasıllar
-        if not detected_chaps:
-            detected_chaps = ["84", "85", "39"]
-
-        return detected_chaps[:3]
-
-    def filter_excluded_chapters(
-        self,
-        query_text: str,
-        candidate_chapters: List[str]
-    ) -> List[str]:
-        """
-        Adım 2: Aday fasılların resmi dışlama notlarını inceleyerek ürünün dışlanıp dışlanmadığını kontrol eder.
-        """
-        retained_chapters = []
-        session = SessionLocal()
-        try:
-            exclusions_map = search_chapter_notes_and_exclusions(session, candidate_chapters)
-            for chap in candidate_chapters:
-                chap_data = exclusions_map.get(chap, {})
-                exclusions = chap_data.get("exclusions", [])
-                
-                if exclusions:
-                    check = llm_verifier.verify_chapter_exclusions(query_text, chap, exclusions)
-                    if check.is_excluded:
-                        logger.info(f"[Exclusion Check] Fasıl {chap} dışlandı: {check.violated_exclusion_note}")
-                        if check.recommended_alternative_chapter:
-                            alt_chap = str(check.recommended_alternative_chapter).zfill(2)
-                            if alt_chap not in retained_chapters:
-                                retained_chapters.append(alt_chap)
-                        continue
-                retained_chapters.append(chap)
-        except Exception as e:
-            logger.warning(f"[Exclusion Filter Error] {e}")
-            retained_chapters = candidate_chapters
-        finally:
-            session.close()
-
-        return retained_chapters or candidate_chapters
-
-    def search_candidates_hierarchical(
-        self,
-        session_id: str,
-        features: ProductFeatures,
-        allowed_chapters: Optional[List[str]] = None,
-        applied_gir_rules: Optional[List[str]] = None,
-        locked_heading: Optional[str] = None,
-        locked_subheading: Optional[str] = None,
-        locked_gtip: Optional[str] = None,
-        query_vector: Optional[List[float]] = None,
-    ) -> HierarchicalSearchResult:
-        """4→6→12 ağacını sırayla dolaşır ve belirsizlikte yaprak aramadan durur."""
-        query_text = f"{features.product_name} {features.primary_material} {features.intended_use}"
-        # HITL devam isteklerinde ilk turda hesaplanan embedding'i yeniden kullan.
-        # Böylece her ayırt edici cevapta Vertex AI ve fasıl dışlama LLM çağrıları
-        # tekrarlanmaz; seçilmiş tarife dalı zaten hukuken kilitlidir.
-        if query_vector is None:
-            query_vector = get_text_embedding(query_text)
-        is_hard_locked = any("[HARD LOCK]" in rule for rule in (applied_gir_rules or []))
-        if locked_heading:
-            chapters = list(allowed_chapters or [str(locked_heading)[:2]])
-        else:
-            chapters = self.detect_candidate_chapters(
-                query_text, query_vector, allowed_chapters, is_hard_locked
-            )
-            chapters = self.filter_excluded_chapters(query_text, chapters)
-        if is_hard_locked and allowed_chapters:
-            chapters = [value for value in chapters if value in allowed_chapters] or list(allowed_chapters)
-
-        traversal: Dict[str, Any] = {
-            "retained_chapters": chapters,
-            "query_vector": query_vector,
-        }
-        with SessionLocal() as session:
-            if not locked_heading:
-                headings = hybrid_search_headings_and_gtip(
-                    session=session, query_text=query_text, query_vector=query_vector,
-                    allowed_chapters=chapters, search_level="HEADING", top_k=5,
-                    rrf_k=settings.RRF_K,
-                )
-                headings = self._apply_explicit_heading_gate(query_text, headings)
-                if headings:
-                    from api.modules.rule_engine import rule_engine
-                    resolved_head, gyk3_rules = rule_engine.resolve_gyk3_conflict(headings, features)
-                    if resolved_head:
-                        headings = [resolved_head] + [
-                            h for h in headings
-                            if str(h.get("heading") or h.get("gtip_code", "")[:4]).replace(".", "") != str(resolved_head.get("heading") or resolved_head.get("gtip_code", "")[:4]).replace(".", "")
-                        ]
-                        if applied_gir_rules is not None:
-                            applied_gir_rules.extend(gyk3_rules)
-
-                question = discriminator_extractor.extract(session_id, headings)
-                if question:
-                    traversal["pending_level"] = "HEADING"
-                    traversal["branches"] = headings[:2]
-                    return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
-                if not headings:
-                    return HierarchicalSearchResult(traversal_state=traversal)
-                locked_heading = str(headings[0]["gtip_code"])
-            traversal["locked_heading"] = locked_heading
-
-            if not locked_subheading:
-                subheadings = hybrid_search_headings_and_gtip(
-                    session=session, query_text=query_text, query_vector=query_vector,
-                    allowed_chapters=chapters, search_level="SUBHEADING",
-                    parent_codes=[locked_heading], top_k=5, rrf_k=settings.RRF_K,
-                )
-                if locked_heading == "8542" and subheadings:
-                    pmic_terms = ("pmic", "power", "güç", "guc", "kontrol", "dönüştürücü", "donusturucu", "converter", "işlemci", "islemci")
-                    if any(term in query_text.lower() for term in pmic_terms):
-                        target_31 = next((s for s in subheadings if str(s.get("gtip_code", "")).startswith("854231")), None)
-                        if target_31:
-                            subheadings = [target_31] + [s for s in subheadings if s != target_31]
-
-                question = discriminator_extractor.extract(session_id, subheadings)
-                if question:
-                    traversal["pending_level"] = "SUBHEADING"
-                    traversal["branches"] = subheadings[:2]
-                    return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
-                if not subheadings:
-                    return HierarchicalSearchResult(traversal_state=traversal)
-                locked_subheading = str(subheadings[0]["gtip_code"])
-            traversal["locked_subheading"] = locked_subheading
-
-            if not locked_gtip:
-                leaves = hybrid_search_headings_and_gtip(
-                    session=session, query_text=query_text, query_vector=query_vector,
-                    allowed_chapters=chapters, search_level="GTIP",
-                    parent_codes=[locked_subheading], top_k=8, rrf_k=settings.RRF_K,
-                )
-                question = discriminator_extractor.extract(session_id, leaves)
-                if question:
-                    traversal["pending_level"] = "GTIP"
-                    traversal["branches"] = leaves[:2]
-                    return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
-                if not leaves:
-                    return HierarchicalSearchResult(traversal_state=traversal)
-                if len(leaves) == 1:
-                    locked_gtip = str(leaves[0]["gtip_code"])
-                    traversal["locked_gtip"] = locked_gtip
-
-        candidates = self.search_candidates(
-            features,
-            chapters,
-            applied_gir_rules,
-            # Son GTİP yaprağı yalnızca traversal için bir öneridir. Retrieval'ı o
-            # tek yaprağa yeniden kilitlemek, veri/format farklarında aday kümesini
-            # boşaltıyordu. GYK 6 karşılaştırması için aynı 6-haneli sibling dalı
-            # kapalı aday kümesi olarak korunur.
-            locked_parent_code=locked_subheading or locked_heading,
-            skip_chapter_filter=True,
-            query_vector=query_vector,
-        )
-        return HierarchicalSearchResult(candidates=candidates, traversal_state=traversal)
-
-    def search_candidates(
-        self, 
-        features: ProductFeatures, 
-        allowed_chapters: List[str] = None,
-        applied_gir_rules: List[str] = None,
-        locked_parent_code: Optional[str] = None,
-        skip_chapter_filter: bool = False,
-        query_vector: Optional[List[float]] = None,
-    ) -> List[GTIPCandidate]:
-        """
-        4 Aşamalı Hiyerarşik Hibrit RAG Arama Akışı.
-        """
-        query_text = f"{features.product_name} {features.primary_material} {features.intended_use}"
-        is_hard_locked = any("[HARD LOCK]" in r for r in (applied_gir_rules or []))
-        
-        # 1. Query Vektörleştirme (text-embedding-005)
-        if query_vector is None:
-            query_vector = get_text_embedding(query_text)
-
-        # 2. ADIM 1: Fasıl Seviyesi 2-Hane Routing
-        candidate_chapters = self.detect_candidate_chapters(
-            query_text=query_text,
-            query_vector=query_vector,
-            allowed_chapters=allowed_chapters,
-            is_hard_locked=is_hard_locked
-        )
-
-        # 3. ADIM 2: Fasıl Dışlama Notları Kontrolü (Exclusion Check)
-        retained_chapters = candidate_chapters if skip_chapter_filter else self.filter_excluded_chapters(
-            query_text=query_text, candidate_chapters=candidate_chapters
-        )
-        if is_hard_locked and allowed_chapters:
-            # Katı kilit varsa dışlama sonrası bile orijinal izinli fasıldan ayrılma
-            retained_chapters = [c for c in retained_chapters if c in allowed_chapters] or allowed_chapters
-
-        # 4. ADIM 3: Hibrit Pozisyon ve GTİP Arama (pgvector Dense + BM25 Sparse + RRF)
-        session = SessionLocal()
-        hybrid_results = []
-        legislation_results = []
-        cutoff = _six_year_cutoff()
-        try:
-            search_kwargs: Dict[str, Any] = {}
-            if locked_parent_code:
-                search_kwargs = {"search_level": "GTIP", "parent_codes": [locked_parent_code]}
-            hybrid_results = hybrid_search_headings_and_gtip(
-                session=session,
-                query_text=query_text,
-                query_vector=query_vector,
-                allowed_chapters=retained_chapters,
-                top_k=8,
-                rrf_k=settings.RRF_K,
-                **search_kwargs,
-            )
-            legislation_results = search_recent_customs_legislation(
-                session=session,
-                query_text=query_text,
-                min_date=cutoff.isoformat(),
-                top_k=5,
-            )
-        except Exception as ex_hybrid:
-            logger.warning(f"[Hybrid DB Search Warning] {ex_hybrid}")
-        finally:
-            session.close()
-
-        # Son altı yıldaki BTB ve sınıflandırma kararlarını AYRI katmanlar olarak tara.
-        btb_results = local_vector_store.search_btb(
-            query_text=query_text,
-            allowed_chapters=retained_chapters,
-            top_k=5,
-            source_types=["BTB"],
-            min_issue_date=cutoff,
-        )
-        classification_results = local_vector_store.search_btb(
-            query_text=query_text,
-            allowed_chapters=retained_chapters,
-            top_k=5,
-            source_types=["SINIFLANDIRMA_KARARI", "SINIFLANDIRMA", "CLASSIFICATION_DECISION"],
-            min_issue_date=cutoff,
-        )
-
-        # 5. ADIM 4: Top-K Sentez ve Re-Ranking
-        rules_db = load_tgtc_rules_and_notes()
-        chapter_notes = rules_db.get("fasil_notlari", {})
-        candidates = []
-        full_gtip_results = [
-            item for item in hybrid_results
-            if len(re.sub(r"[^0-9]", "", str(item.get("gtip_code") or ""))) == 12
+            for code, description in sorted(get_local_tgtc_headings().items())
+            if _digits(code).startswith(clean_chapter) and len(_digits(code)) == 4
         ]
-        # Nihai sınıflandırma yalnızca yürürlükteki 12 haneli TGTC yapraklarından
-        # yapılır. Başlık seviyesindeki kayıtlar bağlamdır, nihai aday değildir.
-        hybrid_results = full_gtip_results
-        # Adaylar yalnızca yürürlükteki 2026 TGTC ağacından doğar. Eski kararlar
-        # aday kod üretemez; sadece mevcut tarife kodunu destekler veya çelişkiyi görünür kılar.
-        for hr in hybrid_results:
-            raw_gtip = hr.get("gtip_code")
-            if not raw_gtip:
-                continue
-            gtip = _format_current_gtip(raw_gtip)
-            heading = str(hr.get("heading") or re.sub(r"[^0-9]", "", str(raw_gtip))[:4])
-            sim = float(hr.get("similarity_score", 0.75))
-            res_chap = str(hr.get("chapter", re.sub(r"[^0-9]", "", str(raw_gtip))[:2])).zfill(2)
-            chap_note = chapter_notes.get(res_chap, "")
 
-            matching_btbs = [b for b in btb_results if str(b.get("heading") or "") == heading]
-            matching_classifications = [
-                c for c in classification_results if str(c.get("heading") or "") == heading
-            ]
-            precedents = [
-                PrecedentBTB(
-                    btb_no=str(item.get("btb_no") or "EMSAL-BTB"),
-                    gtip_code=str(item.get("gtip_code") or ""),
-                    issue_date=str(item.get("issue_date") or ""),
-                    product_description=str(item.get("product_description") or ""),
-                    legal_justification=str(item.get("legal_justification") or ""),
-                    similarity_score=float(item.get("similarity_score") or 0.0),
-                    source_type="BTB",
-                    source_url=item.get("source_url"),
+    @staticmethod
+    def _leaf_nodes(parent_code: str) -> List[Dict[str, Any]]:
+        """Load active official leaves under one already selected parent."""
+        parent = _digits(parent_code)
+        if len(parent) not in {4, 6}:
+            return []
+
+        records: Dict[str, Dict[str, Any]] = {}
+        try:
+            with SessionLocal() as session:
+                rows = session.query(TgtcGtipModel).filter(
+                    TgtcGtipModel.level == "GTIP",
+                    TgtcGtipModel.is_active == True,
+                    TgtcGtipModel.gtip_code.like(f"{parent}%"),
+                ).order_by(TgtcGtipModel.gtip_code).all()
+                for row in rows:
+                    code = _digits(row.gtip_code)
+                    if len(code) == 12 and code.startswith(parent):
+                        records[code] = {
+                            "gtip_code": code,
+                            "description": str(row.description or ""),
+                            "level": "GTIP",
+                        }
+
+                # Older/local installations may only have the normalized table.
+                hierarchy_rows = session.query(TariffHierarchyModel).filter(
+                    TariffHierarchyModel.is_leaf == True,
+                    TariffHierarchyModel.gtip_code.like(f"{parent}%"),
+                ).order_by(TariffHierarchyModel.gtip_code).all()
+                for row in hierarchy_rows:
+                    code = _digits(row.gtip_code)
+                    if len(code) == 12 and code.startswith(parent):
+                        records.setdefault(code, {
+                            "gtip_code": code,
+                            "description": str(row.description_tr or ""),
+                            "level": "GTIP",
+                        })
+        except Exception as exc:
+            logger.exception("Official leaf catalog could not be read: %s", exc)
+            return []
+        return list(records.values())
+
+    @classmethod
+    def _subheading_nodes(cls, heading: str) -> List[Dict[str, Any]]:
+        """Load official six-digit rows; derive them from leaves only as fallback."""
+        clean_heading = _digits(heading)
+        records: Dict[str, Dict[str, Any]] = {}
+        try:
+            with SessionLocal() as session:
+                rows = session.query(TgtcGtipModel).filter(
+                    TgtcGtipModel.level == "SUBHEADING",
+                    TgtcGtipModel.is_active == True,
+                    TgtcGtipModel.gtip_code.like(f"{clean_heading}%"),
+                ).order_by(TgtcGtipModel.gtip_code).all()
+                for row in rows:
+                    code = _digits(row.gtip_code)
+                    if len(code) == 6:
+                        records[code] = {
+                            "gtip_code": code,
+                            "description": str(row.description or ""),
+                            "level": "SUBHEADING",
+                        }
+                hierarchy_rows = session.query(TariffHierarchyModel).filter(
+                    TariffHierarchyModel.level == 6,
+                    TariffHierarchyModel.gtip_code.like(f"{clean_heading}%"),
+                ).order_by(TariffHierarchyModel.gtip_code).all()
+                for row in hierarchy_rows:
+                    code = _digits(row.gtip_code)
+                    if len(code) == 6:
+                        records.setdefault(code, {
+                            "gtip_code": code,
+                            "description": str(row.description_tr or ""),
+                            "level": "SUBHEADING",
+                        })
+        except Exception as exc:
+            logger.warning("Official subheading catalog could not be read: %s", exc)
+
+        # Some source imports contain only a subset of the explicit six-digit
+        # rows. The active twelve-digit leaves are authoritative for catalog
+        # coverage, so always fill every missing six-digit parent from them.
+        grouped: Dict[str, List[str]] = {}
+        for leaf in cls._leaf_nodes(clean_heading):
+            code = _digits(leaf["gtip_code"])[:6]
+            description = _description(leaf)
+            if description and description not in grouped.setdefault(code, []):
+                grouped[code].append(description)
+
+        for code, descriptions in grouped.items():
+            records.setdefault(code, {
+                "gtip_code": code,
+                "description": f"{code} alt pozisyonu — " + "; ".join(descriptions[:12]),
+                "level": "SUBHEADING",
+            })
+
+        contexts = _load_subheading_contexts()
+        for code, node in records.items():
+            context = contexts.get(code, {})
+            if context.get("description"):
+                node["branch_context"] = str(context["description"])
+        return [records[code] for code in sorted(records)]
+
+    @staticmethod
+    def _question(
+        session_id: str,
+        level: str,
+        nodes: Sequence[Dict[str, Any]],
+        selection: CandidateSelection,
+    ) -> Optional[DiscriminatorQuestion]:
+        option_map = {f"N{index + 1}": node for index, node in enumerate(nodes)}
+        model_alternatives = [
+            option_map[option_id]
+            for option_id in selection.alternative_candidate_ids
+            if option_id in option_map
+        ][:4]
+        # For a small sibling set, the server—not the model—guarantees full
+        # branch coverage in the user question. Larger sets stay model-bounded.
+        alternatives = list(nodes) if 2 <= len(nodes) <= 4 else model_alternatives
+        if len(alternatives) < 2:
+            return None
+        options = [
+            f"{_digits(node.get('gtip_code'))} — {_description(node)[:420]}"
+            for node in alternatives
+        ]
+        options.append("Bilinmiyor")
+        target_branches = {
+            str(index): _digits(node.get("gtip_code"))
+            for index, node in enumerate(alternatives)
+        }
+        target_branches[str(len(alternatives))] = ""
+        return DiscriminatorQuestion(
+            session_id=session_id,
+            parameter_name=f"tariff_{level.lower()}_criterion",
+            question_text=(
+                "Ürünün aşağıdaki teknik tanımlardan hangisine uyduğunu belirtiniz."
+                if len(alternatives) > len(model_alternatives)
+                else selection.question_text
+                or "Ürün aşağıdaki resmî tarife tanımlarından hangisini karşılıyor?"
+            ),
+            options=options,
+            target_branches=target_branches,
+        )
+
+    @classmethod
+    def _select_node(
+        cls,
+        session_id: str,
+        product_text: str,
+        level: str,
+        nodes: List[Dict[str, Any]],
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[DiscriminatorQuestion]]:
+        if not nodes:
+            return None, None
+        if len(nodes) == 1:
+            return nodes[0], None
+
+        selection = llm_verifier.select_tariff_node(product_text, level, nodes)
+        if selection.status == CandidateSelectionStatus.SELECT:
+            match = re.fullmatch(r"N([1-9][0-9]*)", selection.selected_candidate_id or "")
+            index = int(match.group(1)) - 1 if match else -1
+            if 0 <= index < len(nodes):
+                logger.info(
+                    "Closed-set selection level=%s option=%s code=%s choices=%s",
+                    level,
+                    selection.selected_candidate_id,
+                    _digits(nodes[index].get("gtip_code")),
+                    len(nodes),
                 )
-                for item in matching_btbs[:3]
+                return nodes[index], None
+            logger.error("Selector returned an option id outside the server-owned set")
+            return None, None
+        if selection.status == CandidateSelectionStatus.INSUFFICIENT_INFORMATION:
+            logger.info(
+                "Closed-set selection needs information level=%s alternatives=%s choices=%s",
+                level,
+                selection.alternative_candidate_ids,
+                len(nodes),
+            )
+            return None, cls._question(session_id, level, nodes, selection)
+        if level == "GTIP":
+            residuals = [
+                node
+                for node in nodes
+                if "diğer" in str(node.get("description") or "").casefold()
+                or "diger" in str(node.get("description") or "").casefold()
             ]
+            if len(residuals) == 1:
+                logger.warning(
+                    "Closed-set GTIP selection fell back to the single official residual leaf code=%s",
+                    _digits(residuals[0].get("gtip_code")),
+                )
+                return residuals[0], None
+        return None, None
 
-            legal_sources = [
+    @staticmethod
+    def _candidate(node: Dict[str, Any]) -> GTIPCandidate:
+        code = _digits(node.get("gtip_code"))
+        description = _description(node)
+        return GTIPCandidate(
+            gtip_code=code,
+            description=description,
+            chapter=code[:2],
+            heading=code[:4],
+            score=0.90,
+            legal_sources=[
                 LegalSource(
                     source_type="TGTC_2026",
-                    reference_no=str(gtip),
-                    title=f"2026 TGTC Pozisyon {heading}",
-                    publication_date="2026-01-01",
-                    excerpt=str(hr.get("description") or ""),
+                    reference_no=code,
+                    title=f"2026 TGTC {code}",
+                    excerpt=description,
                     legal_role="NORMATIVE",
                     authority_level=1,
                     effective_from="2026-01-01",
@@ -463,99 +448,122 @@ class RAGEngine:
                 ),
                 LegalSource(
                     source_type="GIR",
-                    reference_no="GİR 1-6",
-                    title="Tarifenin Yorumu ile İlgili Genel Kurallar",
-                    publication_date="2026-01-01",
-                    excerpt="\n".join(str(rule) for rule in rules_db.get("yorum_kurallari", []))[:1600],
+                    reference_no="GIR_1_6",
+                    title="Genel Yorum Kuralları 1 ve 6",
+                    excerpt="Pozisyon metni ve aynı düzeydeki alt pozisyonlar karşılaştırıldı.",
                     legal_role="NORMATIVE",
                     authority_level=1,
                     effective_from="2026-01-01",
                     is_binding=True,
                 ),
-            ]
-            if chap_note:
-                legal_sources.append(LegalSource(
-                    source_type="FASIL_NOTU",
-                    reference_no=f"Fasıl {res_chap}",
-                    title=f"2026 TGTC Fasıl {res_chap} Notları",
-                    publication_date="2026-01-01",
-                    excerpt=str(chap_note)[:1600],
-                    legal_role="NORMATIVE",
-                    authority_level=1,
-                    effective_from="2026-01-01",
-                    is_binding=True,
-                ))
-            legal_sources.extend(_decision_source(item) for item in matching_btbs[:3])
-            legal_sources.extend(_decision_source(item) for item in matching_classifications[:3])
-            legal_sources.extend(
-                LegalSource(source_type="GUMRUK_MEVZUATI", legal_role="CONTEXT", **item)
-                for item in legislation_results
-            )
+            ],
+            consulted_sources=["TGTC_2026", "GIR_1_6"],
+        )
 
-            combined_score = calculate_dynamic_candidate_score(
-                tgtc_similarity=sim,
-            )
-
-            candidate = GTIPCandidate(
-                gtip_code=str(gtip),
-                description=str(hr.get("description") or ""),
-                chapter=res_chap,
-                heading=heading,
-                score=round(min(0.98, max(0.50, combined_score)), 3),
-                precedents=precedents,
-                legal_sources=legal_sources,
-                consulted_sources=CONSULTED_SOURCE_LAYERS.copy(),
-            )
-            candidates.append(candidate)
-
-        # 6. Cross-Encoder / Semantik Re-ranking ile Adayları Yeniden Sırala
-        candidates = self.semantic_rerank_candidates(query_text, candidates)
-        return candidates
-
-    def semantic_rerank_candidates(
+    def search_candidates_hierarchical(
         self,
-        query_text: str,
-        candidates: List[GTIPCandidate]
-    ) -> List[GTIPCandidate]:
-        """
-        Cross-Encoder / Semantik Re-ranking katmanı.
-        Kullanıcı teknik terimlerini ve malzeme özelliklerini aday pozisyon açıklamalarıyla
-        çapraz karşılaştırarak en doğru adayı ilk sıraya yerleştirir.
-        """
-        if not candidates or len(candidates) <= 1:
-            return candidates
+        session_id: str,
+        features: ProductFeatures,
+        allowed_chapters: Optional[List[str]] = None,
+        applied_gir_rules: Optional[List[str]] = None,
+        locked_chapter: Optional[str] = None,
+        locked_heading: Optional[str] = None,
+        locked_subheading: Optional[str] = None,
+        locked_gtip: Optional[str] = None,
+        query_vector: Optional[List[float]] = None,
+    ) -> HierarchicalSearchResult:
+        """Traverse chapter → heading → subheading → leaf with model choices."""
+        del applied_gir_rules  # Compatibility only; no product-routing rules remain.
+        product_text = self._product_text(features)
+        traversal: Dict[str, Any] = {"query_vector": query_vector}
 
-        q_tokens = [w for w in query_text.lower().split() if len(w) >= 3 and w not in ["ve", "ile", "için", "olan", "bir"]]
-        scored_candidates = []
+        if not locked_chapter and allowed_chapters:
+            locked_chapter = _digits(allowed_chapters[0]).zfill(2)
+        if not locked_chapter:
+            node, question = self._select_node(
+                session_id, product_text, "CHAPTER", self._chapter_nodes()
+            )
+            if question:
+                traversal.update({"pending_level": "CHAPTER", "branches": self._question_branches(question)})
+                return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
+            if not node:
+                return HierarchicalSearchResult(traversal_state=traversal)
+            locked_chapter = _digits(node["gtip_code"]).zfill(2)
+        traversal.update({"locked_chapter": locked_chapter, "retained_chapters": [locked_chapter]})
 
-        for cand in candidates:
-            cand_text = f"{cand.description} {cand.gtip_code}".lower()
-            
-            # 1. Pozisyon tanımıyla harfi harfine token örtüşmesi (Sparse Precision)
-            exact_matches = sum(2.5 for tok in q_tokens if tok in cand_text)
-            
-            # 2. Spesifik gümrük eşya tanım eşleşmeleri
-            if "pompa" in query_text.lower() and cand.gtip_code.startswith("8413"):
-                exact_matches += 6.0
-            if "deri" in query_text.lower() and "ayakkabı" in query_text.lower() and cand.gtip_code.startswith("6403"):
-                exact_matches += 6.0
-            if ("bebek" in query_text.lower() or "oyuncak" in query_text.lower()) and cand.gtip_code.startswith("9503"):
-                exact_matches += 6.0
-            if "diş fırça" in query_text.lower() and cand.gtip_code.startswith("8509"):
-                exact_matches += 6.0
-            if "pamuk" in query_text.lower() and "kumaş" in query_text.lower() and cand.gtip_code.startswith("52"):
-                exact_matches += 6.0
+        if not locked_heading:
+            node, question = self._select_node(
+                session_id, product_text, "HEADING", self._heading_nodes(locked_chapter)
+            )
+            if question:
+                traversal.update({"pending_level": "HEADING", "branches": self._question_branches(question)})
+                return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
+            if not node:
+                return HierarchicalSearchResult(traversal_state=traversal)
+            locked_heading = _digits(node["gtip_code"])
+        if len(_digits(locked_heading)) != 4 or not _digits(locked_heading).startswith(locked_chapter):
+            return HierarchicalSearchResult(traversal_state=traversal)
+        traversal["locked_heading"] = locked_heading
 
-            rerank_boost = min(0.35, exact_matches * 0.04)
-            adjusted_score = round(min(0.99, cand.score + rerank_boost), 3)
-            scored_candidates.append((adjusted_score, cand))
+        subheading_nodes = self._subheading_nodes(locked_heading)
+        if not locked_subheading:
+            node, question = self._select_node(
+                session_id, product_text, "SUBHEADING", subheading_nodes
+            )
+            if question:
+                traversal.update({"pending_level": "SUBHEADING", "branches": self._question_branches(question)})
+                return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
+            if not node:
+                return HierarchicalSearchResult(traversal_state=traversal)
+            locked_subheading = _digits(node["gtip_code"])
+        if len(_digits(locked_subheading)) != 6 or not _digits(locked_subheading).startswith(_digits(locked_heading)):
+            return HierarchicalSearchResult(traversal_state=traversal)
+        traversal["locked_subheading"] = locked_subheading
 
-        scored_candidates.sort(key=lambda x: x[0], reverse=True)
-        final_list = []
-        for adj_score, cand in scored_candidates:
-            cand.score = adj_score
-            final_list.append(cand)
+        leaves = self._leaf_nodes(locked_subheading)
+        selected_subheading = next(
+            (
+                node for node in subheading_nodes
+                if _digits(node.get("gtip_code")) == _digits(locked_subheading)
+            ),
+            {},
+        )
+        parent_context = _description(selected_subheading)
+        if parent_context:
+            leaves = [
+                {**leaf, "branch_context": f"{parent_context} > {_description(leaf)}"}
+                for leaf in leaves
+            ]
+        if not locked_gtip:
+            node, question = self._select_node(session_id, product_text, "GTIP", leaves)
+            if question:
+                traversal.update({"pending_level": "GTIP", "branches": self._question_branches(question)})
+                return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
+            if not node:
+                return HierarchicalSearchResult(traversal_state=traversal)
+            locked_gtip = _digits(node["gtip_code"])
+        locked_gtip = _digits(locked_gtip)
+        selected_leaf = next(
+            (node for node in leaves if _digits(node.get("gtip_code")) == locked_gtip),
+            None,
+        )
+        if not selected_leaf or len(locked_gtip) != 12:
+            return HierarchicalSearchResult(traversal_state=traversal)
+        traversal["locked_gtip"] = locked_gtip
+        return HierarchicalSearchResult(
+            candidates=[self._candidate(selected_leaf)],
+            traversal_state=traversal,
+        )
 
-        return final_list
+    @staticmethod
+    def _question_branches(question: DiscriminatorQuestion) -> List[Dict[str, Any]]:
+        return [
+            {
+                "gtip_code": question.target_branches[str(index)],
+                "description": label,
+            }
+            for index, label in enumerate(question.options[:-1])
+        ]
+
 
 rag_engine = RAGEngine()

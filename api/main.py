@@ -16,7 +16,7 @@ from api.schemas.audit import AuditLogEntry, AuditLogQueryResponse
 from api.graph.workflow import workflow_engine
 from api.exporter import pdf_exporter
 from api.db.audit_logger import audit_logger
-from api.db.gcp_emulator import local_state_store, local_vector_store
+from api.db.gcp_emulator import local_state_store
 from api.db.database import (
     init_orm_tables, get_db, TgtcGtipModel, TgtcRuleModel, TgtcNoteModel,
     GumrukEmsalKararModel, GumrukSiniflandirmaKarariModel, GumrukMevzuatMaddesiModel
@@ -253,54 +253,6 @@ async def generate_upload_url(
         raise HTTPException(status_code=503, detail="Yükleme bağlantısı şu anda oluşturulamıyor.")
 
 
-def append_continuous_learning_record(session_id: str, product_name: str, gtip_code: str):
-    """
-    Continuous Learning (Geri Beslemeli Öğrenen Sistem):
-    Kullanıcının/Müşavirin onayladığı yeni GTİP kararlarını kurumsal emsal veritabanına ekler.
-    Production: GCS'e JSON satırı olarak yazar (ephemeral disk yerine kalıcı depolama).
-    Geliştirme: Yerel dosyaya yazar.
-    """
-    new_entry = {
-        "btb_no": f"KURUMSAL-EMSAL-{session_id[:8].upper()}",
-        "gtip_code": gtip_code,
-        "chapter": gtip_code[:2],
-        "heading": gtip_code[:4],
-        "issue_date": time.strftime("%Y-%m-%d"),
-        "product_description": product_name,
-        "legal_justification": f"Gümrük Müşaviri tarafından onaylanan kurumsal emsal karar ({session_id[:8]})."
-    }
-    # 1. Production: GCS'e yaz
-    if not settings.USE_GCP_EMULATOR:
-        try:
-            from google.cloud import storage as gcs
-            client = gcs.Client(project=settings.GCP_PROJECT_ID)
-            bucket = client.bucket(settings.GCS_BUCKET_NAME)
-            blob_name = f"continuous_learning/{time.strftime('%Y/%m/%d')}/{session_id[:8]}.json"
-            blob = bucket.blob(blob_name)
-            blob.upload_from_string(json.dumps(new_entry, ensure_ascii=False), content_type="application/json")
-            logger.info(f"[Continuous Learning] GCS'e kaydedildi: gs://{settings.GCS_BUCKET_NAME}/{blob_name}")
-            return
-        except Exception as e:
-            logger.warning(f"[Continuous Learning] GCS yazma hatası: {e}, yerel dosyaya yazılıyor.")
-    # 2. Geliştirme / GCS fallback: yerel dosyaya yaz
-    try:
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        dataset_file = os.path.join(base_dir, "api", "data", "official_btb_database.json")
-        records = []
-        if os.path.exists(dataset_file):
-            with open(dataset_file, "r", encoding="utf-8") as f:
-                records = json.load(f)
-        records.append(new_entry)
-        os.makedirs(os.path.dirname(dataset_file), exist_ok=True)
-        with open(dataset_file, "w", encoding="utf-8") as f:
-            json.dump(records, f, ensure_ascii=False, indent=2)
-        # Vector store bellek önbelleğini geçersiz kıl: RAG bir sonraki sorguda yeni kaydı görecek
-        local_state_store.save_state("__btb_db_updated__", {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ")})
-        local_vector_store.invalidate_cache()
-        logger.info(f"[Continuous Learning] Yeni emsal kaydı BTB veritabanına eklendi: {gtip_code}")
-    except Exception as e:
-        logger.warning(f"Continuous Learning yerel kayıt uyarısı: {e}")
-
 @app.get("/health")
 @app.get("/api/v1/health")
 def health_check():
@@ -368,7 +320,6 @@ async def analyze_product(
                 execution_time_ms=round(execution_ms, 2)
             )
             background_tasks.add_task(audit_logger.log_decision, audit_entry)
-            background_tasks.add_task(append_continuous_learning_record, decision.session_id, clean_desc[:60], decision.gtip_code)
 
         return decision
     except HTTPException:
@@ -432,7 +383,6 @@ async def analyze_product_json(payload: AnalyzeJSONRequest, request: Request, ba
                 execution_time_ms=round(execution_ms, 2)
             )
             background_tasks.add_task(audit_logger.log_decision, audit_entry)
-            background_tasks.add_task(append_continuous_learning_record, decision.session_id, payload.product_description[:60], decision.gtip_code)
 
         return decision
     except HTTPException:
@@ -517,7 +467,6 @@ async def respond_hitl(response_data: HITLResponse, request: Request, background
                 execution_time_ms=round(execution_ms, 2)
             )
             background_tasks.add_task(audit_logger.log_decision, audit_entry)
-            background_tasks.add_task(append_continuous_learning_record, decision.session_id, "HITL Onaylı Ürün", decision.gtip_code)
 
         return decision
     except HTTPException:
