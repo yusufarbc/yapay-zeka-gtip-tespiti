@@ -55,16 +55,124 @@ def get_local_tgtc_headings() -> Dict[str, str]:
     _LOCAL_POS_CACHE = res
     return res
 
+OFFICIAL_CHAPTER_TITLES: Dict[str, str] = {
+    "01": "Canlı hayvanlar",
+    "02": "Etler ve yenilen sakatat",
+    "03": "Balıklar, kabuklu hayvanlar, yumuşakçalar ve diğer su omurgasızları",
+    "04": "Süt ürünleri, tabii bal, diğer hayvansal menşeli yenilen maddeler",
+    "05": "Tarifenin başka yerinde belirtilmeyen hayvansal menşeli ürünler",
+    "06": "Canlı ağaçlar ve diğer bitkiler, yumrular, kökler, kesme çiçekler",
+    "07": "Yenilen sebzeler ve bazı kök ve yumrular",
+    "08": "Yenilen meyveler ve yenilen sert kabuklu meyveler, turunçgiller",
+    "09": "Kahve, çay, paraguay çayı ve baharat",
+    "10": "Hububat",
+    "11": "Değirmencilik ürünleri, malt, nişasta, inülin, buğday gluteni",
+    "12": "Yağlı tohum ve meyveler, muhtelif tane, tohum ve meyveler, sanayi ve tıbbi bitkiler",
+    "13": "Lak, sakız, reçine ve diğer bitkisel özsu ve hülasalar",
+    "14": "Örülmeye elverişli bitkisel maddeler ve diğer bitkisel ürünler",
+    "15": "Hayvansal, bitkisel veya mikrobiyal katı ve sıvı yağlar ve bunların mumları",
+    "16": "Et, balık, kabuklu hayvanlar, yumuşakçalar veya diğer su omurgasızlarının müstahzarları",
+    "17": "Şeker ve şeker mamulleri",
+    "18": "Kakao ve kakao müstahzarları",
+    "19": "Hububat, un, nişasta veya süt müstahzarları, pastacılık ürünleri",
+    "20": "Sebzeler, meyveler ve bitkilerin diğer kısımlarından elde edilen müstahzarlar",
+    "21": "Muhtelif yenilen gıda müstahzarları",
+    "22": "Meşrubat, alkollü içkiler ve sirke",
+    "23": "Gıda sanayiinin kalıntı ve döküntüleri, hayvan yemleri",
+    "24": "Tütün ve tütün yerine geçen işlenmiş maddeler, nikotinli ürünler",
+    "25": "Tuz, kükürt, topraklar ve taşlar, alçılar, kireçler ve çimento",
+    "26": "Metal cevherleri, cüruf ve kül",
+    "27": "Mineral yakıtlar, mineral yağlar ve bunların damıtılmasından elde edilen ürünler, bitüminli maddeler",
+    "28": "Anorganik kimyasallar, kıymetli metal, radyoaktif element bileşikleri",
+    "29": "Organik kimyasal ürünler",
+    "30": "Eczacılık ürünleri",
+    "31": "Gübreler",
+    "32": "Debagatte ve boyacılıkta kullanılan hülasalar, tanenler, boyalar, pigmentler, vernikler, mürekkepler",
+    "33": "Uçucu yağlar ve rezinoidler, parfümeri, kozmetik veya tuvalet müstahzarları",
+    "34": "Sabunlar, yüzeyaktif maddeler, yıkama, yağlama ve temizleme müstahzarları, mumlar",
+    "35": "Albüminoid maddeler, modifiye nişastalar, tutkallar, enzimler",
+    "36": "Barut ve patlayıcı maddeler, pirotekni mamulleri, kibritler",
+    "37": "Fotoğrafçılıkta veya sinemacılıkta kullanılan mallar",
+    "38": "Muhtelif kimyasal maddeler",
+    "39": "Plastikler ve mamulleri",
+    "40": "Kauçuk ve kauçuktan eşya",
+    "41": "Ham postlar, deriler (kürkler hariç) ve köseleler",
+    "42": "Deri eşya, saraciye ve eyer takımları, seyahat eşyası, el çantaları",
+    "43": "Kürkler, taklit kürkler ve bunların mamulleri",
+    "44": "Ağaç ve ahşap eşya, odun kömürü",
+    "45": "Mantar ve mantardan eşya",
+    "46": "Hasırdan, sazdan veya örülmeye elverişli maddelerden mamuller, sepetçi eşyası",
+    "47": "Odun veya diğer lifli selülozik maddelerin hamurları, geri kazanılmış kağıt veya karton",
+    "48": "Kağıt ve karton, kağıt hamurundan, kağıttan veya kartondan eşya",
+    "49": "Basılı kitaplar, gazeteler, resimler ve baskı sanayiinin diğer mamulleri, planlar",
+    "50": "İpek",
+    "51": "Yün, ince veya kaba hayvan kılı, at kılından iplik ve dokunmuş mensucat",
+    "52": "Pamuk",
+    "53": "Diğer bitkisel dokumaya elverişli elyaflar, kağıt ipliği ve dokunmuş mensucat",
+    "54": "Sentetik ve suni filamentler, şeritler ve dokumaya elverişli benzeri maddeler",
+    "55": "Sentetik ve suni devamsız lifler",
+    "56": "Vatka, keçe ve dokunmamış mensucat, özel iplikler, sicim, kordon, ip ve halatlar",
+    "57": "Halılar ve diğer dokumaya elverişli maddelerden yer kaplamaları",
+    "58": "Özel dokunmuş mensucat, tufte edilmiş mensucat, dantela, duvar halıları, işlemeler",
+    "59": "Emdirilmiş, sıvanmış, kaplanmış mensucat, teknik amaçlı dokumaya elverişli eşya",
+    "60": "Örme veya tığ işi mensucat",
+    "61": "Örme veya tığ işi giyim eşyası ve aksesuarı",
+    "62": "Örülmemiş giyim eşyası ve aksesuarı",
+    "63": "Dokumaya elverişli maddelerden diğer hazır eşya, takımlar, kullanılmış giyim eşyası, paçavralar",
+    "64": "Ayakkabılar, getrler, tozluklar ve benzeri eşya, bunların aksamı",
+    "65": "Başlıklar ve aksamı",
+    "66": "Şemsiyeler, güneş şemsiyeleri, bastonlar, kamçılar ve bunların aksamı",
+    "67": "Hazırlanmış tüyler ve bunlardan eşya, yapma çiçekler, insan saçından eşya",
+    "68": "Taş, alçı, çimento, asbest, mika veya benzeri maddelerden eşya",
+    "69": "Seramik mamulleri",
+    "70": "Cam ve cam eşya",
+    "71": "Tabii veya kültür inciler, kıymetli taşlar, kıymetli metaller, taklit mücevherci eşyası, madeni paralar",
+    "72": "Demir ve çelik",
+    "73": "Demir veya çelikten eşya",
+    "74": "Bakır ve bakırdan eşya",
+    "75": "Nikel ve nikelden eşya",
+    "76": "Alüminyum ve alüminyumdan eşya",
+    "78": "Kurşun ve kurşundan eşya",
+    "79": "Çinko ve çinkodan eşya",
+    "80": "Kalay ve kalaydan eşya",
+    "81": "Diğer adi metaller, sermetler ve bunlardan eşya",
+    "82": "Adi metallerden aletler, bıçakçı eşyası ve sofra takımları, bunların aksam ve parçaları",
+    "83": "Adi metallerden çeşitli eşya",
+    "84": "Kazanlar, makineler, mekanik cihazlar ve aletler, bunların aksam ve parçaları",
+    "85": "Elektrikli makine ve cihazlar, ses ve görüntü kaydetme/çoğaltma cihazları, bunların aksam ve parçaları",
+    "86": "Demiryolu lokomotifleri, vagonlar, hat sabit tesisatları, trafik sinyalizasyon cihazları",
+    "87": "Motorlu kara taşıtları, traktörler, bisikletler ve diğer kara taşıtları, bunların aksam ve parçaları",
+    "88": "Hava taşıtları, uzay taşıtları ve bunların aksam ve parçaları",
+    "89": "Gemiler, botlar ve yüzen taşıtlar",
+    "90": "Optik, fotoğraf, sinema, ölçü, kontrol, ayar, tıbbi veya cerrahi alet ve cihazlar",
+    "91": "Saatler ve bunların aksam ve parçaları",
+    "92": "Müzik aletleri, bunların aksam, parça ve aksesuarları",
+    "93": "Silahlar ve mühimmat, bunların aksam ve parçaları",
+    "94": "Mobilyalar, aydınlatma cihazları, prefabrik yapılar",
+    "95": "Oyuncaklar, oyun ve spor malzemeleri, bunların aksam ve parçaları",
+    "96": "Çeşitli mamul eşya",
+    "97": "Sanat eserleri, koleksiyon eşyası ve antikalar"
+}
+
 def load_tgtc_chapters() -> Dict[str, str]:
-    """Resmi 2026 TGTC Kütüphanesi üzerinden 2 Haneli Fasıl sözlüğünü döndürür."""
+    """Resmi 2026 TGTC Kütüphanesi üzerinden 2 Haneli Fasıl sözlüğünü döndürür.
+    Resmi kanuni fasıl isimlerini esas alır; eksik fasıllar için pozisyon kapsamından türetir."""
     headings = get_local_tgtc_headings()
     result = {}
-    for code, desc in headings.items():
+    for code in headings:
         if len(str(code)) >= 2 and str(code)[:2].isdigit():
             chap = str(code)[:2]
             if chap not in result:
-                clean_desc = desc.split("(")[0].split(",")[0].strip()
-                result[chap] = f"Fasıl {chap}: {clean_desc}"
+                if chap in OFFICIAL_CHAPTER_TITLES:
+                    result[chap] = f"Fasıl {chap}: {OFFICIAL_CHAPTER_TITLES[chap]}"
+                else:
+                    desc = headings[code]
+                    clean_desc = desc.split("(")[0].split(",")[0].strip()
+                    result[chap] = f"Fasıl {chap}: {clean_desc}"
+    # Kanuni fasılların tamamını içermesini sağla
+    for chap, title in OFFICIAL_CHAPTER_TITLES.items():
+        if chap not in result:
+            result[chap] = f"Fasıl {chap}: {title}"
     return result
 
 _BTB_CATALOG_CACHE: List[Dict[str, Any]] = None

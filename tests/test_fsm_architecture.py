@@ -432,3 +432,31 @@ def test_hitl_answer_resumes_on_the_selected_official_branch():
     assert decision.status == "WAITING_FOR_USER"
     assert resumed.status == "COMPLETED"
     assert resumed.gtip_code == "9401.69.00.00.11"
+
+
+def test_canonical_chapter_titles_accuracy():
+    from api.db.tgtc_knowledge_base import load_tgtc_chapters
+
+    chapters = load_tgtc_chapters()
+    assert chapters.get("76") == "Fasıl 76: Alüminyum ve alüminyumdan eşya"
+    assert chapters.get("70") == "Fasıl 70: Cam ve cam eşya"
+    assert chapters.get("73") == "Fasıl 73: Demir veya çelikten eşya"
+    assert chapters.get("39") == "Fasıl 39: Plastikler ve mamulleri"
+    assert chapters.get("84") == "Fasıl 84: Kazanlar, makineler, mekanik cihazlar ve aletler, bunların aksam ve parçaları"
+    assert chapters.get("85") == "Fasıl 85: Elektrikli makine ve cihazlar, ses ve görüntü kaydetme/çoğaltma cihazları, bunların aksam ve parçaları"
+
+
+def test_feature_extractor_cam_balkon_architectural_composite():
+    from api.modules.feature_extractor import FeatureExtractor
+
+    fe = FeatureExtractor()
+    features = fe.extract_features("cam balkon sistemi")
+    assert "alüminyum" in features.primary_material.lower()
+    assert "cam" in features.primary_material.lower()
+    assert features.is_set_or_kit is True
+    assert features.is_disassembled is True
+
+    steel_features = fe.extract_features("çelik profilli cam balkon")
+    assert "çelik" in steel_features.primary_material.lower()
+    assert "cam" in steel_features.primary_material.lower()
+
