@@ -4,13 +4,15 @@ Veriler doğrudan Ticaret Bakanlığı canlı kazıma (Scraping) pipeline'ları
 ve ilişkisel/vektör veritabanından dinamik olarak yüklenir.
 HİÇBİR STATİK SÖZLÜK VEYA HARDCODED EŞLEŞTİRME İÇERMEZ.
 """
+from __future__ import annotations
+
 import os
 import re
 import json
 import logging
 import datetime
 import time
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional, Tuple
 
 logger = logging.getLogger("TGTCKnowledgeBase")
 
