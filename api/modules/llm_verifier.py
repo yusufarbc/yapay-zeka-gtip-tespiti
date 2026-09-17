@@ -47,7 +47,7 @@ class LLMFactVerifier:
             )
 
         option_map = {f"N{index + 1}": node for index, node in enumerate(bounded_nodes)}
-        if settings.USE_GCP_EMULATOR or settings.ENVIRONMENT != "production":
+        if settings.USE_GCP_EMULATOR or settings.ENVIRONMENT == "testing":
             return CandidateSelection(
                 status=CandidateSelectionStatus.SELECT,
                 selected_candidate_id="N1",

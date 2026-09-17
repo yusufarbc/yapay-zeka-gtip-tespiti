@@ -485,7 +485,10 @@ def get_database_url() -> str:
     db_pass = os.getenv("DB_PASS", "")
     db_name = os.getenv("DB_NAME", "gtip_db")
 
-    if os.getenv("ENVIRONMENT") == "production" or os.getenv("CLOUD_SQL_CONNECTION_NAME"):
+    is_cloud_sql_socket = os.path.exists(f"/cloudsql/{cloud_sql_conn}") or (
+        os.getenv("K_SERVICE") is not None and os.getenv("ENVIRONMENT") == "production"
+    )
+    if is_cloud_sql_socket:
         # GCP Cloud Run Cloud SQL Auth Proxy Unix Socket bağlantısı
         return URL.create(
             "postgresql+psycopg2",

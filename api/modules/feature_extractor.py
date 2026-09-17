@@ -17,7 +17,7 @@ _EXPLICIT_MATERIALS = {
     "plastik": ("plastik", "plastic"),
     "çelik": ("çelik", "celik", "steel"),
     "demir": ("demir", "iron"),
-    "alüminyum": ("alüminyum", "aluminyum", "aluminium", "aluminum"),
+    "alüminyum": ("alüminyum", "aluminyum", "alimunyum", "aliminyum", "aluminium", "aluminum"),
     "cam": ("cam", "glass"),
     "kauçuk": ("kauçuk", "kaucuk", "rubber"),
     "deri": ("deri", "leather"),
@@ -37,7 +37,9 @@ _ARCHITECTURAL_SYSTEM_TERMS = (
     "cam balkon", "balkon camlama", "balkon sistemi", "kış bahçesi", "kis bahcesi",
     "duşakabin", "dusakabin", "katlanır cam", "katlanir cam", "sürme cam", "surme cam",
     "giyotin cam", "cephe giydirme", "cephe sistemi", "alüminyum doğrama", "aluminyum dograma",
+    "alimunyum doğrama", "alimunyum dograma", "aliminyum doğrama", "aliminyum dograma",
     "alüminyum kapı", "alüminyum pencere", "aluminyum kapi", "aluminyum pencere",
+    "doğrama cam", "dograma cam", "balkon cam",
 )
 
 
