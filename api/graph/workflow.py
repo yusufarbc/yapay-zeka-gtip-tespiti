@@ -215,6 +215,48 @@ class GTIPWorkflowEngine:
             for ep in ebti_precedents
         ] if has_ebti else []
 
+        # Uluslararası Emsaller (ABD CBP CROSS / CustomsMobile, Çin GACC, AB EBTI)
+        from api.schemas.product import InternationalRuling
+        raw_intl = traversal.get("international_rulings") or []
+        # Eğer henüz taranmadıysa ve kullanıcı araştırma istediyse veya yerel emsal yetersizse tara
+        if not raw_intl and (traversal.get("enable_international_research") or (len(precedents) == 0 and len(ebti_precedents) == 0)):
+            try:
+                from api.modules.international_search import search_international_rulings
+                found_intl = search_international_rulings(
+                    product_text=raw_text,
+                    hs_code_hint=locked_digits[:6] if locked_digits else None,
+                )
+                raw_intl = [item.model_dump() for item in found_intl]
+            except Exception as exc_intl:
+                logger.warning("Uluslararası emsal arama atlandı: %s", exc_intl)
+                raw_intl = []
+
+        international_rulings: List[InternationalRuling] = []
+        for item in raw_intl:
+            try:
+                international_rulings.append(InternationalRuling(**item))
+            except Exception:
+                pass
+
+        has_intl = len(international_rulings) > 0
+        if has_intl:
+            consulted = list(dict.fromkeys(consulted + ["US_CBP_CROSS", "CN_GACC"]))
+
+        intl_legal_sources = [
+            LegalSource(
+                source_type=f"INTL_{ir.country}",
+                reference_no=ir.ruling_no,
+                title=f"{ir.source_name} {ir.ruling_no} ({ir.country})",
+                publication_date=ir.issue_date or None,
+                excerpt=ir.product_description[:300],
+                source_url=ir.source_url,
+                legal_role="INDIVIDUAL_PRECEDENT",
+                authority_level=4,
+                is_binding=False,
+            )
+            for ir in international_rulings
+        ] if has_intl else []
+
         decision = GTIPDecision(
             session_id=session_id,
             status="COMPLETED",
@@ -239,7 +281,8 @@ class GTIPWorkflowEngine:
             ],
             precedent_btbs=precedents,
             precedent_ebtis=ebti_precedents,
-            legal_sources=candidate.legal_sources + ebti_legal_sources,
+            international_rulings=international_rulings,
+            legal_sources=candidate.legal_sources + ebti_legal_sources + intl_legal_sources,
             consulted_sources=consulted,
             trade_measures=get_customs_trade_measures(formatted_code),
             state_machine_stage="MODEL_CLOSED_SET_COMPLETED",
@@ -255,6 +298,10 @@ class GTIPWorkflowEngine:
                 *(
                     [f"AB EBTI emsali bulundu: {len(ebti_precedents)} karar (CN-8 uyumu ile)."]
                     if has_ebti else []
+                ),
+                *(
+                    [f"Uluslararası emsal bulundu: {len(international_rulings)} karar (ABD CBP / Çin GACC / AB EBTI)."]
+                    if has_intl else []
                 ),
             ],
         )
@@ -297,7 +344,12 @@ class GTIPWorkflowEngine:
             query_vector=query_vector,
         )
 
-    def start_analysis(self, raw_text: str, image_uri: str = None) -> GTIPDecision:
+    def start_analysis(
+        self,
+        raw_text: str,
+        image_uri: str = None,
+        enable_international_research: bool = False,
+    ) -> GTIPDecision:
         session_id = str(uuid.uuid4())
         started = time.perf_counter()
         features = feature_extractor.extract_features(raw_text, image_uri)
@@ -308,6 +360,18 @@ class GTIPWorkflowEngine:
         except Exception as exc_ebti:
             logger.warning("EBTI emsal araması atlandı: %s", exc_ebti)
             ebti_precedents = []
+
+        # Uluslararası emsal araması (enable_international_research aktifse önceden çalıştır)
+        international_rulings = []
+        if enable_international_research:
+            try:
+                from api.modules.international_search import search_international_rulings
+                found_intl = search_international_rulings(product_text=raw_text)
+                international_rulings = [item.model_dump() for item in found_intl]
+            except Exception as exc_intl:
+                logger.warning("Uluslararası emsal ön taraması atlandı: %s", exc_intl)
+                international_rulings = []
+
         exact_btb = rag_engine.exact_btb_candidate(btb_precedents)
         if exact_btb:
             tree_result = HierarchicalSearchResult(
@@ -320,6 +384,8 @@ class GTIPWorkflowEngine:
                     "selection_source": "BTB_EXACT",
                     "btb_precedents": [item.model_dump() for item in btb_precedents],
                     "ebti_precedents": [item.model_dump() for item in ebti_precedents],
+                    "international_rulings": international_rulings,
+                    "enable_international_research": enable_international_research,
                 },
             )
         else:
@@ -330,32 +396,41 @@ class GTIPWorkflowEngine:
             tree_result.traversal_state["ebti_precedents"] = [
                 item.model_dump() for item in ebti_precedents
             ]
+            tree_result.traversal_state["international_rulings"] = international_rulings
+            tree_result.traversal_state["enable_international_research"] = enable_international_research
         logger.info(
-            "[PipelineTiming] session=%s stage=model_closed_set duration_ms=%.2f btb_hits=%d ebti_hits=%d",
+            "[PipelineTiming] session=%s stage=model_closed_set duration_ms=%.2f btb_hits=%d ebti_hits=%d intl_hits=%d",
             session_id,
             (time.perf_counter() - started) * 1000,
             len(btb_precedents),
             len(ebti_precedents),
+            len(international_rulings),
         )
         if tree_result.discriminator_question:
             return self._pause(session_id, raw_text, image_uri, features, tree_result)
         return self._complete(session_id, raw_text, image_uri, features, tree_result)
 
 
-    async def start_analysis_async(self, raw_text: str, image_uri: str = None) -> GTIPDecision:
-        return await asyncio.to_thread(self.start_analysis, raw_text, image_uri)
+    async def start_analysis_async(
+        self,
+        raw_text: str,
+        image_uri: str = None,
+        enable_international_research: bool = False,
+    ) -> GTIPDecision:
+        return await asyncio.to_thread(self.start_analysis, raw_text, image_uri, enable_international_research)
 
     async def start_analysis_stream(
         self,
         raw_text: str,
         image_uri: str = None,
+        enable_international_research: bool = False,
     ) -> AsyncIterator[Dict[str, Any]]:
         yield {
             "stage": "MODEL_TARIFF_SELECTION",
             "status": "IN_PROGRESS",
             "message": "Gemini resmi TGTC ağacında fasıl, pozisyon ve alt pozisyon seçiyor.",
         }
-        decision = await self.start_analysis_async(raw_text, image_uri)
+        decision = await self.start_analysis_async(raw_text, image_uri, enable_international_research)
         yield {
             "stage": "COMPLETED",
             "status": decision.status,

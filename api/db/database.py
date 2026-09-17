@@ -320,6 +320,9 @@ class EbtiKarariModel(Base):
     embedding_model = Column(String(100), nullable=True)
     kaynak_guncelleme_tarihi = Column(String(10), nullable=True)
 
+# Geriye dönük uyumluluk takma adı
+EbtiKararModel = EbtiKarariModel
+
 # ==============================================================================
 # HEDEF NÖRO-SEMBOLİK TGTC VE ALLOYDB BİLGİ GRAFI MODELLERİ
 # ==============================================================================

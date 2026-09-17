@@ -1,5 +1,5 @@
 import React from 'react';
-import { Award, Download, Scale, CheckCircle2, Bot, Layers, Copy, Check } from 'lucide-react';
+import { Award, Download, Scale, CheckCircle2, Bot, Layers, Copy, Check, Globe } from 'lucide-react';
 import { getPDFReportUrl } from '../api/client';
 import { useToast } from './ToastContext';
 
@@ -381,6 +381,113 @@ export const GTIPResultCard = ({ decision }) => {
             bağlayıcı olmamakla birlikte 4458 sayılı Gümrük Kanunu md. 23 ve Gümrük Yönetmeliği md. 66 uyarınca yapılan
             itirazlarda Bölge Müdürlükleri ve İdare Mahkemelerinde teknik delil olarak kabul görmektedir.
           </p>
+        </div>
+      )}
+
+      {/* Uluslararası Gümrük Emsal Kararları (ABD CBP CROSS / CustomsMobile, Çin GACC, AB EBTI) */}
+      {decision.international_rulings && decision.international_rulings.length > 0 && (
+        <div style={{ marginBottom: '24px' }}>
+          <h4 style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Globe size={18} color="#059669" />
+            <span>Uluslararası Gümrük Emsalleri (ABD CBP CROSS, Çin GACC, AB EBTI):</span>
+          </h4>
+          <p style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.4 }}>
+            Dünya Gümrük Örgütü (WCO) 6 haneli Armonize Sistem standardı ve Genel Yorum Kuralları (GİR / GRI 1-6) kapsamında taranan resmi yabancı gümrük kararları.
+          </p>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {decision.international_rulings.map((ruling, idx) => {
+              const countryFlags = {
+                US: '🇺🇸',
+                CN: '🇨🇳',
+                EU: '🇪🇺',
+              };
+              const flag = countryFlags[ruling.country] || '🌐';
+              const similarityPct = Math.round((ruling.similarity_score || 0.85) * 100);
+
+              return (
+                <div key={idx} style={{
+                  background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.04), rgba(59, 130, 246, 0.05))',
+                  border: '1px solid rgba(16, 185, 129, 0.25)',
+                  borderRadius: '10px',
+                  padding: '14px 16px',
+                  display: 'grid',
+                  gridTemplateColumns: 'auto 1fr auto',
+                  gap: '12px',
+                  alignItems: 'start'
+                }}>
+                  {/* Sol: Bayrak, Ülke ve HS kodu */}
+                  <div style={{ textAlign: 'center', minWidth: '70px' }}>
+                    <div style={{ fontSize: '1.6rem', lineHeight: 1 }}>{flag}</div>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 700, marginTop: '2px' }}>{ruling.country}</div>
+                    <div className="font-mono" style={{ fontSize: '0.72rem', color: '#059669', fontWeight: 800, marginTop: '4px', background: 'rgba(16,185,129,0.1)', padding: '2px 6px', borderRadius: '4px' }}>
+                      HS {ruling.hs_code}
+                    </div>
+                  </div>
+
+                  {/* Orta: Referans, Ürün açıklaması ve Türkçe hukuki analiz */}
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' }}>
+                      <span className="font-mono" style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                        {ruling.ruling_no}
+                      </span>
+                      <span style={{ fontSize: '0.72rem', color: '#059669', background: 'rgba(16,185,129,0.1)', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                        {ruling.source_name}
+                      </span>
+                      {ruling.issue_date && (
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', background: 'var(--bg-surface-subtle)', padding: '2px 6px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
+                          {ruling.issue_date}
+                        </span>
+                      )}
+                    </div>
+                    <p style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', lineHeight: 1.5, margin: 0 }}>
+                      {ruling.product_description}
+                    </p>
+                    {ruling.summary_tr && (
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-primary)', lineHeight: 1.4, marginTop: '6px', background: 'rgba(255,255,255,0.6)', padding: '6px 10px', borderRadius: '6px', borderLeft: '3px solid #059669' }}>
+                        ⚖️ <strong>Hukuki Analiz:</strong> {ruling.summary_tr}
+                      </p>
+                    )}
+                    {ruling.legal_justification && !ruling.summary_tr && (
+                      <p style={{ fontSize: '0.76rem', color: 'var(--text-muted)', lineHeight: 1.4, marginTop: '6px', fontStyle: 'italic' }}>
+                        📋 {ruling.legal_justification.substring(0, 200)}...
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Sağ: Uyum skoru ve Resmi Veritabanı Linki */}
+                  <div style={{ textAlign: 'right', minWidth: '95px' }}>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#059669', lineHeight: 1 }}>
+                      %{similarityPct}
+                    </div>
+                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: '8px' }}>WCO Uyumu</div>
+                    <a
+                      href={ruling.source_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        fontSize: '0.72rem',
+                        color: '#059669',
+                        textDecoration: 'none',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '3px',
+                        background: 'rgba(16,185,129,0.1)',
+                        padding: '4px 8px',
+                        borderRadius: '6px',
+                        border: '1px solid rgba(16,185,129,0.25)',
+                        fontWeight: 600,
+                        whiteSpace: 'nowrap'
+                      }}
+                      title="Resmi Gümrük Kararını Görüntüle"
+                    >
+                      🔗 {ruling.country === 'US' ? 'CustomsMobile' : ruling.country === 'CN' ? 'Çin GACC' : 'EC EBTI'}
+                    </a>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

@@ -100,6 +100,21 @@ class PrecedentEBTI(BaseModel):
     source_url: str
     image_url: Optional[str] = None
 
+
+class InternationalRuling(BaseModel):
+    """ABD (CBP CROSS / CustomsMobile), Çin (GACC) ve AB (EBTI) resmi emsal sınıflandırma kararı."""
+    country: str = Field(description="Kaynak Ülke Kodu: US, CN, EU vb.", max_length=10)
+    ruling_no: str = Field(description="Karar Referans / Dosya Numarası (örn. NY N320145, HQ H298123, Z2023-0012)", max_length=100)
+    hs_code: str = Field(description="Kararda belirtilen 6 haneli HS veya 8-10 haneli ulusal kod", max_length=30)
+    product_description: str = Field(description="Karar metnindeki orijinal ürün açıklaması")
+    legal_justification: str = Field(default="", description="GİR (GRI) ve mevzuat dayanakları ile orijinal hukuki gerekçe")
+    summary_tr: Optional[str] = Field(default=None, description="Model tarafından üretilen Türkçe hukuki özet ve Türk GTİP ile uyum analizi")
+    issue_date: Optional[str] = Field(default=None, description="Karar yayımlanma tarihi", max_length=30)
+    source_url: str = Field(description="Resmi karar veya arama bağlantısı (CustomsMobile, CBP, GACC, EBTI)")
+    source_name: str = Field(default="CBP CROSS", description="Veritabanı / Kurum Adı", max_length=100)
+    similarity_score: float = Field(default=0.85, ge=0.0, le=1.0, description="Ürün ile karar arasındaki anlamsal uyum skoru")
+
+
 class GTIPCandidate(BaseModel):
     gtip_code: str = Field(description="12 Haneli GTİP Kodu (örn. 8471.30.00.00.11)", max_length=30)
     description: str = Field(description="TGTC Resmi Pozisyon Tanımı")
@@ -138,6 +153,7 @@ class GTIPDecision(BaseModel):
     applied_gir_rules: List[str] = Field(default_factory=list)
     precedent_btbs: List[PrecedentBTB] = Field(default_factory=list)
     precedent_ebtis: List[PrecedentEBTI] = Field(default_factory=list)
+    international_rulings: List[InternationalRuling] = Field(default_factory=list, description="ABD (CBP CROSS / CustomsMobile), Çin (GACC) ve AB (EBTI) uluslararası emsal kararları")
     legal_sources: List[LegalSource] = Field(default_factory=list)
     consulted_sources: List[str] = Field(default_factory=list)
     hitl_question: Optional[HITLQuestion] = None
