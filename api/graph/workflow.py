@@ -257,6 +257,41 @@ class GTIPWorkflowEngine:
             for ir in international_rulings
         ] if has_intl else []
 
+        # Resmi Kanuni Maddeler (Model yazmaz; sistem doğrudan veritabanından çeker)
+        applied_gir_keys = list(traversal.get("applied_gir_keys") or [])
+        cited_chapters = list(traversal.get("cited_chapter_notes") or [])
+
+        from api.db.tgtc_knowledge_base import get_official_statute_records, OFFICIAL_GIR_FULL_STATUTES
+        official_statutes = get_official_statute_records(
+            gtip_code=formatted_code,
+            applied_gir_keys=applied_gir_keys,
+            cited_chapters=cited_chapters,
+        )
+
+        effective_gir_keys = list(applied_gir_keys) if applied_gir_keys else ["GIR_1", "GIR_6"]
+        for fallback_k in ("GIR_1", "GIR_6"):
+            if fallback_k not in effective_gir_keys:
+                effective_gir_keys.append(fallback_k)
+
+        applied_gir_rule_texts = []
+        for k in effective_gir_keys:
+            clean_k = str(k).upper().replace("GYK", "GIR").replace("(", "").replace(")", "").replace(" ", "_").strip()
+            statute = OFFICIAL_GIR_FULL_STATUTES.get(clean_k)
+            if statute:
+                applied_gir_rule_texts.append(f"{statute['rule_no']}: {statute['text']}")
+
+        all_legal_sources = official_statutes + [
+            s for s in candidate.legal_sources
+            if s.source_type not in {"TGTC_2026", "GIR", "TGTC_HEADING", "TGTC_SUBHEADING", "TGTC_LEAF", "FASIL_NOTU"}
+        ] + ebti_legal_sources + intl_legal_sources
+        dedup_legal_sources = []
+        seen_source_keys = set()
+        for src in all_legal_sources:
+            s_key = (src.source_type, src.reference_no)
+            if s_key not in seen_source_keys:
+                seen_source_keys.add(s_key)
+                dedup_legal_sources.append(src)
+
         decision = GTIPDecision(
             session_id=session_id,
             status="COMPLETED",
@@ -275,14 +310,11 @@ class GTIPWorkflowEngine:
                 if is_exact_btb
                 else f"GİR 1 ve GİR 6 kapsamında resmi TGTC yaprak seçimi: {formatted_code}."
             ),
-            applied_gir_rules=[
-                "GİR 1: Resmi fasıl ve pozisyon metinleri arasında model seçimi.",
-                "GİR 6: Aynı üst düğümdeki resmi alt pozisyonların karşılaştırılması.",
-            ],
+            applied_gir_rules=applied_gir_rule_texts,
             precedent_btbs=precedents,
             precedent_ebtis=ebti_precedents,
             international_rulings=international_rulings,
-            legal_sources=candidate.legal_sources + ebti_legal_sources + intl_legal_sources,
+            legal_sources=dedup_legal_sources,
             consulted_sources=consulted,
             trade_measures=get_customs_trade_measures(formatted_code),
             state_machine_stage="MODEL_CLOSED_SET_COMPLETED",

@@ -29,6 +29,115 @@ GIR_RULES = {
     "GIR_6": "Alt pozisyonlar düzeyinde sınıflandırma, aynı düzeydeki alt pozisyonların karşılaştırılması ile GİR 1-5 esaslarına göre yapılır."
 }
 
+OFFICIAL_GIR_FULL_STATUTES: Dict[str, Dict[str, str]] = {
+    "GIR_1": {
+        "rule_no": "GİR 1",
+        "title": "Genel Yorum Kuralı 1 (Tarife Pozisyonu ve Bölüm/Fasıl Notları Hükmü)",
+        "summary": "Tarife pozisyonu ve ilgili bölüm veya fasıl notlarına göre sınıflandırma yapılır.",
+        "text": (
+            "1. Bölüm, fasıl ve tali fasıl başlıkları sadece gösterici niteliktedir; yasal amaçlar için "
+            "eşyanın tarifedeki yerinin saptanması, pozisyon metinlerine, ilgili herhangi bir bölüm veya "
+            "fasıl notuna ve bu pozisyonlar veya notlar hükümlerinde aksi belirtilmedikçe, aşağıdaki kurallara göre yapılır."
+        ),
+    },
+    "GIR_2A": {
+        "rule_no": "GİR 2(a)",
+        "title": "Genel Yorum Kuralı 2(a) (Tamamlanmamış, Demonte veya Sökülmüş Eşya)",
+        "summary": "Sökülmüş, demonte veya tamamlanmamış eşya, monte edilmiş ana eşyanın karakteristik özelliğini taşıyorsa ana pozisyonda sınıflandırılır.",
+        "text": (
+            "2. (a) Tarifenin belirli bir pozisyonunda herhangi bir eşyaya yapılan bir atıf, bu eşyanın imali bitirilmemiş "
+            "veya aksamı tamamlanmamış olanlarını da kapsar. Şu kadar ki, bu gibi imali bitirilmemiş veya aksamı tamamlanmamış "
+            "eşyanın gümrüğe sunulduğunda, imali bitirilmiş veya aksamı tamamlanmış eşyanın ayırdedici niteliğini içermesi gerekir. "
+            "Böyle bir atıf, imali bitirilmiş veya aksamı tamamlanmış eşya ile, yukarıdaki hükme göre böyle sayılan eşyanın "
+            "sökülerek veya monte edilmeden getirilmiş olanlarını da içine alır."
+        ),
+    },
+    "GIR_2B": {
+        "rule_no": "GİR 2(b)",
+        "title": "Genel Yorum Kuralı 2(b) (Karışımlar ve Bileşik Maddeler)",
+        "summary": "Kombine maddeler veya karışımların sınıflandırılmasında baskın nitelik ve oran dikkate alınır.",
+        "text": (
+            "(b) Tarifenin belirli bir pozisyonunda herhangi bir maddeye yapılan atıf, bu maddenin karışımlarını, bileşimlerini "
+            "ve diğer maddelerle birleştirilmiş veya karıştırılmış hallerini de içine alır. Aynı şekilde, belirli bir maddeden mamul "
+            "bir eşyaya yapılan herhangi bir atıf, tamamen veya kısmen bu maddeden mamul eşyayı da içine alır. Birden fazla maddeden "
+            "meydana gelen eşyanın tarifedeki yeri, aşağıda (3) numaralı kuralda belirtilen prensiplere göre saptanır."
+        ),
+    },
+    "GIR_3A": {
+        "rule_no": "GİR 3(a)",
+        "title": "Genel Yorum Kuralı 3(a) (En Özel Tanımın Genel Tanıma Önceliği)",
+        "summary": "En özel tanımı veren pozisyon, genel tanım veren pozisyona tercih edilir.",
+        "text": (
+            "3. (a) Eşyayı en özel şekilde tanımlayan pozisyon, daha genel şekilde tanımlayan pozisyona göre öncelik alır. "
+            "Bununla beraber, iki veya daha fazla pozisyonun her birinin, birbirleriyle karıştırılmış veya birleştirilmiş eşyanın "
+            "sadece birine ya da perakende satılacak hale getirilmiş takımın sadece bir parçasına atıfta bulunması halinde, "
+            "bu pozisyonların, pozisyonların birisi eşyanın tam ve kesin tanımını verse bile, sözkonusu eşyayı eşit derecede "
+            "özel şekilde tanımladığı mütalaa edilir."
+        ),
+    },
+    "GIR_3B": {
+        "rule_no": "GİR 3(b)",
+        "title": "Genel Yorum Kuralı 3(b) (Bileşik ve Takım Eşyada Esas Nitelik / Karakter)",
+        "summary": "Karışımlar, farklı maddelerden oluşan eşyalar ve setler eşyaya esas karakterini veren bileşene göre sınıflandırılır.",
+        "text": (
+            "(b) (3-a) Kuralının uygulanmasıyla, tarifedeki yeri tayin edilemeyen bileşik ürünlerin ve çeşitli maddelerden oluşan "
+            "veya çeşitli eşyanın birleşmesiyle meydana gelen mamuller ile perakende satılacak hale getirilmiş takım halinde bulunan "
+            "eşyanın tarifedeki yeri, bunlara esas niteliğini veren madde veya eşya saptanabildiği takdirde buna göre bulunur."
+        ),
+    },
+    "GIR_3C": {
+        "rule_no": "GİR 3(c)",
+        "title": "Genel Yorum Kuralı 3(c) (Numara Sırasıyla Son Pozisyon)",
+        "summary": "3(a) ve 3(b) kuralları ile sınıflandırılamayan eşyalar en son sırada yer alan pozisyona verilir.",
+        "text": (
+            "(c) (3-a) veya (3-b) kuralları uyarınca tarifedeki yeri saptanamayan eşya, her biri geçerli olabilecek pozisyonların "
+            "numara sırasına göre sonuncusunda mütalaa edilecektir."
+        ),
+    },
+    "GIR_4": {
+        "rule_no": "GİR 4",
+        "title": "Genel Yorum Kuralı 4 (En Çok Benzeyen Eşya Prensibi)",
+        "summary": "Kurallara göre sınıflandırılamayan eşyalar, en çok benzediği eşya pozisyonuna verilir.",
+        "text": (
+            "4. Yukarıdaki Kurallara uygun olarak sınıflandırılmayan eşya, bu eşyaya en çok benzeyen eşyanın bulunduğu pozisyonda sınıflandırılır."
+        ),
+    },
+    "GIR_5A": {
+        "rule_no": "GİR 5(a)",
+        "title": "Genel Yorum Kuralı 5(a) (Özel Kılıf ve Mahfazalar)",
+        "summary": "Özel biçim verilmiş kılıf ve kutular ait oldukları eşya ile birlikte sınıflandırılır.",
+        "text": (
+            "5. (a) Fotoğraf makinası mahfazası, müzik aleti mahfazası, silah mahfazası, çizim aleti kutuları, kolye kutuları "
+            "ve benzeri kutular, özellikle belli bir eşyaya veya takım halindeki eşyaya göre şekil verilmiş veya bu eşyaya uygun "
+            "olarak yapılmış olup uzun süre kullanılmaya uygun ve ait oldukları eşya ile birlikte ithal edilen kutular, normal olarak "
+            "bu eşya ile birlikte satılan türde iseler, beraber satıldıkları eşya ile birlikte sınıflandırılırlar. Ancak bu Kural, "
+            "bir bütün olarak esas niteliği mahfaza olan eşyaya uygulanmaz."
+        ),
+    },
+    "GIR_5B": {
+        "rule_no": "GİR 5(b)",
+        "title": "Genel Yorum Kuralı 5(b) (Ambalaj Maddeleri ve Kaplar)",
+        "summary": "Eşya ile birlikte sunulan normal ambalaj maddeleri eşya ile birlikte sınıflandırılır.",
+        "text": (
+            "(b) Yukarıda 5 (a) kuralındaki hükümler saklı kalmak şartıyla, içindeki eşya ile birlikte sunulan ambalaj maddeleri "
+            "ve ambalaj mahfazaları bu eşyanın ambalajında normal olarak kullanılan türden ambalaj maddeleri olmaları şartıyla "
+            "bu eşya ile beraber sınıflandırılırlar. Bununla beraber, bu tür ambalaj maddeleri veya ambalaj mahfazalarının, "
+            "sürekli kullanıma elverişli olduklarının açıkça belli olması halinde bu hüküm uygulanmaz."
+        ),
+    },
+    "GIR_6": {
+        "rule_no": "GİR 6",
+        "title": "Genel Yorum Kuralı 6 (Alt Pozisyon Düzeyinde Sınıflandırma ve Mukayese)",
+        "summary": "Alt pozisyonlar düzeyinde sınıflandırma, aynı düzeydeki alt pozisyonların mukayese edilmesi ile yapılır.",
+        "text": (
+            "6. Yasal amaçlar için, eşyanın bir pozisyonun alt pozisyonlarında sınıflandırılması, sadece aynı seviyedeki "
+            "alt pozisyonların mukayese edilebilirliği dikkate alınarak, bu alt pozisyonlardaki şartlar ile bu pozisyonla "
+            "ilgili alt pozisyon notlarına ve gerekli değişiklikler yapılmış olarak, yukarıdaki kurallara göre saptanacaktır. "
+            "Metinde aksi belirtilmedikçe bu kuralın tatbikinde, ilgili Bölüm ve Fasıl Notları da uygulanır."
+        ),
+    },
+}
+
 _LOCAL_POS_CACHE: Dict[str, str] = {}
 
 def get_local_tgtc_headings() -> Dict[str, str]:
@@ -622,3 +731,167 @@ def get_chapter_title(chapter_code: str) -> str:
     chaps = load_tgtc_chapters() or TGTC_CHAPTERS
     code_z = str(chapter_code).zfill(2)
     return chaps.get(code_z, "Genel Gümrük Tarife Cetveli Eşyası")
+
+
+def get_official_statute_records(
+    gtip_code: str,
+    applied_gir_keys: Optional[List[str]] = None,
+    cited_chapters: Optional[List[str]] = None,
+) -> List[Any]:
+    """
+    Seçilen GTİP kodu, uygulanan GİR kuralları ve ilgili fasıllar için
+    DOĞRUDAN RESMİ VERİTABANINDAN (DB / JSON) çekilen ve ASLA MODEL TARAFINDAN YAZILMAYAN
+    orijinal kanuni madde metinlerini (LegalSource nesneleri) döndürür.
+    """
+    from api.schemas.product import LegalSource
+    from api.db.database import SessionLocal, TgtcGtipModel, TariffHierarchyModel
+
+    records: List[LegalSource] = []
+    clean_code = re.sub(r"\D", "", str(gtip_code or ""))
+    seen_refs = set()
+
+    # 1. GİR Kuralları (Resmi Kanun Metinleri)
+    gir_keys = list(applied_gir_keys or ["GIR_1", "GIR_6"])
+    for fallback_k in ("GIR_1", "GIR_6"):
+        if fallback_k not in gir_keys:
+            gir_keys.append(fallback_k)
+
+    for k in gir_keys:
+        clean_k = str(k).upper().replace("GYK", "GIR").replace("(", "").replace(")", "").replace(" ", "_").strip()
+        statute = OFFICIAL_GIR_FULL_STATUTES.get(clean_k)
+        if statute and clean_k not in seen_refs:
+            seen_refs.add(clean_k)
+            records.append(
+                LegalSource(
+                    source_type="GIR",
+                    reference_no=statute["rule_no"],
+                    title=statute["title"],
+                    excerpt=statute["text"],
+                    legal_role="NORMATIVE",
+                    authority_level=1,
+                    effective_from="2026-01-01",
+                    is_binding=True,
+                )
+            )
+
+    # 2. Hiyerarşik Tarife Pozisyonu, Alt Pozisyon ve Nihai GTİP Veritabanı Metinleri
+    if len(clean_code) >= 2:
+        chap_code = clean_code[:2]
+        chap_title = OFFICIAL_CHAPTER_TITLES.get(chap_code, f"Fasıl {chap_code}")
+        records.append(
+            LegalSource(
+                source_type="TGTC_CHAPTER",
+                reference_no=f"Fasıl {chap_code}",
+                title=f"2026 TGTC Fasıl {chap_code} Kanuni Başlığı",
+                excerpt=f"Fasıl {chap_code}: {chap_title}",
+                legal_role="NORMATIVE",
+                authority_level=1,
+                effective_from="2026-01-01",
+                is_binding=True,
+            )
+        )
+
+    if len(clean_code) >= 4:
+        pos_code = clean_code[:4]
+        headings = get_local_tgtc_headings()
+        pos_desc = headings.get(pos_code, "")
+        if pos_desc:
+            records.append(
+                LegalSource(
+                    source_type="TGTC_HEADING",
+                    reference_no=f"Pozisyon {pos_code[:2]}.{pos_code[2:]}",
+                    title=f"2026 TGTC {pos_code[:2]}.{pos_code[2:]} Tarife Pozisyonu Resmi Metni",
+                    excerpt=f"Pozisyon {pos_code[:2]}.{pos_code[2:]}: {pos_desc}",
+                    legal_role="NORMATIVE",
+                    authority_level=1,
+                    effective_from="2026-01-01",
+                    is_binding=True,
+                )
+            )
+
+    # Subheading (6-digit) & Leaf (12-digit) DB sorgusu
+    try:
+        with SessionLocal() as session:
+            if len(clean_code) >= 6:
+                sub_code = clean_code[:6]
+                sub_row = session.query(TgtcGtipModel).filter(
+                    TgtcGtipModel.gtip_code == sub_code,
+                    TgtcGtipModel.is_active == True,
+                ).first()
+                if not sub_row:
+                    sub_row = session.query(TariffHierarchyModel).filter(
+                        TariffHierarchyModel.gtip_code == sub_code,
+                        TariffHierarchyModel.level == 6,
+                    ).first()
+                sub_desc = str(getattr(sub_row, "description", None) or getattr(sub_row, "description_tr", None) or "")
+                if sub_desc:
+                    records.append(
+                        LegalSource(
+                            source_type="TGTC_SUBHEADING",
+                            reference_no=f"Alt Pozisyon {sub_code[:4]}.{sub_code[4:]}",
+                            title=f"2026 TGTC {sub_code[:4]}.{sub_code[4:]} Alt Pozisyonu Resmi Metni",
+                            excerpt=f"Alt Pozisyon {sub_code[:4]}.{sub_code[4:]}: {sub_desc}",
+                            legal_role="NORMATIVE",
+                            authority_level=1,
+                            effective_from="2026-01-01",
+                            is_binding=True,
+                        )
+                    )
+
+            if len(clean_code) == 12:
+                leaf_row = session.query(TgtcGtipModel).filter(
+                    TgtcGtipModel.gtip_code == clean_code,
+                    TgtcGtipModel.is_active == True,
+                ).first()
+                if not leaf_row:
+                    leaf_row = session.query(TariffHierarchyModel).filter(
+                        TariffHierarchyModel.gtip_code == clean_code,
+                        TariffHierarchyModel.is_leaf == True,
+                    ).first()
+                leaf_desc = str(getattr(leaf_row, "description", None) or getattr(leaf_row, "description_tr", None) or "")
+                fmt_leaf = f"{clean_code[:4]}.{clean_code[4:6]}.{clean_code[6:8]}.{clean_code[8:10]}.{clean_code[10:12]}"
+                if leaf_desc:
+                    records.append(
+                        LegalSource(
+                            source_type="TGTC_LEAF",
+                            reference_no=fmt_leaf,
+                            title=f"2026 TGTC {fmt_leaf} Resmi İstatistik Pozisyonu Metni",
+                            excerpt=f"{fmt_leaf}: {leaf_desc}",
+                            legal_role="NORMATIVE",
+                            authority_level=1,
+                            effective_from="2026-01-01",
+                            is_binding=True,
+                        )
+                    )
+    except Exception as exc:
+        logger.warning("[Statute Records] DB alt pozisyon/yaprak sorgu uyarısı: %s", exc)
+
+    # 3. İlgili Fasıl ve Dışlama Notları (Veritabanı Orijinal Not Metinleri)
+    rules_notes = load_tgtc_rules_and_notes()
+    all_fasil_notlari = rules_notes.get("fasil_notlari", {})
+    chapters_to_cite = list(dict.fromkeys(list(cited_chapters or []) + ([clean_code[:2]] if clean_code else [])))
+
+    for c in chapters_to_cite:
+        c_str = str(c).zfill(2)
+        raw_note = all_fasil_notlari.get(c_str, "")
+        if raw_note:
+            c_title = OFFICIAL_CHAPTER_TITLES.get(c_str, f"Fasıl {c_str}")
+            is_exclusion = "dahil değildir" in raw_note.lower() or (clean_code and c_str != clean_code[:2])
+            title_prefix = f"Fasıl {c_str} ({c_title}) Resmi Dışlama Notu" if is_exclusion else f"Fasıl {c_str} ({c_title}) Resmi Fasıl Notu"
+            ref_prefix = f"Fasıl {c_str} Dışlama Notu" if is_exclusion else f"Fasıl {c_str} Notları"
+            
+            records.append(
+                LegalSource(
+                    source_type="FASIL_NOTU",
+                    reference_no=ref_prefix,
+                    title=title_prefix,
+                    excerpt=raw_note[:1800].strip(),
+                    legal_role="INTERPRETIVE" if is_exclusion else "NORMATIVE",
+                    authority_level=1,
+                    effective_from="2026-01-01",
+                    is_binding=True,
+                )
+            )
+
+    return records
+

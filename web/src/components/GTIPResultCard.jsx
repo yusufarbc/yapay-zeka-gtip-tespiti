@@ -1,10 +1,11 @@
-import React from 'react';
-import { Award, Download, Scale, CheckCircle2, Bot, Layers, Copy, Check, Globe } from 'lucide-react';
+import React, { useState } from 'react';
+import { Award, Download, Scale, CheckCircle2, Bot, Layers, Copy, Check, Globe, BookOpen, ShieldCheck, FileText } from 'lucide-react';
 import { getPDFReportUrl } from '../api/client';
 import { useToast } from './ToastContext';
 
 export const GTIPResultCard = ({ decision }) => {
   const { addToast } = useToast();
+  const [expandedNotes, setExpandedNotes] = useState({});
 
   if (!decision || (!decision.gtip_code && decision.status !== 'COMPLETED' && decision.status !== 'WAITING_FOR_USER')) return null;
 
@@ -187,35 +188,225 @@ export const GTIPResultCard = ({ decision }) => {
         </div>
       </div>
 
-      {/* 1. Orijinal Resmi Mevzuat Maddesi */}
-      <div style={{
-        background: 'var(--bg-primary)',
-        padding: '20px',
-        borderRadius: '12px',
-        marginBottom: '20px',
-        border: '1px solid var(--border-subtle)'
-      }}>
-        <h4 style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Scale size={18} color="var(--text-secondary)" />
-          <span>Resmi Mevzuat Maddesi (Veritabanı Orijinal Kaydı):</span>
-        </h4>
-        <p style={{ fontSize: '0.9rem', lineHeight: 1.6, color: 'var(--text-primary)', marginBottom: '14px', fontWeight: 500 }}>
-          {statuteText}
-        </p>
+      {/* 1. Hukuki Dayanak ve Atıf Yapılan Resmi Mevzuat Maddeleri (Veritabanı Orijinal Kayıtları) */}
+      {(() => {
+        const legalSources = decision.legal_sources || [];
+        const girSources = legalSources.filter(s => s.source_type === 'GIR');
+        const tgtcSources = legalSources.filter(s => s.source_type && s.source_type.startsWith('TGTC_'));
+        const fasilNotuSources = legalSources.filter(s => s.source_type === 'FASIL_NOTU');
 
-        {decision.applied_gir_rules && decision.applied_gir_rules.length > 0 && (
-          <div>
-            <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>
-              Uygulanan Genel Yorum Kuralları (GİR):
-            </span>
-            <ul style={{ listStyleType: 'disc', paddingLeft: '20px', fontSize: '0.84rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-              {decision.applied_gir_rules.map((rule, i) => (
-                <li key={i}>{rule}</li>
-              ))}
-            </ul>
+        return (
+          <div style={{
+            background: 'var(--bg-primary)',
+            padding: '24px',
+            borderRadius: '14px',
+            marginBottom: '24px',
+            border: '1.5px solid rgba(59, 130, 246, 0.25)',
+            boxShadow: '0 4px 20px rgba(0, 0, 0, 0.04)'
+          }}>
+            {/* Başlık ve Orijinallik Rozetleri */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', marginBottom: '18px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '14px' }}>
+              <div>
+                <h4 style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px', margin: 0 }}>
+                  <Scale size={22} color="var(--accent-blue)" />
+                  <span>Hukuki Dayanak ve Atıf Yapılan Resmi Mevzuat Maddeleri</span>
+                </h4>
+                <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '4px', marginBottom: 0 }}>
+                  Bu sonuca ulaşmak için yürürlükteki Resmi TGTC veritabanından çekilen kanuni maddeler ve yorum kuralları.
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.72rem', background: 'rgba(16, 185, 129, 0.1)', color: '#059669', padding: '4px 10px', borderRadius: '6px', border: '1px solid rgba(16, 185, 129, 0.25)', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                  <ShieldCheck size={14} />
+                  <span>Sıfır LLM Üretimi / Doğrudan DB Kaydı</span>
+                </span>
+                <span style={{ fontSize: '0.72rem', background: 'rgba(59, 130, 246, 0.1)', color: '#2563eb', padding: '4px 10px', borderRadius: '6px', border: '1px solid rgba(59, 130, 246, 0.2)', fontWeight: 600 }}>
+                  2026 TGTC & Resmi Gazete
+                </span>
+              </div>
+            </div>
+
+            {/* 1. Kategori: Uygulanan Genel Yorum Kuralları (GİR / GYK) */}
+            <div style={{ marginBottom: '22px' }}>
+              <span style={{ fontSize: '0.86rem', fontWeight: 800, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
+                <BookOpen size={16} color="var(--accent-blue)" />
+                <span>1. Uygulanan Genel Yorum Kuralları (GİR / GYK):</span>
+              </span>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {girSources.length > 0 ? (
+                  girSources.map((gir, idx) => (
+                    <div key={idx} style={{
+                      background: 'var(--bg-surface-subtle)',
+                      borderRadius: '10px',
+                      border: '1px solid var(--border-subtle)',
+                      padding: '14px 16px',
+                      borderLeft: '4px solid var(--accent-blue)'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap', gap: '8px' }}>
+                        <span style={{ fontWeight: 800, fontSize: '0.88rem', color: 'var(--text-primary)' }}>
+                          {gir.title || gir.reference_no}
+                        </span>
+                        <span style={{ fontSize: '0.72rem', background: 'rgba(59, 130, 246, 0.12)', color: 'var(--accent-blue)', padding: '2px 8px', borderRadius: '4px', fontWeight: 700 }}>
+                          {gir.reference_no}
+                        </span>
+                      </div>
+                      <p style={{ fontSize: '0.84rem', lineHeight: 1.6, color: 'var(--text-secondary)', margin: 0, fontStyle: 'italic' }}>
+                        "{gir.excerpt}"
+                      </p>
+                    </div>
+                  ))
+                ) : decision.applied_gir_rules && decision.applied_gir_rules.length > 0 ? (
+                  decision.applied_gir_rules.map((rule, idx) => (
+                    <div key={idx} style={{
+                      background: 'var(--bg-surface-subtle)',
+                      borderRadius: '10px',
+                      border: '1px solid var(--border-subtle)',
+                      padding: '12px 16px',
+                      borderLeft: '4px solid var(--accent-blue)',
+                      fontSize: '0.84rem',
+                      lineHeight: 1.6,
+                      color: 'var(--text-secondary)'
+                    }}>
+                      {rule}
+                    </div>
+                  ))
+                ) : null}
+              </div>
+            </div>
+
+            {/* 2. Kategori: Hiyerarşik Resmi Tarife Maddeleri (TGTC 2026) */}
+            <div style={{ marginBottom: '22px' }}>
+              <span style={{ fontSize: '0.86rem', fontWeight: 800, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
+                <Layers size={16} color="var(--accent-blue)" />
+                <span>2. Resmi Tarife Pozisyonu ve Hiyerarşik Madde Metinleri (Veritabanı Kaydı):</span>
+              </span>
+
+              {tgtcSources.length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {tgtcSources.map((src, idx) => (
+                    <div key={idx} style={{
+                      background: 'var(--bg-surface-subtle)',
+                      borderRadius: '8px',
+                      border: '1px solid var(--border-subtle)',
+                      padding: '12px 14px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'flex-start',
+                      gap: '12px'
+                    }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                          <span className="font-mono" style={{ fontWeight: 800, fontSize: '0.84rem', color: 'var(--text-primary)' }}>
+                            {src.reference_no}
+                          </span>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                            {src.title}
+                          </span>
+                        </div>
+                        <p style={{ fontSize: '0.84rem', lineHeight: 1.5, color: 'var(--text-secondary)', margin: 0 }}>
+                          {src.excerpt}
+                        </p>
+                      </div>
+                      <span style={{ fontSize: '0.68rem', background: 'rgba(107, 114, 128, 0.1)', color: 'var(--text-muted)', padding: '2px 6px', borderRadius: '4px', whiteSpace: 'nowrap' }}>
+                        Normatif Hüküm
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{
+                  background: 'var(--bg-surface-subtle)',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border-subtle)',
+                  padding: '12px 14px',
+                }}>
+                  <p style={{ fontSize: '0.88rem', lineHeight: 1.6, color: 'var(--text-primary)', margin: 0 }}>
+                    {statuteText}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* 3. Kategori: İlgili Fasıl ve Dışlama Notları */}
+            {fasilNotuSources.length > 0 && (
+              <div>
+                <span style={{ fontSize: '0.86rem', fontWeight: 800, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
+                  <FileText size={16} color="var(--accent-blue)" />
+                  <span>3. İlgili Fasıl ve Dışlama Notları (Veritabanı Orijinal Not Kaydı):</span>
+                </span>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {fasilNotuSources.map((notSrc, idx) => {
+                    const isExclusion = notSrc.title.toLowerCase().includes('dışlama');
+                    const isExpanded = !!expandedNotes[idx];
+                    return (
+                      <div key={idx} style={{
+                        background: isExclusion ? 'rgba(239, 68, 68, 0.03)' : 'var(--bg-surface-subtle)',
+                        borderRadius: '10px',
+                        border: `1px solid ${isExclusion ? 'rgba(239, 68, 68, 0.25)' : 'var(--border-subtle)'}`,
+                        padding: '14px 16px',
+                        borderLeft: `4px solid ${isExclusion ? '#ef4444' : 'var(--status-amber)'}`
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
+                          <span style={{ fontWeight: 800, fontSize: '0.88rem', color: isExclusion ? '#b91c1c' : 'var(--text-primary)' }}>
+                            {notSrc.title}
+                          </span>
+                          <span style={{
+                            fontSize: '0.72rem',
+                            background: isExclusion ? 'rgba(239, 68, 68, 0.12)' : 'rgba(245, 158, 11, 0.12)',
+                            color: isExclusion ? '#dc2626' : '#d97706',
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            fontWeight: 700
+                          }}>
+                            {isExclusion ? 'Dışlama Notu' : 'Fasıl Notu'}
+                          </span>
+                        </div>
+
+                        <pre style={{
+                          fontSize: '0.8rem',
+                          lineHeight: 1.55,
+                          color: 'var(--text-secondary)',
+                          whiteSpace: 'pre-wrap',
+                          fontFamily: 'inherit',
+                          margin: 0,
+                          maxHeight: isExpanded ? 'none' : '140px',
+                          overflow: 'hidden',
+                          position: 'relative'
+                        }}>
+                          {notSrc.excerpt}
+                        </pre>
+
+                        {notSrc.excerpt && notSrc.excerpt.length > 280 && (
+                          <button
+                            onClick={() => setExpandedNotes(prev => ({ ...prev, [idx]: !prev[idx] }))}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: 'var(--accent-blue)',
+                              fontSize: '0.76rem',
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              padding: '6px 0 0 0',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            {isExpanded ? 'Daha Az Göster' : 'Tüm Not Metnini Oku...'}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        );
+      })()}
 
       {/* 2. Yapay Zeka Ajan Değerlendirmesi */}
       {llmCommentary && (

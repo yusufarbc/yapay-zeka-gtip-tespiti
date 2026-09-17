@@ -489,13 +489,16 @@ class RAGEngine:
         product_text: str,
         level: str,
         nodes: List[Dict[str, Any]],
-    ) -> Tuple[Optional[Dict[str, Any]], Optional[DiscriminatorQuestion]]:
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[DiscriminatorQuestion], List[str], List[str]]:
         if not nodes:
-            return None, None
+            return None, None, [], []
         if len(nodes) == 1:
-            return nodes[0], None
+            return nodes[0], None, ["GIR_1", "GIR_6"], []
 
         selection = llm_verifier.select_tariff_node(product_text, level, nodes)
+        applied_gir_keys = list(getattr(selection, "applied_gir_keys", []) or [])
+        cited_chapter_notes = list(getattr(selection, "cited_chapter_notes", []) or [])
+
         if selection.status == CandidateSelectionStatus.SELECT:
             match = re.fullmatch(r"N([1-9][0-9]*)", selection.selected_candidate_id or "")
             index = int(match.group(1)) - 1 if match else -1
@@ -507,9 +510,9 @@ class RAGEngine:
                     _digits(nodes[index].get("gtip_code")),
                     len(nodes),
                 )
-                return nodes[index], None
+                return nodes[index], None, applied_gir_keys, cited_chapter_notes
             logger.error("Selector returned an option id outside the server-owned set")
-            return None, None
+            return None, None, applied_gir_keys, cited_chapter_notes
         if selection.status == CandidateSelectionStatus.INSUFFICIENT_INFORMATION:
             logger.info(
                 "Closed-set selection needs information level=%s alternatives=%s choices=%s",
@@ -517,7 +520,7 @@ class RAGEngine:
                 selection.alternative_candidate_ids,
                 len(nodes),
             )
-            return None, cls._question(session_id, level, nodes, selection)
+            return None, cls._question(session_id, level, nodes, selection), applied_gir_keys, cited_chapter_notes
         if level == "GTIP":
             residuals = [
                 node
@@ -530,41 +533,30 @@ class RAGEngine:
                     "Closed-set GTIP selection fell back to the single official residual leaf code=%s",
                     _digits(residuals[0].get("gtip_code")),
                 )
-                return residuals[0], None
-        return None, None
+                return residuals[0], None, applied_gir_keys, cited_chapter_notes
+        return None, None, applied_gir_keys, cited_chapter_notes
 
     @staticmethod
-    def _candidate(node: Dict[str, Any]) -> GTIPCandidate:
+    def _candidate(
+        node: Dict[str, Any],
+        applied_gir_keys: Optional[List[str]] = None,
+        cited_chapters: Optional[List[str]] = None,
+    ) -> GTIPCandidate:
         code = _digits(node.get("gtip_code"))
         description = _description(node)
+        from api.db.tgtc_knowledge_base import get_official_statute_records
+        official_sources = get_official_statute_records(
+            gtip_code=code,
+            applied_gir_keys=applied_gir_keys,
+            cited_chapters=cited_chapters,
+        )
         return GTIPCandidate(
             gtip_code=code,
             description=description,
             chapter=code[:2],
             heading=code[:4],
             score=0.90,
-            legal_sources=[
-                LegalSource(
-                    source_type="TGTC_2026",
-                    reference_no=code,
-                    title=f"2026 TGTC {code}",
-                    excerpt=description,
-                    legal_role="NORMATIVE",
-                    authority_level=1,
-                    effective_from="2026-01-01",
-                    is_binding=True,
-                ),
-                LegalSource(
-                    source_type="GIR",
-                    reference_no="GIR_1_6",
-                    title="Genel Yorum Kuralları 1 ve 6",
-                    excerpt="Pozisyon metni ve aynı düzeydeki alt pozisyonlar karşılaştırıldı.",
-                    legal_role="NORMATIVE",
-                    authority_level=1,
-                    effective_from="2026-01-01",
-                    is_binding=True,
-                ),
-            ],
+            legal_sources=official_sources,
             consulted_sources=["TGTC_2026", "GIR_1_6"],
         )
 
@@ -585,12 +577,26 @@ class RAGEngine:
         product_text = self._product_text(features)
         traversal: Dict[str, Any] = {"query_vector": query_vector}
 
+        applied_gir_keys: List[str] = list(traversal.get("applied_gir_keys") or [])
+        cited_chapter_notes: List[str] = list(traversal.get("cited_chapter_notes") or [])
+
+        def _merge_rules(g_keys: List[str], c_notes: List[str]):
+            for k in g_keys:
+                if k not in applied_gir_keys:
+                    applied_gir_keys.append(k)
+            for c in c_notes:
+                if c not in cited_chapter_notes:
+                    cited_chapter_notes.append(c)
+            traversal["applied_gir_keys"] = applied_gir_keys
+            traversal["cited_chapter_notes"] = cited_chapter_notes
+
         if not locked_chapter and allowed_chapters:
             locked_chapter = _digits(allowed_chapters[0]).zfill(2)
         if not locked_chapter:
-            node, question = self._select_node(
+            node, question, g_keys, c_notes = self._select_node(
                 session_id, product_text, "CHAPTER", self._chapter_nodes()
             )
+            _merge_rules(g_keys, c_notes)
             if question:
                 traversal.update({"pending_level": "CHAPTER", "branches": self._question_branches(question)})
                 return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
@@ -600,9 +606,10 @@ class RAGEngine:
         traversal.update({"locked_chapter": locked_chapter, "retained_chapters": [locked_chapter]})
 
         if not locked_heading:
-            node, question = self._select_node(
+            node, question, g_keys, c_notes = self._select_node(
                 session_id, product_text, "HEADING", self._heading_nodes(locked_chapter)
             )
+            _merge_rules(g_keys, c_notes)
             if question:
                 traversal.update({"pending_level": "HEADING", "branches": self._question_branches(question)})
                 return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
@@ -615,9 +622,10 @@ class RAGEngine:
 
         subheading_nodes = self._subheading_nodes(locked_heading)
         if not locked_subheading:
-            node, question = self._select_node(
+            node, question, g_keys, c_notes = self._select_node(
                 session_id, product_text, "SUBHEADING", subheading_nodes
             )
+            _merge_rules(g_keys, c_notes)
             if question:
                 traversal.update({"pending_level": "SUBHEADING", "branches": self._question_branches(question)})
                 return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
@@ -643,7 +651,8 @@ class RAGEngine:
                 for leaf in leaves
             ]
         if not locked_gtip:
-            node, question = self._select_node(session_id, product_text, "GTIP", leaves)
+            node, question, g_keys, c_notes = self._select_node(session_id, product_text, "GTIP", leaves)
+            _merge_rules(g_keys, c_notes)
             if question:
                 traversal.update({"pending_level": "GTIP", "branches": self._question_branches(question)})
                 return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
@@ -659,7 +668,7 @@ class RAGEngine:
             return HierarchicalSearchResult(traversal_state=traversal)
         traversal["locked_gtip"] = locked_gtip
         return HierarchicalSearchResult(
-            candidates=[self._candidate(selected_leaf)],
+            candidates=[self._candidate(selected_leaf, applied_gir_keys, cited_chapter_notes)],
             traversal_state=traversal,
         )
 

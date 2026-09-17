@@ -52,6 +52,8 @@ class LLMFactVerifier:
                 status=CandidateSelectionStatus.SELECT,
                 selected_candidate_id="N1",
                 reasoning_points=["Test ortamında ilk kapalı-küme seçeneği kullanıldı."],
+                applied_gir_keys=["GIR_1", "GIR_6"],
+                cited_chapter_notes=[],
             )
 
         payload = [
@@ -108,7 +110,9 @@ class LLMFactVerifier:
             "\"selected_candidate_id\":\"N1 veya null\","
             "\"alternative_candidate_ids\":[\"N1\",\"N2\"],"
             "\"question_text\":\"Türkçe soru veya null\","
-            "\"reasoning_points\":[\"kısa Türkçe gerekçe\"]}"
+            "\"reasoning_points\":[\"kısa Türkçe gerekçe\"],"
+            "\"applied_gir_keys\":[\"GIR_1\",\"GIR_3A\",\"GIR_3B\",\"GIR_6\"],"
+            "\"cited_chapter_notes\":[\"70\",\"76\"]}"
         )
 
         try:
@@ -133,10 +137,34 @@ class LLMFactVerifier:
                     time.sleep(0.35 * attempt)
             match = re.search(r"\{.*\}", response.text or "", re.DOTALL)
             data = json.loads(match.group(0) if match else (response.text or ""))
-            # Gemini sometimes emits JSON null for optional lists. Treat it as an
-            # empty list while keeping every returned option id strictly bounded.
             data["alternative_candidate_ids"] = data.get("alternative_candidate_ids") or []
             data["reasoning_points"] = data.get("reasoning_points") or []
+            data["applied_gir_keys"] = data.get("applied_gir_keys") or []
+            data["cited_chapter_notes"] = [str(c).zfill(2) for c in (data.get("cited_chapter_notes") or [])]
+
+            # Gelişmiş deterministik fallback: Model reasoning_points içine GİR veya fasıl yazmışsa
+            # ama applied_gir_keys listesine eklemeyi unutmuşsa bile kural kodlarını otomatik tamamla
+            full_reasoning_text = " ".join(data["reasoning_points"])
+            for g_code, aliases in [
+                ("GIR_1", ["GİR 1", "GYK 1", "GIR 1"]),
+                ("GIR_2A", ["GİR 2(a)", "GYK 2(a)", "GIR 2A", "GİR 2A", "GYK 2A"]),
+                ("GIR_2B", ["GİR 2(b)", "GYK 2(b)", "GIR 2B", "GİR 2B", "GYK 2B"]),
+                ("GIR_3A", ["GİR 3(a)", "GYK 3(a)", "GIR 3A", "GİR 3A", "GYK 3A"]),
+                ("GIR_3B", ["GİR 3(b)", "GYK 3(b)", "GIR 3B", "GİR 3B", "GYK 3B"]),
+                ("GIR_3C", ["GİR 3(c)", "GYK 3(c)", "GIR 3C", "GİR 3C", "GYK 3C"]),
+                ("GIR_4", ["GİR 4", "GYK 4", "GIR 4"]),
+                ("GIR_5A", ["GİR 5(a)", "GYK 5(a)", "GIR 5A"]),
+                ("GIR_5B", ["GİR 5(b)", "GYK 5(b)", "GIR 5B"]),
+                ("GIR_6", ["GİR 6", "GYK 6", "GIR 6"]),
+            ]:
+                if any(al in full_reasoning_text for al in aliases) and g_code not in data["applied_gir_keys"]:
+                    data["applied_gir_keys"].append(g_code)
+
+            for ch_match in re.findall(r"fas[iı]l\s*(\d{1,2})", full_reasoning_text, re.IGNORECASE):
+                ch_z = ch_match.zfill(2)
+                if ch_z not in data["cited_chapter_notes"]:
+                    data["cited_chapter_notes"].append(ch_z)
+
             selection = CandidateSelection(**data)
             valid_ids = set(option_map)
             if selection.status == CandidateSelectionStatus.SELECT:

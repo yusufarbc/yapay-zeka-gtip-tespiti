@@ -222,9 +222,11 @@ def test_model_selects_only_server_owned_option_ids(monkeypatch):
             selected_candidate_id="N2",
         ),
     )
-    selected, question = rag_engine._select_node("session", "buğday", "HEADING", nodes)
+    selected, question, applied_gir, cited_notes = rag_engine._select_node("session", "buğday", "HEADING", nodes)
     assert selected["gtip_code"] == "1001"
     assert question is None
+    assert isinstance(applied_gir, list)
+    assert isinstance(cited_notes, list)
 
 
 def test_hallucinated_option_id_is_rejected(monkeypatch):
@@ -238,7 +240,7 @@ def test_hallucinated_option_id_is_rejected(monkeypatch):
             selected_candidate_id="N999",
         ),
     )
-    selected, question = rag_engine._select_node(
+    selected, question, applied_gir, cited_notes = rag_engine._select_node(
         "session",
         "ahşap sandalye",
         "HEADING",
@@ -256,7 +258,7 @@ def test_gtip_no_match_uses_single_official_residual_leaf(monkeypatch):
         "api.modules.rag_engine.llm_verifier.select_tariff_node",
         lambda *args, **kwargs: CandidateSelection(status=CandidateSelectionStatus.NO_MATCH),
     )
-    selected, question = rag_engine._select_node(
+    selected, question, applied_gir, cited_notes = rag_engine._select_node(
         "session",
         "kablosuz kulaklık",
         "GTIP",
@@ -268,6 +270,47 @@ def test_gtip_no_match_uses_single_official_residual_leaf(monkeypatch):
 
     assert selected["gtip_code"] == "851830009000"
     assert question is None
+
+
+def test_official_statute_records_db_backed():
+    """Verifies that legal statute records come directly from DB/JSON without LLM rewriting."""
+    from api.db.tgtc_knowledge_base import get_official_statute_records, OFFICIAL_GIR_FULL_STATUTES
+
+    # 1. GİR rule fetching
+    sources = get_official_statute_records(
+        gtip_code="7610.10.00.00.19",
+        applied_gir_keys=["GIR_1", "GIR_3A", "GIR_3B", "GIR_6"],
+        cited_chapters=["70", "76"],
+    )
+
+    assert len(sources) >= 5, f"Expected at least 5 legal sources, got {len(sources)}"
+    titles = [s.title for s in sources]
+    ref_nos = [s.reference_no for s in sources]
+    source_types = [s.source_type for s in sources]
+
+    # Check GİR rules exist with exact statutory texts
+    assert any("1" in r for r in ref_nos)
+    assert any("3(a)" in r or "3(b)" in r for r in ref_nos)
+    assert any("6" in r for r in ref_nos)
+    assert "GIR" in source_types
+
+    # Check that GİR 1 has the exact verbatim law text
+    gir1_source = next(s for s in sources if "1" in s.reference_no)
+    assert "Bölüm, fasıl ve tali fasıl başlıkları" in gir1_source.excerpt
+
+    # Check that GİR 3(b) has essential character definition
+    gir3b_source = next(s for s in sources if "3(b)" in s.reference_no or "3(B)" in s.reference_no)
+    assert "esas niteliğini veren madde" in gir3b_source.excerpt
+
+    # Check 4-digit heading level
+    heading_source = next((s for s in sources if "76.10" in s.title or "7610" in s.title), None)
+    assert heading_source is not None
+    assert "aluminyum" in heading_source.excerpt.lower() or "alüminyum" in heading_source.excerpt.lower()
+
+    # Check Chapter 70 exclusion note exists
+    ch70_note = next((s for s in sources if "Fasıl 70" in s.title or "70" in s.title), None)
+    assert ch70_note is not None
+    assert "FASIL 70" in ch70_note.title or "Fasıl 70" in ch70_note.title
 
 
 def test_model_selector_retries_a_transient_provider_failure(monkeypatch):

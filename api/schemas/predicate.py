@@ -20,3 +20,6 @@ class CandidateSelection(BaseModel):
     alternative_candidate_ids: List[str] = Field(default_factory=list, max_length=4)
     question_text: Optional[str] = Field(default=None, max_length=1000)
     reasoning_points: List[str] = Field(default_factory=list, max_length=6)
+    applied_gir_keys: List[str] = Field(default_factory=list, max_length=10)
+    cited_chapter_notes: List[str] = Field(default_factory=list, max_length=10)
+
