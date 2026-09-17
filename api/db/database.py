@@ -294,6 +294,32 @@ class EmsalBtbKarariModel(Base):
     gecerlilik_tarihi = Column(String(30), nullable=False)
     icerik_vektor = Column(VectorType(768), nullable=True)
 
+
+class EbtiKarariModel(Base):
+    """Public EU BTI decisions, separate from Turkish BTB and tariff law."""
+
+    __tablename__ = "ebti_kararlari"
+    __table_args__ = (
+        UniqueConstraint("referans_no", "kaynak_ulke", name="uq_ebti_reference_country"),
+        Index("idx_ebti_cn_status", "cn_kodu_8hane", "durum"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    referans_no = Column(String(100), nullable=False)
+    kaynak_ulke = Column(String(2), nullable=False)
+    cn_kodu_8hane = Column(String(8), nullable=False, index=True)
+    urun_tanimi = Column(Text, nullable=False)
+    karar_gerekcesi = Column(Text, nullable=False, default="")
+    dil = Column(String(10), nullable=False, default="en")
+    karar_tarihi = Column(String(10), nullable=False)
+    gecerlilik_bitis = Column(String(10), nullable=True)
+    durum = Column(String(20), nullable=False, default="UNKNOWN")
+    kaynak_url = Column(Text, nullable=False)
+    gorsel_url = Column(Text, nullable=True)
+    embedding = Column(VectorType(768), nullable=True)
+    embedding_model = Column(String(100), nullable=True)
+    kaynak_guncelleme_tarihi = Column(String(10), nullable=True)
+
 # ==============================================================================
 # HEDEF NÖRO-SEMBOLİK TGTC VE ALLOYDB BİLGİ GRAFI MODELLERİ
 # ==============================================================================
@@ -602,6 +628,10 @@ def init_orm_tables():
                     conn.execute(text("""
                         CREATE INDEX IF NOT EXISTS idx_emsal_btb_embedding_hnsw 
                         ON emsal_btb_kararlari USING hnsw (icerik_vektor vector_cosine_ops);
+                    """))
+                    conn.execute(text("""
+                        CREATE INDEX IF NOT EXISTS idx_ebti_embedding_hnsw
+                        ON ebti_kararlari USING hnsw (embedding vector_cosine_ops);
                     """))
                     conn.commit()
                     logger.info("[SQLAlchemy ORM] PostgreSQL HNSW vektör kosinüs indeksleri doğrulandı.")

@@ -85,6 +85,21 @@ class PrecedentBTB(BaseModel):
     source_type: str = Field(default="BTB", max_length=50)
     source_url: Optional[str] = None
 
+
+class PrecedentEBTI(BaseModel):
+    reference_no: str
+    country: str
+    cn_code: str = Field(pattern=r"^\d{8}$")
+    issue_date: str
+    valid_until: Optional[str] = None
+    product_description: str
+    legal_justification: str = ""
+    legal_justification_tr: Optional[str] = None
+    language: str = "en"
+    similarity_score: float = Field(ge=0.0, le=1.0)
+    source_url: str
+    image_url: Optional[str] = None
+
 class GTIPCandidate(BaseModel):
     gtip_code: str = Field(description="12 Haneli GTİP Kodu (örn. 8471.30.00.00.11)", max_length=30)
     description: str = Field(description="TGTC Resmi Pozisyon Tanımı")
@@ -122,6 +137,7 @@ class GTIPDecision(BaseModel):
     legal_justification: Optional[str] = None
     applied_gir_rules: List[str] = Field(default_factory=list)
     precedent_btbs: List[PrecedentBTB] = Field(default_factory=list)
+    precedent_ebtis: List[PrecedentEBTI] = Field(default_factory=list)
     legal_sources: List[LegalSource] = Field(default_factory=list)
     consulted_sources: List[str] = Field(default_factory=list)
     hitl_question: Optional[HITLQuestion] = None

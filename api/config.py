@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     REASONING_LLM_MODEL: str = os.getenv("REASONING_LLM_MODEL", "gemini-2.5-flash")
     AUDITOR_LLM_MODEL: str = os.getenv("AUDITOR_LLM_MODEL", "gemini-2.5-flash")
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-005")
+    EBTI_EMBEDDING_MODEL: str = os.getenv("EBTI_EMBEDDING_MODEL", "text-multilingual-embedding-002")
     VECTOR_DIM: int = 768
 
     # Gemini Flash Thinking Parametreleri

@@ -159,3 +159,25 @@ CREATE TABLE IF NOT EXISTS official_btb_decisions (
 
 CREATE INDEX IF NOT EXISTS idx_btb_chapter ON official_btb_decisions(chapter_code);
 CREATE INDEX IF NOT EXISTS idx_btb_gtip ON official_btb_decisions(gtip_code);
+
+-- EU EBTI decisions are evidence at CN8 level; never a Turkish 12-digit ruling.
+CREATE TABLE IF NOT EXISTS ebti_kararlari (
+    id BIGSERIAL PRIMARY KEY,
+    referans_no VARCHAR(100) NOT NULL,
+    kaynak_ulke VARCHAR(2) NOT NULL,
+    cn_kodu_8hane VARCHAR(8) NOT NULL,
+    urun_tanimi TEXT NOT NULL,
+    karar_gerekcesi TEXT NOT NULL DEFAULT '',
+    dil VARCHAR(10) NOT NULL DEFAULT 'en',
+    karar_tarihi VARCHAR(10) NOT NULL,
+    gecerlilik_bitis VARCHAR(10),
+    durum VARCHAR(20) NOT NULL DEFAULT 'UNKNOWN',
+    kaynak_url TEXT NOT NULL,
+    gorsel_url TEXT,
+    embedding vector(768),
+    embedding_model VARCHAR(100),
+    kaynak_guncelleme_tarihi VARCHAR(10),
+    CONSTRAINT uq_ebti_reference_country UNIQUE (referans_no, kaynak_ulke)
+);
+CREATE INDEX IF NOT EXISTS idx_ebti_cn_status ON ebti_kararlari(cn_kodu_8hane, durum);
+CREATE INDEX IF NOT EXISTS idx_ebti_embedding_hnsw ON ebti_kararlari USING hnsw (embedding vector_cosine_ops);
