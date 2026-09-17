@@ -20,7 +20,7 @@ from api.db.gcp_emulator import local_state_store
 from api.modules.discriminator_engine import DiscriminatorQuestion
 from api.modules.feature_extractor import feature_extractor
 from api.modules.rag_engine import HierarchicalSearchResult, rag_engine
-from api.schemas.product import GTIPCandidate, GTIPDecision, HITLOption, HITLQuestion, PrecedentBTB, ProductFeatures
+from api.schemas.product import GTIPCandidate, GTIPDecision, HITLOption, HITLQuestion, LegalSource, PrecedentBTB, ProductFeatures
 
 
 logger = logging.getLogger("GTIPWorkflowEngine")
@@ -173,8 +173,48 @@ class GTIPWorkflowEngine:
             if _format_gtip_code(item.get("gtip_code")) == _format_gtip_code(locked_digits)
         ][:3]
         precedents = list(candidate.precedents or stored_precedents)
+
+        # EBTI emsalleri: traversal state'den al; CN-8 kodu ile filtreleme yap
+        from api.schemas.product import PrecedentEBTI
+        raw_ebti = traversal.get("ebti_precedents") or []
+        ebti_precedents: List[PrecedentBTB] = []
+        for item in raw_ebti:
+            try:
+                ep = PrecedentEBTI(**item)
+                # CN-8 eşleşmesi kontrolü: Türk GTİP ilk 8 hanesi == EBTI CN-8
+                if not ep.cn_code or locked_digits[:8] == ep.cn_code:
+                    ebti_precedents.append(ep)
+                elif not locked_digits:
+                    ebti_precedents.append(ep)
+            except Exception:
+                pass
+        ebti_precedents = ebti_precedents[:3]
+
         selection_source = traversal.get("selection_source")
         is_exact_btb = selection_source == "BTB_EXACT"
+        has_ebti = len(ebti_precedents) > 0
+
+        # Danışılan kaynaklar listesi
+        consulted = list(dict.fromkeys(candidate.consulted_sources + ["BTB", "TGTC_2026", "GIR_1_6"]))
+        if has_ebti:
+            consulted = list(dict.fromkeys(consulted + ["EU_EBTI"]))
+
+        # EBTI emsalleri varsa legal_sources'a da ekle
+        ebti_legal_sources = [
+            LegalSource(
+                source_type="EU_EBTI",
+                reference_no=ep.reference_no,
+                title=f"AB EBTI {ep.reference_no} ({ep.country})",
+                publication_date=ep.issue_date or None,
+                excerpt=ep.product_description[:300],
+                source_url=ep.source_url,
+                legal_role="INDIVIDUAL_PRECEDENT",
+                authority_level=4,
+                is_binding=False,
+            )
+            for ep in ebti_precedents
+        ] if has_ebti else []
+
         decision = GTIPDecision(
             session_id=session_id,
             status="COMPLETED",
@@ -198,8 +238,9 @@ class GTIPWorkflowEngine:
                 "GİR 6: Aynı üst düğümdeki resmi alt pozisyonların karşılaştırılması.",
             ],
             precedent_btbs=precedents,
-            legal_sources=candidate.legal_sources,
-            consulted_sources=list(dict.fromkeys(candidate.consulted_sources + ["BTB", "TGTC_2026", "GIR_1_6"])),
+            precedent_ebtis=ebti_precedents,
+            legal_sources=candidate.legal_sources + ebti_legal_sources,
+            consulted_sources=consulted,
             trade_measures=get_customs_trade_measures(formatted_code),
             state_machine_stage="MODEL_CLOSED_SET_COMPLETED",
             guardrail_status="VERIFIED_LEAF",
@@ -211,6 +252,10 @@ class GTIPWorkflowEngine:
                     else "Model serbest GTİP kodu üretmedi; yalnız sunulan seçenek kimliğini seçti."
                 ),
                 "Kod, ebeveyn yolu, 12 haneli yaprak ve yürürlük durumu sunucuda doğrulandı.",
+                *(
+                    [f"AB EBTI emsali bulundu: {len(ebti_precedents)} karar (CN-8 uyumu ile)."]
+                    if has_ebti else []
+                ),
             ],
         )
         local_state_store.save_state(session_id, {
@@ -257,6 +302,12 @@ class GTIPWorkflowEngine:
         started = time.perf_counter()
         features = feature_extractor.extract_features(raw_text, image_uri)
         btb_precedents = rag_engine.search_btb_precedents(raw_text)
+        # EBTI araması: BTB aramasından bağımsız çalışır, hata durumunda boş liste döner
+        try:
+            ebti_precedents = rag_engine.search_ebti_precedents(raw_text)
+        except Exception as exc_ebti:
+            logger.warning("EBTI emsal araması atlandı: %s", exc_ebti)
+            ebti_precedents = []
         exact_btb = rag_engine.exact_btb_candidate(btb_precedents)
         if exact_btb:
             tree_result = HierarchicalSearchResult(
@@ -268,6 +319,7 @@ class GTIPWorkflowEngine:
                     "locked_gtip": _format_gtip_code(exact_btb.gtip_code).replace(".", ""),
                     "selection_source": "BTB_EXACT",
                     "btb_precedents": [item.model_dump() for item in btb_precedents],
+                    "ebti_precedents": [item.model_dump() for item in ebti_precedents],
                 },
             )
         else:
@@ -275,14 +327,20 @@ class GTIPWorkflowEngine:
             tree_result.traversal_state["btb_precedents"] = [
                 item.model_dump() for item in btb_precedents
             ]
+            tree_result.traversal_state["ebti_precedents"] = [
+                item.model_dump() for item in ebti_precedents
+            ]
         logger.info(
-            "[PipelineTiming] session=%s stage=model_closed_set duration_ms=%.2f",
+            "[PipelineTiming] session=%s stage=model_closed_set duration_ms=%.2f btb_hits=%d ebti_hits=%d",
             session_id,
             (time.perf_counter() - started) * 1000,
+            len(btb_precedents),
+            len(ebti_precedents),
         )
         if tree_result.discriminator_question:
             return self._pause(session_id, raw_text, image_uri, features, tree_result)
         return self._complete(session_id, raw_text, image_uri, features, tree_result)
+
 
     async def start_analysis_async(self, raw_text: str, image_uri: str = None) -> GTIPDecision:
         return await asyncio.to_thread(self.start_analysis, raw_text, image_uri)

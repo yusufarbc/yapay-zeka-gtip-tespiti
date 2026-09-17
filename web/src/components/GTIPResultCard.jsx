@@ -241,7 +241,7 @@ export const GTIPResultCard = ({ decision }) => {
         <div style={{ marginBottom: '24px' }}>
           <h4 style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Award size={18} color="var(--status-amber)" />
-            <span>Ticaret Bakanlığı Emsal BTB Kararları (%70 Ağırlık):</span>
+            <span>Ticaret Bakanlığı Emsal BTB Kararları (Ağırlık: %50):</span>
           </h4>
 
           <div style={{ overflowX: 'auto', borderRadius: '10px', border: '1px solid var(--border-subtle)' }}>
@@ -268,6 +268,122 @@ export const GTIPResultCard = ({ decision }) => {
           </div>
         </div>
       )}
+
+      {/* AB EBTI Uluslararası Emsal Kararları (Yeni Bölüm) */}
+      {decision.precedent_ebtis && decision.precedent_ebtis.length > 0 && (
+        <div style={{ marginBottom: '24px' }}>
+          <h4 style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Award size={18} color="#3b82f6" />
+            <span>🇪🇺 AB EBTI Uluslararası Emsal Kararları (Ağırlık: %30):</span>
+          </h4>
+          <p style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.4 }}>
+            EC DG TAXUD Avrupa Bağlayıcı Tarife Bilgisi — Gümrük Birliği (1/95 OKK) kapsamında teknik delil.
+            Türkiye gümrüklerinde idari bağlayıcı olmamakla birlikte ihtilaflarda en güçlü uluslararası emsal niteliğindedir.
+          </p>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {decision.precedent_ebtis.map((ebti, idx) => {
+              const countryFlags = {
+                DE: '🇩🇪', FR: '🇫🇷', NL: '🇳🇱', BE: '🇧🇪', IT: '🇮🇹',
+                ES: '🇪🇸', PL: '🇵🇱', AT: '🇦🇹', SE: '🇸🇪', DK: '🇩🇰',
+                FI: '🇫🇮', PT: '🇵🇹', GR: '🇬🇷', CZ: '🇨🇿', HU: '🇭🇺',
+              };
+              const flag = countryFlags[ebti.country] || '🇪🇺';
+              const similarityPct = Math.round((ebti.similarity_score || 0) * 100);
+              const langLabels = { en: 'İngilizce', de: 'Almanca', fr: 'Fransızca', it: 'İtalyanca', es: 'İspanyolca', pl: 'Lehçe', nl: 'Hollandaca' };
+              const langLabel = langLabels[ebti.language] || ebti.language;
+              const ecSearchUrl = `https://ec.europa.eu/taxation_customs/dds2/ebti/ebti_consultation.jsp?Lang=en&Status=VALID&reference=${encodeURIComponent(ebti.reference_no)}`;
+
+              return (
+                <div key={idx} style={{
+                  background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.04), rgba(147, 197, 253, 0.06))',
+                  border: '1px solid rgba(59, 130, 246, 0.2)',
+                  borderRadius: '10px',
+                  padding: '14px 16px',
+                  display: 'grid',
+                  gridTemplateColumns: 'auto 1fr auto',
+                  gap: '12px',
+                  alignItems: 'start'
+                }}>
+                  {/* Sol: Ülke ve CN kodu */}
+                  <div style={{ textAlign: 'center', minWidth: '64px' }}>
+                    <div style={{ fontSize: '1.6rem', lineHeight: 1 }}>{flag}</div>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 700, marginTop: '2px' }}>{ebti.country}</div>
+                    <div className="font-mono" style={{ fontSize: '0.72rem', color: '#3b82f6', fontWeight: 800, marginTop: '4px', background: 'rgba(59,130,246,0.1)', padding: '2px 6px', borderRadius: '4px' }}>
+                      CN {ebti.cn_code}
+                    </div>
+                  </div>
+
+                  {/* Orta: Referans ve açıklama */}
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' }}>
+                      <span className="font-mono" style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                        {ebti.reference_no}
+                      </span>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', background: 'var(--bg-surface-subtle)', padding: '2px 6px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
+                        {ebti.issue_date}
+                      </span>
+                      {ebti.valid_until && (
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                          → {ebti.valid_until}
+                        </span>
+                      )}
+                      <span style={{ fontSize: '0.7rem', color: '#64748b', fontStyle: 'italic' }}>
+                        ({langLabel})
+                      </span>
+                    </div>
+                    <p style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', lineHeight: 1.5, margin: 0 }}>
+                      {ebti.product_description}
+                    </p>
+                    {ebti.legal_justification && (
+                      <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.4, marginTop: '6px', fontStyle: 'italic' }}>
+                        📋 {ebti.legal_justification.substring(0, 200)}{ebti.legal_justification.length > 200 ? '...' : ''}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Sağ: Benzerlik skoru ve EC linki */}
+                  <div style={{ textAlign: 'right', minWidth: '80px' }}>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#3b82f6', lineHeight: 1 }}>
+                      %{similarityPct}
+                    </div>
+                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: '8px' }}>benzerlik</div>
+                    <a
+                      href={ecSearchUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        fontSize: '0.72rem',
+                        color: '#3b82f6',
+                        textDecoration: 'none',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '3px',
+                        background: 'rgba(59,130,246,0.1)',
+                        padding: '4px 8px',
+                        borderRadius: '6px',
+                        border: '1px solid rgba(59,130,246,0.2)',
+                        fontWeight: 600,
+                        whiteSpace: 'nowrap'
+                      }}
+                      title="EC EBTI Kararı Görüntüle"
+                    >
+                      🔗 EC TAXUD
+                    </a>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '8px', lineHeight: 1.4, fontStyle: 'italic' }}>
+            * AB Kombine Nomanklatürü (CN) ilk 8 hanesi Türk GTİP'i ile %100 uyumludur. EBTI kararları Türk gümrük mevzuatında
+            bağlayıcı olmamakla birlikte 4458 sayılı Gümrük Kanunu md. 23 ve Gümrük Yönetmeliği md. 66 uyarınca yapılan
+            itirazlarda Bölge Müdürlükleri ve İdare Mahkemelerinde teknik delil olarak kabul görmektedir.
+          </p>
+        </div>
+      )}
+
 
       {/* Alt Aksiyon Butonları */}
       <div style={{

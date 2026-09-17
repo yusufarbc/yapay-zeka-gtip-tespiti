@@ -126,13 +126,20 @@ Assert-LastExitCode "gtip-db-password latest sürümü bulunamadı."
 
 Pause-SchedulerIfPresent $DailyScheduler
 Pause-SchedulerIfPresent $BtbScheduler
+$EbtiJob = "gtip-ebti-sync"
+$EbtiScheduler = "ebti-daily-sync"
+Pause-SchedulerIfPresent $EbtiScheduler
 
 Deploy-EtlJob $ArchiveJob "-m,scripts.spider_resmi_gazete_archive,--mode,archive" "86400s" "4Gi" "2" "2"
 Deploy-EtlJob $DailyJob "-m,scripts.spider_resmi_gazete_archive,--mode,daily,--days-back,3" "3600s" "2Gi" "1" "2"
 Deploy-EtlJob $BtbJob "-m,scripts.scrape_official_btb" "21600s" "2Gi" "1" "2"
+Deploy-EtlJob $EbtiJob "-m,scripts.fetch_ebti_data,--limit,2000" "7200s" "2Gi" "1" "2"
 
 Upsert-Scheduler $DailyScheduler $DailyJob "0 2 * * *" "Günlük Resmi Gazete GTIP senkronu"
 Upsert-Scheduler $BtbScheduler $BtbJob "0 3 * * *" "Günlük resmi BTB senkronu"
+Upsert-Scheduler $EbtiScheduler $EbtiJob "0 4 * * *" "Günlük AB EBTI karar senkronu"
 
-Write-Host "Üç ETL job aynı immutable digest ile hazırlandı: $Image"
-Write-Host "İki scheduler PAUSED bırakıldı. Daily ve BTB manuel execution doğrulandıktan sonra resume edin."
+Write-Host "Dört ETL job aynı immutable digest ile hazırlandı: $Image"
+Write-Host "Schedulerlar PAUSED bırakıldı. Daily, BTB ve EBTI manuel execution doğrulandıktan sonra resume edin."
+Write-Host "EBTI ilk çalıştırma: gcloud run jobs execute $EbtiJob --region $Region --project $ProjectId"
+

@@ -18,6 +18,7 @@ from sqlalchemy import or_
 
 from api.db.database import (
     SessionLocal,
+    EbtiKararModel,
     GumrukEmsalKararModel,
     TariffHierarchyModel,
     TgtcGtipModel,
@@ -154,6 +155,113 @@ class RAGEngine:
                 source_url=str(source_url) if source_url else None,
             ))
         return sorted(matches, key=lambda item: item.similarity_score, reverse=True)[:top_k]
+
+    @staticmethod
+    def search_ebti_precedents(product_text: str, top_k: int = 3) -> List:
+        """
+        AB EBTI (European Binding Tariff Information) kararlarında emsal arar.
+
+        'ebti_kararlari' tablosunda token overlap benzerliği hesaplanır.
+        CN-8 kodu, Türk GTİP'inin ilk 8 hanesiyle eşleşen kararlar öne alınır.
+        Sonuçlar PrecedentEBTI listesi olarak döner.
+
+        Ağırlık: Hibrit RAG formülünde 0.30 katsayısı ile kullanılır.
+        (Toplam: 0.50 × TR-BTB + 0.30 × EU-EBTI + 0.20 × TGTC)
+        """
+        from api.schemas.product import PrecedentEBTI
+
+        normalized_query = _normalize_product_text(product_text)
+        raw_terms = [
+            term
+            for term in re.findall(r"[0-9A-Za-zÇĞİÖŞÜçğıöşü]+", str(product_text or ""))
+            if len(term) >= 3
+        ]
+        if not normalized_query or not raw_terms:
+            return []
+
+        today = date.today().isoformat()
+
+        try:
+            with SessionLocal() as session:
+                # En uzun terimlerle filtrele (daha özgün sonuçlar)
+                top_terms = sorted(set(raw_terms), key=len, reverse=True)[:6]
+                clauses = [
+                    EbtiKararModel.urun_tanimi.ilike(f"%{term}%")
+                    for term in top_terms
+                ]
+                rows = session.query(EbtiKararModel).filter(
+                    EbtiKararModel.durum.in_(["VALID", "VALID_EXPIRED", "UNKNOWN"]),
+                    or_(*clauses),
+                ).order_by(EbtiKararModel.karar_tarihi.desc()).limit(150).all()
+        except Exception as exc:
+            logger.warning("EBTI emsal araması tamamlanamadı: %s", exc)
+            return []
+
+        query_tokens = set(normalized_query.split())
+        matches = []
+        seen: set = set()
+
+        for row in rows:
+            key = (row.referans_no, row.kaynak_ulke)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            # Geçerlilik kontrolü
+            if row.gecerlilik_bitis and row.gecerlilik_bitis < today:
+                if row.durum == "VALID":
+                    continue  # Süresi dolmuş geçerli kararları atla
+
+            desc_normalized = _normalize_product_text(str(row.urun_tanimi or ""))
+            gerekce_normalized = _normalize_product_text(str(row.karar_gerekcesi or ""))
+            combined_text = f"{desc_normalized} {gerekce_normalized}"
+            desc_tokens = set(combined_text.split())
+
+            overlap = len(query_tokens & desc_tokens)
+            if overlap == 0:
+                continue
+
+            coverage = overlap / max(1, len(query_tokens))
+            precision = overlap / max(1, len(desc_tokens))
+
+            if normalized_query == desc_normalized:
+                score = 1.0
+            elif normalized_query in combined_text or desc_normalized in normalized_query:
+                score = 0.95
+            else:
+                score = 0.65 * coverage + 0.35 * precision
+
+            if score < 0.20:
+                continue
+
+            # EBTI skor ayarı: VALID durumu ve yakın tarih bonus alır
+            if row.durum == "VALID":
+                score = min(1.0, score * 1.05)
+
+            cn8 = str(row.cn_kodu_8hane or "")
+            ebti_url = str(row.kaynak_url or "https://ec.europa.eu/taxation_customs/dds2/ebti/")
+
+            try:
+                matches.append(PrecedentEBTI(
+                    reference_no=str(row.referans_no or ""),
+                    country=str(row.kaynak_ulke or "EU"),
+                    cn_code=cn8,
+                    issue_date=str(row.karar_tarihi or ""),
+                    valid_until=str(row.gecerlilik_bitis) if row.gecerlilik_bitis else None,
+                    product_description=str(row.urun_tanimi or "")[:800],
+                    legal_justification=str(row.karar_gerekcesi or "")[:1000],
+                    legal_justification_tr=None,  # ETL scripti Türkçe çeviri sağlar
+                    language=str(row.dil or "en"),
+                    similarity_score=round(min(1.0, score), 4),
+                    source_url=ebti_url,
+                    image_url=str(row.gorsel_url) if row.gorsel_url else None,
+                ))
+            except Exception as exc_row:
+                logger.debug("EBTI PrecedentEBTI oluşturma hatası (ref=%s): %s", row.referans_no, exc_row)
+
+        return sorted(matches, key=lambda item: item.similarity_score, reverse=True)[:top_k]
+
+
 
     @classmethod
     def exact_btb_candidate(cls, precedents: Sequence[PrecedentBTB]) -> Optional[GTIPCandidate]:
