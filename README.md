@@ -100,20 +100,34 @@ Seçim promptuna giren üç kanıt ayrı ayrı kapatılabilir:
 Bu, her maddenin doğruluk katkısını tek tek ölçmeyi sağlar; aynı zamanda bir madde
 üretimde doğruluğu düşürürse yeniden deploy etmeden kapatma imkânı verir.
 
-Ölçüm sırası — **önce baseline**, sonra maddeler tek tek eklenir:
+Ölçüm sırası — **önce baseline**, sonra maddeler tek tek eklenir. Bayraklar ortam
+değişkeni olduğu için job çalıştırmasında `--update-env-vars` ile geçici olarak
+kapatılabilir; job tanımı değişmez:
 
 ```powershell
+$j = @('--region','us-central1','--project','gumruk-mevzuat','--wait')
+
 # 1. Baseline: tüm kanıt kapalı (kanıt zinciri öncesi davranış)
-gcloud.cmd run jobs execute gtip-benchmark --region us-central1 --args='-m,scripts.evaluate_gtip_benchmark,--sample,300,--baseline-run' --wait
+gcloud.cmd run jobs execute gtip-benchmark @j --update-env-vars `
+  SELECTION_USE_RAW_TEXT=false,SELECTION_USE_PRECEDENTS=false,SELECTION_USE_CHAPTER_NOTES=false
 
 # 2. Yalnız ham beyan açık
-... --args='-m,scripts.evaluate_gtip_benchmark,--sample,300,--ablate,SELECTION_USE_PRECEDENTS,--ablate,SELECTION_USE_CHAPTER_NOTES'
+gcloud.cmd run jobs execute gtip-benchmark @j --update-env-vars `
+  SELECTION_USE_PRECEDENTS=false,SELECTION_USE_CHAPTER_NOTES=false
 
 # 3. Ham beyan + emsaller
-... --args='-m,scripts.evaluate_gtip_benchmark,--sample,300,--ablate,SELECTION_USE_CHAPTER_NOTES'
+gcloud.cmd run jobs execute gtip-benchmark @j --update-env-vars SELECTION_USE_CHAPTER_NOTES=false
 
 # 4. Hepsi açık (varsayılan üretim davranışı)
-... --args='-m,scripts.evaluate_gtip_benchmark,--sample,300'
+gcloud.cmd run jobs execute gtip-benchmark @j
+```
+
+Yerelde aynı ablasyon betiğin kendi bayraklarıyla yapılır:
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.evaluate_gtip_benchmark --sample 300 --baseline-run
+.\.venv\Scripts\python.exe -m scripts.evaluate_gtip_benchmark --sample 300 `
+  --ablate SELECTION_USE_CHAPTER_NOTES
 ```
 
 Her rapor hangi bayrakların açık olduğunu `evidence_flags` alanında saklar; karşılaştırma
@@ -174,6 +188,33 @@ bile sürekli açık instance olarak faturalanır.
 
 Ayrıntılı geri yükleme, IAM, smoke test ve rollback kapıları için
 [GCP dağıtım planına](gcp_deploy_plan.md) bakın.
+
+## İzleme ve alarm
+
+Uygulama logları Cloud Logging'e yapılandırılmış JSON olarak gider (`api/logging_config.py`).
+Bu olmadan `severity` alanı boş kalıyor, `logger.error` ile `logger.info` aynı seviyede
+görünüyor ve hata üzerine alarm kurulamıyordu.
+
+Log-based metric'ler yapılandırılmış loglamayı içeren sürüm **deploy edildikten sonra**
+kurulur (filtreler `jsonPayload` alanlarına dayanır):
+
+```powershell
+.\scripts\setup_log_metrics.ps1
+```
+
+| Metrik | Ne izler |
+|---|---|
+| `gtip_analysis_errors` | `severity>=ERROR` uygulama hataları |
+| `gtip_manual_review` | Manuel incelemeye düşen kararlar |
+| `gtip_hitl_questions` | Müşavire teknik ayrım sorusu yöneltilen kararlar |
+| `gtip_fabricated_ruling_guard` | Uydurma emsal üretiminin geri gelmediğini doğrular — **sıfır kalmalı** |
+
+Analiz akışı her kararda yapılandırılmış alanlar basar: `session_id`, `decision_status`,
+`duration_ms`, `btb_hits`, `ebti_hits`, `gtip_code`, `confidence_score`. Metrikler bu
+alanlardan doğrudan türetilir; metin ayrıştırmaya gerek yoktur.
+
+Alarm eşikleri, metrikler gerçek dağılımı gösterecek kadar veri topladıktan sonra
+Cloud Monitoring üzerinden tanımlanmalıdır.
 
 ## Git bağlantısı
 
