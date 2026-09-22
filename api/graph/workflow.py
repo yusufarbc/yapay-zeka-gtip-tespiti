@@ -125,6 +125,11 @@ def compute_confidence(
     # Model hiçbir özel dalı eşleştiremedi, kalan tek "diğerleri" dalına düşüldü.
     if traversal.get("used_residual_fallback"):
         score -= 0.25
+    # İlk fasıl seçimi hiçbir pozisyonla eşleşmedi ve geri alındı. Varılan sonuç
+    # doğru olabilir ama modelin ilk kararı yanlıştı; bu zayıf bir kanıt durumudur
+    # ve otomatik onaydan uzak tutulmalıdır.
+    if traversal.get("used_chapter_backtrack"):
+        score -= 0.15
 
     return round(max(0.0, min(0.99, score)), 3)
 
