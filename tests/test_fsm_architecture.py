@@ -503,3 +503,38 @@ def test_feature_extractor_cam_balkon_architectural_composite():
     assert "çelik" in steel_features.primary_material.lower()
     assert "cam" in steel_features.primary_material.lower()
 
+
+
+def test_static_option_block_precedes_variable_product_text(monkeypatch):
+    """
+    Sabit seçenek listesi, değişken ürün metninden ÖNCE gelmelidir.
+
+    Fasıl seviyesinde seçenek listesi tek başına ~20.000 token'dır ve her istekte
+    birebir aynıdır. Değişken metin öne alınırsa istekler arasında ortak ön-ek
+    kalmaz ve prompt önbelleklemesi imkânsızlaşır.
+    """
+    from api.modules import llm_verifier as verifier_module
+
+    captured = {}
+
+    class Models:
+        def generate_content(self, **kwargs):
+            captured["prompt"] = kwargs["contents"]
+            return SimpleNamespace(text='{"status":"SELECT","selected_candidate_id":"N1"}')
+
+    monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr("api.modules.vertex_client.get_genai_client",
+                        lambda: SimpleNamespace(models=Models()))
+
+    verifier_module.llm_verifier.select_tariff_node(
+        "BENZERSIZ-URUN-METNI",
+        "HEADING",
+        [{"gtip_code": "8471", "description": "Otomatik bilgi işleme makinaları"},
+         {"gtip_code": "8517", "description": "Telefon cihazları"}],
+    )
+
+    prompt = captured["prompt"]
+    assert prompt.index("KAPALI SEÇENEKLER") < prompt.index("<product_data>")
+    # Ürün metni ön-ekin dışında kalmalı: aksi halde ortak ön-ek sıfırlanır.
+    assert "BENZERSIZ-URUN-METNI" not in prompt[: prompt.index("KAPALI SEÇENEKLER")]

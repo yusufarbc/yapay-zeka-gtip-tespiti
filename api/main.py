@@ -11,6 +11,12 @@ from typing import Annotated, Optional, List, Any, Dict
 from pydantic import BaseModel
 
 from api.config import settings
+from api.logging_config import configure as configure_logging
+
+# Cloud Logging severity'sinin dolması için kök logger uygulama kurulmadan önce
+# yapılandırılır; aksi halde logger.error çağrıları da INFO olarak görünür.
+configure_logging()
+
 from api.schemas.product import GTIPDecision, HITLResponse, InternationalRuling
 from api.schemas.audit import AuditLogEntry, AuditLogQueryResponse
 from api.graph.workflow import workflow_engine
@@ -18,6 +24,7 @@ from api.exporter import pdf_exporter
 from api.db.audit_logger import audit_logger
 from api.db.gcp_emulator import local_state_store
 from api.db.database import (
+    SessionLocal,
     init_orm_tables, get_db, TgtcGtipModel, TgtcRuleModel, TgtcNoteModel,
     GumrukEmsalKararModel, GumrukSiniflandirmaKarariModel, GumrukMevzuatMaddesiModel
 )
@@ -635,6 +642,88 @@ async def get_bulk_pdf_report(payload: BulkPDFRequest, request: Request):
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=toplu_gtip_raporu_{len(decisions)}_adet.pdf"}
     )
+
+class DecisionCorrectionRequest(BaseModel):
+    correct_gtip: Annotated[str, StringConstraints(min_length=4, max_length=30)] = Field(
+        ..., description="Müşavirin doğru bulduğu 12 haneli GTİP kodu"
+    )
+    reason: Annotated[str, StringConstraints(min_length=3, max_length=2000)] = Field(
+        ..., description="Düzeltme gerekçesi"
+    )
+
+
+@app.post("/api/v1/decisions/{session_id}/correct")
+async def correct_decision(session_id: str, payload: DecisionCorrectionRequest, request: Request):
+    """
+    Kıdemli müşavirin yanlış bulduğu bir kararı düzeltmesini kaydeder.
+
+    Geri bildirim döngüsünün yazma ucudur: `classification_run` tablosunda
+    biriken düzeltmeler hem regresyon setini hem de few-shot emsal havuzunu
+    besler. Düzeltilen kod da modelinki gibi yürürlük kapısından geçirilir;
+    insan girdisi doğrulamayı atlamaz.
+    """
+    from api.security.auth import require_admin_user
+    from api.db.database import ClassificationRunModel, validate_leaf_gtip
+
+    user_session = require_admin_user(request)
+    clean_code = re.sub(r"\D", "", payload.correct_gtip)
+    if len(clean_code) != 12:
+        raise HTTPException(status_code=400, detail="GTİP kodu 12 haneli olmalıdır.")
+
+    with SessionLocal() as db_session:
+        is_valid_leaf, _ = validate_leaf_gtip(db_session, clean_code)
+        if not is_valid_leaf:
+            raise HTTPException(
+                status_code=400,
+                detail="Girilen kod yürürlükteki TGTC veritabanında aktif 12 haneli yaprak değil.",
+            )
+
+        run = (
+            db_session.query(ClassificationRunModel)
+            .filter(ClassificationRunModel.session_id == session_id)
+            .order_by(ClassificationRunModel.created_at.desc())
+            .first()
+        )
+        if not run:
+            raise HTTPException(status_code=404, detail="Bu oturuma ait karar kaydı bulunamadı.")
+
+        # Commit sonrası ORM nesnesi expire olur; gerekli alanlar önce alınır.
+        previous_gtip = run.selected_gtip
+        product_text = (run.query_text or "")[:200]
+        previous_confidence = run.confidence_score or 0.0
+
+        run.status = "CORRECTED_BY_BROKER"
+        run.selected_gtip = clean_code
+        db_session.commit()
+
+    audit_logger.log_decision(AuditLogEntry(
+        session_id=session_id,
+        user_email=user_session.email,
+        user_role=user_session.role,
+        product_name=product_text,
+        initial_gtip_proposed=previous_gtip,
+        final_gtip_approved=clean_code,
+        confidence_score=previous_confidence,
+        is_hitl_triggered=True,
+        user_feedback=payload.reason,
+        execution_time_ms=0.0,
+    ))
+    logger.info(
+        "Karar müşavir tarafından düzeltildi",
+        extra={
+            "session_id": session_id,
+            "previous_gtip": previous_gtip,
+            "corrected_gtip": clean_code,
+            "corrected_by": user_session.email,
+        },
+    )
+    return {
+        "session_id": session_id,
+        "previous_gtip": previous_gtip,
+        "corrected_gtip": clean_code,
+        "status": "CORRECTED_BY_BROKER",
+    }
+
 
 @app.get("/api/v1/audit/logs", response_model=AuditLogQueryResponse)
 async def get_audit_logs(request: Request, limit: int = Query(default=50, ge=1, le=200)):

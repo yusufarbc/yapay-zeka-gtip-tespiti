@@ -154,6 +154,13 @@ class GTIPDecision(BaseModel):
     precedent_btbs: List[PrecedentBTB] = Field(default_factory=list)
     precedent_ebtis: List[PrecedentEBTI] = Field(default_factory=list)
     international_rulings: List[InternationalRuling] = Field(default_factory=list, description="ABD (CBP CROSS / CustomsMobile), Çin (GACC) ve AB (EBTI) uluslararası emsal kararları")
+    research_portal_links: Optional[Dict[str, str]] = Field(
+        default=None,
+        description=(
+            "Canlı arama emsal döndürmediğinde kullanıcıya sunulan resmi portal arama "
+            "bağlantıları (CBP CROSS, EBTI, GACC). Uydurma karar üretmenin yerini alır."
+        ),
+    )
     legal_sources: List[LegalSource] = Field(default_factory=list)
     consulted_sources: List[str] = Field(default_factory=list)
     hitl_question: Optional[HITLQuestion] = None

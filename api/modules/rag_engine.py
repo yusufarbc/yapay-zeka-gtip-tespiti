@@ -12,10 +12,11 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from sqlalchemy import or_
 
+from api.config import settings
 from api.db.database import (
     SessionLocal,
     EbtiKararModel,
@@ -68,8 +69,12 @@ class RAGEngine:
     """Thin catalog adapter retained under the old name for API compatibility."""
 
     @staticmethod
-    def _product_text(features: ProductFeatures) -> str:
+    def _product_text(features: ProductFeatures, raw_text: str = "") -> str:
+        # Özellik çıkarıcı ham metni dokuz alana damıtır ve gerisini atar; ölçü,
+        # kullanım koşulu veya kompozisyon detayı gibi ayrımlar tarife seçimine
+        # hiç ulaşmıyordu. Orijinal beyan en başta korunur.
         parts = [
+            f"ORİJİNAL BEYAN: {raw_text}".strip() if str(raw_text or "").strip() else "",
             features.product_name,
             features.commercial_name,
             features.primary_material,
@@ -84,8 +89,17 @@ class RAGEngine:
         return "\n".join(str(part).strip() for part in parts if part and str(part).strip())
 
     @staticmethod
-    def search_btb_precedents(product_text: str, top_k: int = 5) -> List[PrecedentBTB]:
-        """Search real BTB rows without mixing tariff-catalog pseudo records."""
+    def search_btb_precedents(
+        product_text: str,
+        top_k: int = 5,
+        exclude_refs: Optional[Set[str]] = None,
+    ) -> List[PrecedentBTB]:
+        """Search real BTB rows without mixing tariff-catalog pseudo records.
+
+        `exclude_refs` yalnız değerlendirme içindir: benchmark numunesinin kendi BTB
+        kaydı emsal olarak geri gelirse `exact_btb_candidate` birebir eşleşme verir
+        ve ölçüm anlamsızlaşır. Üretim yolunda daima None'dır.
+        """
         normalized_query = _normalize_product_text(product_text)
         raw_terms = [
             term
@@ -112,7 +126,14 @@ class RAGEngine:
                 ).filter(
                     GumrukEmsalKararModel.karar_tipi == "BTB",
                     or_(*clauses),
-                ).order_by(GumrukEmsalKararModel.yayin_tarihi.desc()).limit(200).all()
+                )
+                if exclude_refs:
+                    rows = rows.filter(
+                        GumrukEmsalKararModel.referans_no.notin_(list(exclude_refs))
+                    )
+                rows = rows.order_by(
+                    GumrukEmsalKararModel.yayin_tarihi.desc()
+                ).limit(200).all()
         except Exception as exc:
             logger.warning("BTB precedent search could not be completed: %s", exc)
             return []
@@ -482,6 +503,28 @@ class RAGEngine:
             target_branches=target_branches,
         )
 
+    @staticmethod
+    def _chapter_notes_for(level: str, nodes: List[Dict[str, Any]]) -> Optional[str]:
+        """Bu seviyedeki seceneklerin faslina ait resmi notlari dondurur.
+
+        GIR 1 siniflandirmanin pozisyon metinleri VE bolum/fasil notlarina gore
+        yapilmasini emreder. Notlar daha once yalnizca karar verildikten sonra
+        rapora ekleniyordu; model onlari hic gormeden seciyordu.
+
+        CHAPTER seviyesinde 97 faslin notu prompta sigmaz ve o seviye zaten bir
+        yonlendirme adimidir; fasil ici ayrim HEADING ve altinda yapilir.
+        """
+        if level == "CHAPTER" or not nodes:
+            return None
+        chapters = {_digits(node.get("gtip_code"))[:2] for node in nodes}
+        chapters.discard("")
+        if len(chapters) != 1:
+            return None
+        from api.db.tgtc_knowledge_base import load_tgtc_rules_and_notes
+        note = load_tgtc_rules_and_notes().get("fasil_notlari", {}).get(next(iter(chapters)))
+        note = str(note or "").strip()
+        return note or None
+
     @classmethod
     def _select_node(
         cls,
@@ -489,13 +532,25 @@ class RAGEngine:
         product_text: str,
         level: str,
         nodes: List[Dict[str, Any]],
+        *,
+        traversal: Optional[Dict[str, Any]] = None,
+        precedents: Optional[Sequence[Any]] = None,
     ) -> Tuple[Optional[Dict[str, Any]], Optional[DiscriminatorQuestion], List[str], List[str]]:
         if not nodes:
             return None, None, [], []
         if len(nodes) == 1:
             return nodes[0], None, ["GIR_1", "GIR_6"], []
 
-        selection = llm_verifier.select_tariff_node(product_text, level, nodes)
+        selection = llm_verifier.select_tariff_node(
+            product_text,
+            level,
+            nodes,
+            precedents=list(precedents or []) if settings.SELECTION_USE_PRECEDENTS else [],
+            chapter_notes=(
+                cls._chapter_notes_for(level, nodes)
+                if settings.SELECTION_USE_CHAPTER_NOTES else None
+            ),
+        )
         applied_gir_keys = list(getattr(selection, "applied_gir_keys", []) or [])
         cited_chapter_notes = list(getattr(selection, "cited_chapter_notes", []) or [])
 
@@ -533,6 +588,10 @@ class RAGEngine:
                     "Closed-set GTIP selection fell back to the single official residual leaf code=%s",
                     _digits(residuals[0].get("gtip_code")),
                 )
+                # Model hiçbir dalı eşleştiremedi; kalan tek "diğerleri" dalına
+                # düşüldü. Bu zayıf bir seçimdir ve güven skorunu düşürmelidir.
+                if traversal is not None:
+                    traversal["used_residual_fallback"] = True
                 return residuals[0], None, applied_gir_keys, cited_chapter_notes
         return None, None, applied_gir_keys, cited_chapter_notes
 
@@ -571,10 +630,14 @@ class RAGEngine:
         locked_subheading: Optional[str] = None,
         locked_gtip: Optional[str] = None,
         query_vector: Optional[List[float]] = None,
+        raw_text: str = "",
+        precedents: Optional[Sequence[Any]] = None,
     ) -> HierarchicalSearchResult:
         """Traverse chapter → heading → subheading → leaf with model choices."""
         del applied_gir_rules  # Compatibility only; no product-routing rules remain.
-        product_text = self._product_text(features)
+        product_text = self._product_text(
+            features, raw_text if settings.SELECTION_USE_RAW_TEXT else ""
+        )
         traversal: Dict[str, Any] = {"query_vector": query_vector}
 
         applied_gir_keys: List[str] = list(traversal.get("applied_gir_keys") or [])
@@ -594,7 +657,8 @@ class RAGEngine:
             locked_chapter = _digits(allowed_chapters[0]).zfill(2)
         if not locked_chapter:
             node, question, g_keys, c_notes = self._select_node(
-                session_id, product_text, "CHAPTER", self._chapter_nodes()
+                session_id, product_text, "CHAPTER", self._chapter_nodes(),
+                traversal=traversal, precedents=precedents,
             )
             _merge_rules(g_keys, c_notes)
             if question:
@@ -607,7 +671,8 @@ class RAGEngine:
 
         if not locked_heading:
             node, question, g_keys, c_notes = self._select_node(
-                session_id, product_text, "HEADING", self._heading_nodes(locked_chapter)
+                session_id, product_text, "HEADING", self._heading_nodes(locked_chapter),
+                traversal=traversal, precedents=precedents,
             )
             _merge_rules(g_keys, c_notes)
             if question:
@@ -623,7 +688,8 @@ class RAGEngine:
         subheading_nodes = self._subheading_nodes(locked_heading)
         if not locked_subheading:
             node, question, g_keys, c_notes = self._select_node(
-                session_id, product_text, "SUBHEADING", subheading_nodes
+                session_id, product_text, "SUBHEADING", subheading_nodes,
+                traversal=traversal, precedents=precedents,
             )
             _merge_rules(g_keys, c_notes)
             if question:
@@ -651,7 +717,10 @@ class RAGEngine:
                 for leaf in leaves
             ]
         if not locked_gtip:
-            node, question, g_keys, c_notes = self._select_node(session_id, product_text, "GTIP", leaves)
+            node, question, g_keys, c_notes = self._select_node(
+                session_id, product_text, "GTIP", leaves,
+                traversal=traversal, precedents=precedents,
+            )
             _merge_rules(g_keys, c_notes)
             if question:
                 traversal.update({"pending_level": "GTIP", "branches": self._question_branches(question)})

@@ -1,151 +1,343 @@
 """
-GCP & TGTC Karar Destek Sistemi: Ground-Truth Benchmark ve Doğruluk Değerlendirme Aracı.
-Gerçek Resmî Gazete ve Ticaret Bakanlığı BTB kararları üzerinde sistemin:
-- Top-1 Accuracy
-- Top-3 Recall
-- Chapter Precision
-- Exclusion Enforcement
-- Zero-Hallucination Faithfulness
-metriklerini ölçer ve raporlar.
+GTİP Karar Destek Sistemi — Ground-Truth Benchmark ve Doğruluk Değerlendirme Aracı.
+
+Ölçüm kümesi elle yazılmış örneklerden değil, Cloud SQL'deki GERÇEK Ticaret
+Bakanlığı BTB kararlarından üretilir: her kayıt bir (ürün açıklaması, resmî GTİP)
+çiftidir, yani bedava etiketli veridir.
+
+Sızıntı kontrolü (kritik): Bir numunenin kendi BTB kaydı emsal olarak geri
+gelirse `exact_btb_candidate` birebir eşleşme verip kodu doğrudan kopyalar ve
+ölçüm anlamsızlaşır. Bu yüzden her çağrıda numunenin referans numarası
+`exclude_btb_refs` ile emsal havuzundan çıkarılır.
+
+Kullanım:
+  python -m scripts.evaluate_gtip_benchmark --sample 300
+  python -m scripts.evaluate_gtip_benchmark --sample 300 --baseline benchmark_results/<dosya>.json
 """
 
-import os
-import sys
+import argparse
+import collections
+import datetime
 import json
 import logging
-from typing import Dict, Any, List
+import os
+import random
+import re
+import statistics
+import sys
+import time
+from typing import Any, Dict, List, Optional
 
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
-from api.graph.workflow import workflow_engine
-from api.db.tgtc_knowledge_base import load_btb_catalog
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("GTIPBenchmark")
 
-# Doğrulanmış Örnek Benchmark Veri Kümesi (Ground Truth Test Set)
-BENCHMARK_GROUND_TRUTH = [
-    {
-        "product_name": "Erkek Hakiki Deri Klasik Ayakkabı",
-        "description": "Dış tabanı kauçuk, sayası hakiki deri kösele erkek klasik ayakkabısı",
-        "expected_chapter": "64",
-        "expected_heading": "6403"
-    },
-    {
-        "product_name": "5.5 inç Dokunmatik Ekranlı 5G Akıllı Cep Telefonu",
-        "description": "Hücresel ağlar için akıllı cep telefonu dokunmatik ekranlı lityum iyon bataryalı",
-        "expected_chapter": "85",
-        "expected_heading": "8517"
-    },
-    {
-        "product_name": "Dizel Motorlu Su Pompası",
-        "description": "Santrifüj su pompası 15 kW dizel motor ile tahrik edilen sanayi tipi pompa",
-        "expected_chapter": "84",
-        "expected_heading": "8413"
-    },
-    {
-        "product_name": "Polyester ve Pamuk Karışımı Dokuma Kumaş",
-        "description": "%60 pamuk %40 polyester dokuma gömleklik kumaş gramajı 150 g/m2",
-        "expected_chapter": "52",
-        "expected_heading": "5210"
-    },
-    {
-        "product_name": "Monolitik Entegre Devre Mikrodenetleyici",
-        "description": "Mikroişlemci kontrol ünitesi gömülü entegre devre PDIP kılıf",
-        "expected_chapter": "85",
-        "expected_heading": "8542"
-    },
-    {
-        "product_name": "Plastikten Mamul Oyuncak Bebek",
-        "description": "Çocuklar için giydirilmiş plastik hareketli mafsallı oyuncak bebek",
-        "expected_chapter": "95",
-        "expected_heading": "9503"
-    },
-    {
-        "product_name": "Ahşap Yatak Odası Mobilyası",
-        "description": "Masif meşe ağacından mamul yatak başlığı ve komodin seti",
-        "expected_chapter": "94",
-        "expected_heading": "9403"
-    },
-    {
-        "product_name": "Elektrikli Diş Fırçası",
-        "description": "Şarjlı bataryalı dahili elektrik motorlu döner başlıklı diş fırçası",
-        "expected_chapter": "85",
-        "expected_heading": "8509"
+DEFAULT_SEED = 42
+RESULTS_DIR = os.path.join(root_dir, "benchmark_results")
+
+
+def _digits(value: Any) -> str:
+    return re.sub(r"\D", "", str(value or ""))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Holdout kümesi
+# ──────────────────────────────────────────────────────────────────────────────
+
+def stratify_by_chapter(
+    candidates: List[Dict[str, Any]],
+    sample_size: int,
+    seed: int = DEFAULT_SEED,
+) -> List[Dict[str, Any]]:
+    """
+    Fasıl başına tavan uygulayarak dengeli, tekrarlanabilir bir alt küme seçer.
+
+    Korpus 84/85 fasıllarında yoğun (~%52); düz rastgele örnekleme 61 faslın
+    çoğunu hiç temsil etmez ve doğruluk iki faslın performansına indirgenir.
+
+    Saf fonksiyondur (veritabanı gerektirmez), bu yüzden çevrimdışı test edilir.
+    """
+    if sample_size <= 0 or not candidates:
+        return []
+
+    rng = random.Random(seed)
+    pool = list(candidates)
+    rng.shuffle(pool)
+
+    by_chapter: Dict[str, List[Dict[str, Any]]] = collections.defaultdict(list)
+    for item in pool:
+        by_chapter[item["expected_chapter"]].append(item)
+
+    per_chapter = max(1, sample_size // max(1, len(by_chapter)))
+    holdout: List[Dict[str, Any]] = []
+    for chapter in sorted(by_chapter):
+        holdout.extend(by_chapter[chapter][:per_chapter])
+
+    # Tavan nedeniyle hedefin altında kalındıysa kalan havuzdan tamamla.
+    if len(holdout) < sample_size:
+        chosen = {item["reference_no"] for item in holdout}
+        for item in pool:
+            if len(holdout) >= sample_size:
+                break
+            if item["reference_no"] not in chosen:
+                holdout.append(item)
+                chosen.add(item["reference_no"])
+
+    rng.shuffle(holdout)
+    return holdout[:sample_size]
+
+
+def build_holdout(sample_size: int = 300, seed: int = DEFAULT_SEED) -> List[Dict[str, Any]]:
+    """
+    Gerçek BTB kararlarından fasıl-stratifiye, tekrarlanabilir bir holdout üretir.
+
+    `load_btb_catalog()` KULLANILMAZ: o katalog gerçek BTB'lerle TGTC cetvelinden
+    türetilmiş `TGTC2026-` önekli sahte kayıtları karıştırır. Ground truth için
+    yalnız `gumruk_emsal_kararlar` tablosundaki `karar_tipi='BTB'` satırları geçerlidir.
+    """
+    from api.db.database import SessionLocal, GumrukEmsalKararModel
+
+    with SessionLocal() as session:
+        rows = session.query(
+            GumrukEmsalKararModel.referans_no,
+            GumrukEmsalKararModel.gtip_kodu,
+            GumrukEmsalKararModel.esya_tanimi,
+            GumrukEmsalKararModel.chapter_code,
+        ).filter(GumrukEmsalKararModel.karar_tipi == "BTB").all()
+
+    candidates: List[Dict[str, Any]] = []
+    for ref_no, gtip, desc, chapter in rows:
+        code = _digits(gtip)
+        description = str(desc or "").strip()
+        # Yalnız 12 haneli ve anlamlı açıklaması olan kararlar ölçülebilir.
+        if len(code) != 12 or len(description) < 40:
+            continue
+        if not ref_no:
+            continue
+        candidates.append({
+            "reference_no": str(ref_no),
+            "expected_gtip": code,
+            "expected_chapter": code[:2],
+            "expected_heading": code[:4],
+            "expected_subheading": code[:6],
+            "description": description,
+        })
+
+    if not candidates:
+        raise RuntimeError(
+            "Ground-truth BTB kaydı bulunamadı. Cloud SQL bağlantısını doğrulayın "
+            "(yerelde SQLite fallback'e düşülmüş olabilir)."
+        )
+
+    holdout = stratify_by_chapter(candidates, sample_size, seed)
+    logger.info(
+        "Holdout hazır: %d numune / %d fasıl (korpus: %d uygun BTB kaydı)",
+        len(holdout),
+        len({item["expected_chapter"] for item in holdout}),
+        len(candidates),
+    )
+    return holdout
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Değerlendirme
+# ──────────────────────────────────────────────────────────────────────────────
+
+ABLATION_FLAGS = (
+    "SELECTION_USE_RAW_TEXT",
+    "SELECTION_USE_PRECEDENTS",
+    "SELECTION_USE_CHAPTER_NOTES",
+)
+
+
+def run_benchmark(
+    sample_size: int = 300,
+    seed: int = DEFAULT_SEED,
+    dataset: Optional[List[Dict[str, Any]]] = None,
+    ablate: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    from api.config import settings
+    from api.graph.workflow import workflow_engine
+
+    # Ablasyon: kanıt enjeksiyonunu kapatarak her maddenin katkısını tek tek ölç.
+    # Hepsi kapalıyken alınan ölçüm baseline'dır.
+    for flag in (ablate or []):
+        if flag not in ABLATION_FLAGS:
+            raise SystemExit(f"Bilinmeyen ablasyon bayrağı: {flag} (geçerli: {ABLATION_FLAGS})")
+        setattr(settings, flag, False)
+    active_flags = {flag: bool(getattr(settings, flag)) for flag in ABLATION_FLAGS}
+    logger.info("Kanıt bayrakları: %s", active_flags)
+
+    test_set = dataset or build_holdout(sample_size, seed)
+    total = len(test_set)
+
+    hits = {"chapter": 0, "heading": 0, "subheading": 0, "leaf": 0}
+    statuses: collections.Counter = collections.Counter()
+    residual_fallbacks = 0
+    latencies: List[float] = []
+    failures: List[Dict[str, Any]] = []
+
+    logger.info("=== Benchmark başlıyor: %d numune, model=%s ===",
+                total, settings.REASONING_LLM_MODEL)
+
+    for index, sample in enumerate(test_set, 1):
+        started = time.perf_counter()
+        try:
+            decision = workflow_engine.start_analysis(
+                sample["description"],
+                # Sızıntı kontrolü: numunenin kendi kararı emsal havuzundan çıkarılır.
+                exclude_btb_refs={sample["reference_no"]},
+            )
+        except Exception as exc:
+            logger.exception("Numune çalıştırılamadı (%s)", sample["reference_no"])
+            statuses["EXCEPTION"] += 1
+            failures.append({
+                "reference_no": sample["reference_no"],
+                "expected_gtip": sample["expected_gtip"],
+                "error": str(exc),
+            })
+            continue
+        latencies.append((time.perf_counter() - started) * 1000)
+
+        statuses[decision.status] += 1
+        predicted = _digits(decision.gtip_code)
+
+        matched = {
+            "chapter": predicted[:2] == sample["expected_chapter"] if predicted else False,
+            "heading": predicted[:4] == sample["expected_heading"] if predicted else False,
+            "subheading": predicted[:6] == sample["expected_subheading"] if predicted else False,
+            "leaf": predicted == sample["expected_gtip"] if predicted else False,
+        }
+        for key, ok in matched.items():
+            if ok:
+                hits[key] += 1
+
+        # `workflow._complete` kalıntı dalı kullanıldığında bu deterministik
+        # işareti basar (rag_engine traversal["used_residual_fallback"]).
+        if any(note.startswith("RESIDUAL_FALLBACK:") for note in decision.audit_notes):
+            residual_fallbacks += 1
+
+        if not matched["heading"]:
+            failures.append({
+                "reference_no": sample["reference_no"],
+                "description": sample["description"][:200],
+                "expected_gtip": sample["expected_gtip"],
+                "predicted_gtip": predicted or None,
+                "status": decision.status,
+                "confidence": decision.confidence_score,
+            })
+
+        icon = "OK " if matched["heading"] else ("~  " if matched["chapter"] else "X  ")
+        logger.info(
+            "[%d/%d] %s beklenen=%s tahmin=%s durum=%s",
+            index, total, icon,
+            sample["expected_heading"], predicted[:4] or "----", decision.status,
+        )
+
+    def pct(value: int) -> float:
+        return round(value / total * 100.0, 2) if total else 0.0
+
+    completed = statuses.get("COMPLETED", 0)
+    report: Dict[str, Any] = {
+        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "model": settings.REASONING_LLM_MODEL,
+        "extractor_model": settings.EXTRACTOR_LLM_MODEL,
+        "sample_size": total,
+        "seed": seed,
+        # Karşılaştırmanın anlamlı olması için hangi kanıtın açık olduğu kaydedilir.
+        "evidence_flags": active_flags,
+        "metrics": {
+            # Doğruluk: TÜM numuneler üzerinden (cevapsız kalmak da başarısızlıktır).
+            "chapter_acc": pct(hits["chapter"]),
+            "heading_acc": pct(hits["heading"]),
+            "subheading_acc": pct(hits["subheading"]),
+            "leaf_acc": pct(hits["leaf"]),
+            # Kapsam: doğruluktan ayrı izlenir; model soru sorarsa doğruluk düşer
+            # ama bu bir hata değil, kapsam kaybıdır.
+            "coverage": pct(completed),
+            "hitl_rate": pct(statuses.get("WAITING_FOR_USER", 0)),
+            "manual_review_rate": pct(statuses.get("MANUAL_REVIEW_REQUIRED", 0)),
+            "exception_rate": pct(statuses.get("EXCEPTION", 0)),
+            "residual_fallback_rate": pct(residual_fallbacks),
+            # Tamamlananlar içindeki doğruluk (kapsamdan arındırılmış)
+            "leaf_acc_of_completed": (
+                round(hits["leaf"] / completed * 100.0, 2) if completed else 0.0
+            ),
+        },
+        "latency_ms": {
+            "p50": round(statistics.median(latencies), 1) if latencies else 0.0,
+            "p95": round(
+                statistics.quantiles(latencies, n=20)[18], 1
+            ) if len(latencies) >= 20 else (round(max(latencies), 1) if latencies else 0.0),
+            "mean": round(statistics.fmean(latencies), 1) if latencies else 0.0,
+        },
+        "status_breakdown": dict(statuses),
+        "failures": failures[:50],
     }
-]
 
-def run_benchmark(dataset: List[Dict[str, Any]] = None) -> Dict[str, Any]:
-    test_set = dataset or BENCHMARK_GROUND_TRUTH
-    total_samples = len(test_set)
-    
-    top1_hits = 0
-    top3_hits = 0
-    chapter_hits = 0
-    statute_verified_count = 0
-    
-    logger.info(f"=== GTİP Benchmark Değerlendirmesi Başlatılıyor ({total_samples} numune) ===")
-
-    for idx, sample in enumerate(test_set, 1):
-        query = f"{sample['product_name']} - {sample['description']}"
-        expected_chap = sample['expected_chapter']
-        expected_head = sample['expected_heading']
-        
-        decision = workflow_engine.start_analysis(query)
-        pred_gtip = (decision.gtip_code or "").replace(".", "")
-        pred_chap = pred_gtip[:2] if len(pred_gtip) >= 2 else ""
-        pred_head = pred_gtip[:4] if len(pred_gtip) >= 4 else ""
-        
-        # 1. Fasıl Doğruluğu
-        is_chap_correct = (pred_chap == expected_chap)
-        if is_chap_correct:
-            chapter_hits += 1
-            
-        # 2. Top-1 Pozisyon Doğruluğu
-        is_top1_correct = (pred_head == expected_head)
-        if is_top1_correct:
-            top1_hits += 1
-            
-        # 3. Top-3 Aday İncelemesi
-        top3_correct = is_top1_correct
-        if hasattr(decision, 'precedent_btbs') and decision.precedent_btbs:
-            for p in decision.precedent_btbs[:3]:
-                c_head = str(p.gtip_code).replace(".", "")[:4]
-                if c_head == expected_head:
-                    top3_correct = True
-                    break
-        if top3_correct:
-            top3_hits += 1
-            
-        # 4. Zero-Hallucination No-AI Binding Denetimi
-        if decision.official_statute_text and "TGTC" in decision.official_statute_text:
-            statute_verified_count += 1
-            
-        status_icon = "✅" if is_top1_correct else ("⚠️" if top3_correct else "❌")
-        logger.info(f"[{idx}/{total_samples}] {status_icon} '{sample['product_name'][:30]}' -> Tahmin: {pred_head} | Beklenen: {expected_head}")
-
-    top1_accuracy = (top1_hits / total_samples) * 100.0
-    top3_recall = (top3_hits / total_samples) * 100.0
-    chapter_accuracy = (chapter_hits / total_samples) * 100.0
-    faithfulness = (statute_verified_count / total_samples) * 100.0
-
-    report = {
-        "total_samples": total_samples,
-        "chapter_accuracy_pct": round(chapter_accuracy, 2),
-        "top1_accuracy_pct": round(top1_accuracy, 2),
-        "top3_recall_pct": round(top3_recall, 2),
-        "zero_hallucination_faithfulness_pct": round(faithfulness, 2)
-    }
-
-    logger.info("=== BENCHMARK SONUÇLARI ===")
-    logger.info(f"Fasıl (Chapter) Doğruluğu: %{report['chapter_accuracy_pct']}")
-    logger.info(f"Top-1 Pozisyon Doğruluğu : %{report['top1_accuracy_pct']}")
-    logger.info(f"Top-3 Recall Oranı       : %{report['top3_recall_pct']}")
-    logger.info(f"Mevzuat Bağlılığı (Faith): %{report['zero_hallucination_faithfulness_pct']}")
-
+    logger.info("=== SONUÇLAR ===")
+    for key, value in report["metrics"].items():
+        logger.info("%-26s %%%s", key, value)
+    logger.info("%-26s p50=%sms p95=%sms", "latency", report["latency_ms"]["p50"], report["latency_ms"]["p95"])
     return report
 
+
+def compare_to_baseline(report: Dict[str, Any], baseline_path: str) -> None:
+    with open(baseline_path, "r", encoding="utf-8") as handle:
+        baseline = json.load(handle)
+
+    logger.info("=== BASELINE KARŞILAŞTIRMASI (%s) ===", os.path.basename(baseline_path))
+    logger.info("baseline bayrakları: %s", baseline.get("evidence_flags"))
+    logger.info("şimdiki bayraklar  : %s", report.get("evidence_flags"))
+    logger.info("%-26s %8s %8s %8s", "metrik", "baseline", "şimdi", "fark")
+    for key, current in report["metrics"].items():
+        previous = baseline.get("metrics", {}).get(key)
+        if previous is None:
+            continue
+        delta = round(current - previous, 2)
+        marker = "  " if abs(delta) < 0.01 else ("+ " if delta > 0 else "- ")
+        logger.info("%-26s %8s %8s %s%s", key, previous, current, marker, abs(delta))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="GTİP sınıflandırma benchmark'ı")
+    parser.add_argument("--sample", type=int, default=300, help="Numune sayısı")
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help="Örnekleme tohumu")
+    parser.add_argument("--baseline", type=str, default=None, help="Karşılaştırılacak baseline JSON")
+    parser.add_argument("--out", type=str, default=None, help="Çıktı dosyası (varsayılan: benchmark_results/)")
+    parser.add_argument(
+        "--ablate", action="append", default=[], metavar="FLAG",
+        help=("Kapatılacak kanıt bayrağı; birden çok kez verilebilir. "
+              "Baseline için: --ablate SELECTION_USE_RAW_TEXT "
+              "--ablate SELECTION_USE_PRECEDENTS --ablate SELECTION_USE_CHAPTER_NOTES"),
+    )
+    parser.add_argument(
+        "--baseline-run", action="store_true",
+        help="Tüm kanıt bayraklarını kapatır (--ablate üçünü birden vermeye eşdeğer).",
+    )
+    args = parser.parse_args()
+
+    ablate = list(args.ablate)
+    if args.baseline_run:
+        ablate = list(ABLATION_FLAGS)
+
+    report = run_benchmark(sample_size=args.sample, seed=args.seed, ablate=ablate)
+
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    label = "baseline" if len(ablate) == len(ABLATION_FLAGS) else ("ablate" if ablate else "full")
+    out_path = args.out or os.path.join(RESULTS_DIR, f"benchmark-{label}-{stamp}.json")
+    with open(out_path, "w", encoding="utf-8") as handle:
+        json.dump(report, handle, ensure_ascii=False, indent=2)
+    logger.info("Rapor yazıldı: %s", out_path)
+
+    if args.baseline:
+        compare_to_baseline(report, args.baseline)
+    return 0
+
+
 if __name__ == "__main__":
-    run_benchmark()
+    raise SystemExit(main())
