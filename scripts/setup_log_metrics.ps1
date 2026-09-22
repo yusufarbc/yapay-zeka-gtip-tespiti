@@ -45,11 +45,14 @@ $metrics = @(
         Filter      = "$base AND jsonPayload.decision_status=`"WAITING_FOR_USER`""
     },
     @{
-        # A1 kalici olarak kaldirildi; bu metrik uydurma emsal uretiminin geri
-        # gelmedigini dogrulayan bir regresyon nobetcisidir ve SIFIR kalmalidir.
-        Name        = "gtip_fabricated_ruling_guard"
-        Description = "Uydurma uluslararasi emsal fallback izi (SIFIR kalmali)"
-        Filter      = "$base AND jsonPayload.message:`"baglamsal fallback`""
+        # Uluslararasi emsal aramasinin basarisizlik orani. Iki isi birden gorur:
+        # (1) grounded arama ne siklikta 504 aliyor, (2) uydurma emsal uretiminin
+        # geri gelmedigini izlemek icin bu logger'in tum uyarilarini yuzeye cikarir.
+        # NOT: filtre degerlerinde BOSLUK kullanilmaz; PowerShell -> cmd.exe
+        # argüman bölmesi tirnak icindeki boslukta filtreyi parcaliyor.
+        Name        = "gtip_intl_search_failures"
+        Description = "Uluslararasi emsal aramasi uyari/hatalari (grounded search saglik gostergesi)"
+        Filter      = "$base AND jsonPayload.logger=`"InternationalSearchEngine`" AND severity>=WARNING"
     }
 )
 
