@@ -122,3 +122,16 @@ def test_correction_rejects_malformed_code():
     )
     # Yetki reddi ya da geçersiz kod; hiçbir durumda 5xx olmamalı.
     assert response.status_code in (400, 401, 403, 422)
+
+
+def test_chapter_backtracking_penalises_confidence():
+    """
+    Geri alma sonrası varılan sonuç doğru olabilir ama modelin ilk fasıl kararı
+    yanlıştı. Bu zayıf bir kanıt durumudur ve otomatik onaydan uzak tutulmalı.
+    """
+    direct = compute_confidence({"applied_gir_keys": ["GIR_1"]}, [_btb(0.7)], [])
+    backtracked = compute_confidence(
+        {"applied_gir_keys": ["GIR_1"], "used_chapter_backtrack": True}, [_btb(0.7)], []
+    )
+    assert backtracked < direct
+    assert backtracked < settings.CONFIDENCE_THRESHOLD
