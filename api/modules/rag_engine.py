@@ -593,6 +593,26 @@ class RAGEngine:
                 if traversal is not None:
                     traversal["used_residual_fallback"] = True
                 return residuals[0], None, applied_gir_keys, cited_chapter_notes
+
+        # Resmî kalıntı dalı da çözemediyse: NO_MATCH eskiden bir çıkmazdı.
+        # Traversal ölüyor, karar MANUAL_REVIEW'a düşüyordu; ölçümde numunelerin
+        # %35.8'i buradan kaybediliyor ve NO_MATCH retry'larının 62'si tek bir
+        # seviyede (HEADING) yoğunlaşıyordu.
+        #
+        # Model "hiçbiri uymuyor" dediğinde aslında bildiğimiz tek şey seçim
+        # yapamadığıdır. Resmî kardeş dalları müşavire sormak, sessizce pes
+        # etmekten hem daha doğru hem daha kullanışlıdır. Seçenek kümesi
+        # sorulabilecek kadar küçükse soruya çevrilir.
+        if level != "CHAPTER" and 2 <= len(nodes) <= 4:
+            fallback_question = cls._question(session_id, level, nodes, selection)
+            if fallback_question:
+                logger.info(
+                    "Closed-set NO_MATCH recovered as a bounded question level=%s choices=%s",
+                    level,
+                    len(nodes),
+                )
+                return None, fallback_question, applied_gir_keys, cited_chapter_notes
+
         return None, None, applied_gir_keys, cited_chapter_notes
 
     @staticmethod
@@ -655,21 +675,37 @@ class RAGEngine:
 
         if not locked_chapter and allowed_chapters:
             locked_chapter = _digits(allowed_chapters[0]).zfill(2)
-        if not locked_chapter:
-            node, question, g_keys, c_notes = self._select_node(
-                session_id, product_text, "CHAPTER", self._chapter_nodes(),
-                traversal=traversal, precedents=precedents,
-            )
-            _merge_rules(g_keys, c_notes)
-            if question:
-                traversal.update({"pending_level": "CHAPTER", "branches": self._question_branches(question)})
-                return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
-            if not node:
-                return HierarchicalSearchResult(traversal_state=traversal)
-            locked_chapter = _digits(node["gtip_code"]).zfill(2)
-        traversal.update({"locked_chapter": locked_chapter, "retained_chapters": [locked_chapter]})
 
-        if not locked_heading:
+        # Fasıl seçimi tek yönlüydü: CHAPTER seviyesinde model SELECT etmek
+        # zorunda (prompt orada INSUFFICIENT_INFORMATION'ı yasaklar), yanlış
+        # seçerse doğru pozisyon o fasılda hiç bulunmaz ve sistem kurtaramazdı.
+        # Pozisyon seçimi tamamen başarısız olursa fasıl, başarısız olan dışlanarak
+        # bir kez yeniden seçilir.
+        rejected_chapters: List[str] = []
+        max_chapter_attempts = 2
+
+        for attempt in range(max_chapter_attempts):
+            if not locked_chapter:
+                chapter_nodes = [
+                    node for node in self._chapter_nodes()
+                    if _digits(node.get("gtip_code")).zfill(2) not in rejected_chapters
+                ]
+                node, question, g_keys, c_notes = self._select_node(
+                    session_id, product_text, "CHAPTER", chapter_nodes,
+                    traversal=traversal, precedents=precedents,
+                )
+                _merge_rules(g_keys, c_notes)
+                if question:
+                    traversal.update({"pending_level": "CHAPTER", "branches": self._question_branches(question)})
+                    return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
+                if not node:
+                    return HierarchicalSearchResult(traversal_state=traversal)
+                locked_chapter = _digits(node["gtip_code"]).zfill(2)
+            traversal.update({"locked_chapter": locked_chapter, "retained_chapters": [locked_chapter]})
+
+            if locked_heading:
+                break
+
             node, question, g_keys, c_notes = self._select_node(
                 session_id, product_text, "HEADING", self._heading_nodes(locked_chapter),
                 traversal=traversal, precedents=precedents,
@@ -678,9 +714,25 @@ class RAGEngine:
             if question:
                 traversal.update({"pending_level": "HEADING", "branches": self._question_branches(question)})
                 return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
-            if not node:
-                return HierarchicalSearchResult(traversal_state=traversal)
-            locked_heading = _digits(node["gtip_code"])
+            if node:
+                locked_heading = _digits(node["gtip_code"])
+                break
+
+            # Pozisyon bulunamadı: büyük olasılıkla fasıl yanlış seçildi.
+            if attempt + 1 < max_chapter_attempts:
+                logger.warning(
+                    "No heading matched in chapter=%s; backtracking to chapter selection",
+                    locked_chapter,
+                )
+                rejected_chapters.append(locked_chapter)
+                traversal["rejected_chapters"] = list(rejected_chapters)
+                traversal["used_chapter_backtrack"] = True
+                locked_chapter = None
+                continue
+            return HierarchicalSearchResult(traversal_state=traversal)
+
+        if not locked_heading:
+            return HierarchicalSearchResult(traversal_state=traversal)
         if len(_digits(locked_heading)) != 4 or not _digits(locked_heading).startswith(locked_chapter):
             return HierarchicalSearchResult(traversal_state=traversal)
         traversal["locked_heading"] = locked_heading
