@@ -321,9 +321,24 @@ def run_benchmark(
     return report
 
 
+def load_report(path: str) -> Dict[str, Any]:
+    """Raporu yerel dosyadan veya gs:// yolundan okur.
+
+    Cloud Run Job raporları GCS'e yüklendiği için karşılaştırmanın önce indirme
+    adımı gerektirmesi runbook'u gereksiz uzatıyordu.
+    """
+    if path.startswith("gs://"):
+        from google.cloud import storage
+
+        bucket_name, _, blob_name = path[5:].partition("/")
+        payload = storage.Client().bucket(bucket_name).blob(blob_name).download_as_bytes()
+        return json.loads(payload.decode("utf-8"))
+    with open(path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
 def compare_to_baseline(report: Dict[str, Any], baseline_path: str) -> None:
-    with open(baseline_path, "r", encoding="utf-8") as handle:
-        baseline = json.load(handle)
+    baseline = load_report(baseline_path)
 
     logger.info("=== BASELINE KARŞILAŞTIRMASI (%s) ===", os.path.basename(baseline_path))
     logger.info("baseline bayrakları: %s", baseline.get("evidence_flags"))
@@ -342,7 +357,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="GTİP sınıflandırma benchmark'ı")
     parser.add_argument("--sample", type=int, default=300, help="Numune sayısı")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help="Örnekleme tohumu")
-    parser.add_argument("--baseline", type=str, default=None, help="Karşılaştırılacak baseline JSON")
+    parser.add_argument(
+        "--baseline", type=str, default=None,
+        help="Karşılaştırılacak baseline raporu (yerel yol veya gs://bucket/yol.json)",
+    )
     parser.add_argument("--out", type=str, default=None, help="Çıktı dosyası (varsayılan: benchmark_results/)")
     parser.add_argument(
         "--ablate", action="append", default=[], metavar="FLAG",
