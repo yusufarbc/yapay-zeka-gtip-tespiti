@@ -86,3 +86,66 @@ def test_report_separates_accuracy_from_coverage():
         + metrics["exception_rate"] == 100.0
     assert report["sample_size"] == 1
     assert "latency_ms" in report
+
+
+def test_expert_answers_the_option_matching_the_expected_code():
+    """
+    Gözetimsiz benchmark'ta bekleyen soru da ölü uç da 'kod üretmedi' görünür.
+    Uzman izi ikisini ayırır: soru cevaplanabilir, ölü uç cevaplanamaz.
+    """
+    from types import SimpleNamespace
+
+    from scripts.evaluate_gtip_benchmark import answer_as_expert
+
+    waiting = SimpleNamespace(
+        status="WAITING_FOR_USER",
+        session_id="s1",
+        gtip_code=None,
+        hitl_question=SimpleNamespace(
+            question_id="q1",
+            options=[
+                SimpleNamespace(option_id="DISC_0", impact_data={"selected_branch": "7005"}),
+                SimpleNamespace(option_id="DISC_1", impact_data={"selected_branch": "7007"}),
+                SimpleNamespace(option_id="DISC_2", impact_data={"selected_branch": ""}),
+            ],
+        ),
+    )
+    resumed = SimpleNamespace(status="COMPLETED", gtip_code="7007.19.80.00.00",
+                              session_id="s1", hitl_question=None)
+    picked = {}
+
+    class Engine:
+        def resume_analysis(self, session_id, selected_option_id, question_id):
+            picked["option"] = selected_option_id
+            return resumed
+
+    result = answer_as_expert(waiting, "700719800000", Engine())
+    assert picked["option"] == "DISC_1"
+    assert result.status == "COMPLETED"
+
+
+def test_expert_gives_up_when_no_official_branch_holds_the_answer():
+    """Doğru cevabı içermeyen bir soru yanlış sorulmuştur; bu bir başarısızlıktır."""
+    from types import SimpleNamespace
+
+    from scripts.evaluate_gtip_benchmark import answer_as_expert
+
+    waiting = SimpleNamespace(
+        status="WAITING_FOR_USER",
+        session_id="s1",
+        gtip_code=None,
+        hitl_question=SimpleNamespace(
+            question_id="q1",
+            options=[
+                SimpleNamespace(option_id="DISC_0", impact_data={"selected_branch": "8471"}),
+                SimpleNamespace(option_id="DISC_1", impact_data={"selected_branch": "8517"}),
+            ],
+        ),
+    )
+
+    class Engine:
+        def resume_analysis(self, **kwargs):
+            raise AssertionError("uzman cevaplamamalıydı")
+
+    result = answer_as_expert(waiting, "700719800000", Engine())
+    assert result.status == "WAITING_FOR_USER"

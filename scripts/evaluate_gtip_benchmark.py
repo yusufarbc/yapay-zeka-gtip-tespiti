@@ -182,6 +182,46 @@ def build_holdout(sample_size: int = 300, seed: int = DEFAULT_SEED) -> List[Dict
 # Değerlendirme
 # ──────────────────────────────────────────────────────────────────────────────
 
+MAX_EXPERT_ANSWERS = 4
+
+
+def answer_as_expert(decision: Any, expected_gtip: str, workflow_engine: Any) -> Any:
+    """Bekleyen teknik ayrım sorularını doğru cevabı bilen bir müşavir gibi yanıtlar.
+
+    Benchmark gözetimsiz çalıştığı için soru soran her karar cevapsız kalıyordu.
+    Bu, çıkmazı sorulabilir bir soruya çevirmenin değerini ölçülemez kılıyordu:
+    hem ölü uç hem de bekleyen soru "kod üretmedi" olarak görünüyordu.
+
+    Burada uzman, her dallanmada beklenen GTİP ile ön-eki uyuşan resmî seçeneği
+    işaretler. Bu, gerçek kullanımdaki ortalama müşaviri değil, ULAŞILABİLİR
+    doğruluğun üst sınırını ölçer: sistem doğru soruyu soruyor mu?
+    """
+    for _ in range(MAX_EXPERT_ANSWERS):
+        if decision.status != "WAITING_FOR_USER" or not decision.hitl_question:
+            return decision
+
+        chosen = None
+        for option in decision.hitl_question.options:
+            branch = _digits((option.impact_data or {}).get("selected_branch"))
+            if branch and expected_gtip.startswith(branch):
+                chosen = option
+                break
+        if chosen is None:
+            # Hiçbir resmî dal doğru cevabı içermiyor: müşavir de seçemezdi.
+            # Bu, sorunun yanlış sorulduğu anlamına gelir ve başarısızlıktır.
+            return decision
+
+        try:
+            decision = workflow_engine.resume_analysis(
+                session_id=decision.session_id,
+                selected_option_id=chosen.option_id,
+                question_id=decision.hitl_question.question_id,
+            )
+        except Exception as exc:
+            logger.debug("Uzman cevabı uygulanamadı: %s", exc)
+            return decision
+    return decision
+
 ABLATION_FLAGS = (
     "SELECTION_USE_RAW_TEXT",
     "SELECTION_USE_PRECEDENTS",
@@ -211,6 +251,8 @@ def run_benchmark(
     total = len(test_set)
 
     hits = {"chapter": 0, "heading": 0, "subheading": 0, "leaf": 0}
+    expert_hits = {"leaf": 0, "heading": 0}
+    expert_completed = 0
     statuses: collections.Counter = collections.Counter()
     residual_fallbacks = 0
     latencies: List[float] = []
@@ -256,6 +298,20 @@ def run_benchmark(
         if any(note.startswith("RESIDUAL_FALLBACK:") for note in decision.audit_notes):
             residual_fallbacks += 1
 
+        # Uzman izi: bekleyen soruları doğru cevabı bilen bir müşavir yanıtlasa
+        # sistem nereye varırdı? Otomatik metrikler bozulmadan ayrı sayılır.
+        expert_decision = decision
+        if decision.status == "WAITING_FOR_USER":
+            expert_decision = answer_as_expert(decision, sample["expected_gtip"], workflow_engine)
+        expert_predicted = _digits(expert_decision.gtip_code)
+        if expert_decision.status == "COMPLETED":
+            expert_completed += 1
+        if expert_predicted:
+            if expert_predicted[:4] == sample["expected_heading"]:
+                expert_hits["heading"] += 1
+            if expert_predicted == sample["expected_gtip"]:
+                expert_hits["leaf"] += 1
+
         if not matched["heading"]:
             failures.append({
                 "reference_no": sample["reference_no"],
@@ -298,6 +354,12 @@ def run_benchmark(
             "manual_review_rate": pct(statuses.get("MANUAL_REVIEW_REQUIRED", 0)),
             "exception_rate": pct(statuses.get("EXCEPTION", 0)),
             "residual_fallback_rate": pct(residual_fallbacks),
+            # Uzman müşavir teknik ayrımları yanıtlasa ulaşılabilir sonuç.
+            # Çıkmazı soruya çevirmenin değeri yalnız burada görünür: ölü uç
+            # cevaplanamaz, bekleyen soru cevaplanabilir.
+            "coverage_with_expert": pct(expert_completed),
+            "heading_acc_with_expert": pct(expert_hits["heading"]),
+            "leaf_acc_with_expert": pct(expert_hits["leaf"]),
             # Tamamlananlar içindeki doğruluk (kapsamdan arındırılmış)
             "leaf_acc_of_completed": (
                 round(hits["leaf"] / completed * 100.0, 2) if completed else 0.0
