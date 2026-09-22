@@ -87,6 +87,22 @@ karşılaştırmak için:
 Doğruluk (`leaf_acc`, `heading_acc`) ile kapsam (`coverage`, `hitl_rate`) ayrı
 raporlanır: modelin soru sorması bir sınıflandırma hatası değildir, kapsam kaybıdır.
 
+### Metrik grupları
+
+| grup | metrikler | ne söyler |
+|---|---|---|
+| otomatik doğruluk | `chapter_acc`, `heading_acc`, `subheading_acc`, `leaf_acc` | Hiç insan müdahalesi olmadan doğru kod |
+| kapsam | `coverage`, `hitl_rate`, `manual_review_rate` | Sistem ne sıklıkla karar veriyor, soruyor, pes ediyor |
+| ulaşılabilir doğruluk | `coverage_with_expert`, `heading_acc_with_expert`, `leaf_acc_with_expert` | Doğru cevabı bilen bir müşavir teknik ayrımları yanıtlasa nereye varılırdı |
+| kalite işaretleri | `residual_fallback_rate`, `leaf_acc_of_completed` | Zayıf seçim oranı; cevap verilenler içindeki isabet |
+
+Uzman izi gözetimsiz ölçümdeki bir boşluğu kapatır: bekleyen soru ile ölü uç
+aksi halde ayırt edilemez, ikisi de "kod üretmedi" görünür. Uzman her dallanmada
+beklenen GTİP ile ön-eki uyuşan resmî seçeneği işaretler; hiçbir resmî dal doğru
+cevabı içermiyorsa uzman da seçemez — bu, sorunun yanlış sorulduğu anlamına gelir
+ve başarısızlık sayılır. Ortalama kullanıcıyı değil, ulaşılabilir doğruluğun
+**üst sınırını** ölçer.
+
 ### Kanıt bayrakları ve ablasyon ölçümü
 
 Seçim promptuna giren üç kanıt ayrı ayrı kapatılabilir:
