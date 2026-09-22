@@ -36,7 +36,43 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("GTIPBenchmark")
 
 DEFAULT_SEED = 42
-RESULTS_DIR = os.path.join(root_dir, "benchmark_results")
+
+# Container'da /app root olmayan `app` kullanicisi icin yazilabilir degildir
+# (Dockerfile ayrica --chown ile yalniz okuma verir). Yerelde repo altina,
+# container'da gecici dizine yazilir; kalicilik GCS yuklemesiyle saglanir.
+def _default_results_dir() -> str:
+    candidate = os.path.join(root_dir, "benchmark_results")
+    try:
+        os.makedirs(candidate, exist_ok=True)
+        probe = os.path.join(candidate, ".write_probe")
+        with open(probe, "w", encoding="utf-8") as handle:
+            handle.write("")
+        os.remove(probe)
+        return candidate
+    except OSError:
+        import tempfile
+        fallback = os.path.join(tempfile.gettempdir(), "benchmark_results")
+        os.makedirs(fallback, exist_ok=True)
+        return fallback
+
+
+RESULTS_DIR = os.getenv("BENCHMARK_RESULTS_DIR") or _default_results_dir()
+
+
+def upload_to_gcs(local_path: str) -> Optional[str]:
+    """Raporu GCS'e yukler. Cloud Run Job'un dosya sistemi kalici degildir."""
+    bucket_name = os.getenv("GCS_BUCKET_NAME", "").strip()
+    if not bucket_name:
+        return None
+    try:
+        from google.cloud import storage
+
+        blob_name = f"benchmark_results/{os.path.basename(local_path)}"
+        storage.Client().bucket(bucket_name).blob(blob_name).upload_from_filename(local_path)
+        return f"gs://{bucket_name}/{blob_name}"
+    except Exception as exc:
+        logger.warning("Rapor GCS'e yuklenemedi (%s); yerel kopya: %s", exc, local_path)
+        return None
 
 
 def _digits(value: Any) -> str:
@@ -326,13 +362,20 @@ def main() -> int:
 
     report = run_benchmark(sample_size=args.sample, seed=args.seed, ablate=ablate)
 
-    os.makedirs(RESULTS_DIR, exist_ok=True)
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     label = "baseline" if len(ablate) == len(ABLATION_FLAGS) else ("ablate" if ablate else "full")
     out_path = args.out or os.path.join(RESULTS_DIR, f"benchmark-{label}-{stamp}.json")
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as handle:
         json.dump(report, handle, ensure_ascii=False, indent=2)
     logger.info("Rapor yazıldı: %s", out_path)
+
+    gcs_uri = upload_to_gcs(out_path)
+    if gcs_uri:
+        logger.info("Rapor GCS'e yüklendi: %s", gcs_uri)
+
+    # Ölçüm tamamlandıysa rapor yazımı başarısız olsa bile sonuçlar loglanmıştır;
+    # yazma hatası bütün koşuyu boşa çıkarmamalı.
 
     if args.baseline:
         compare_to_baseline(report, args.baseline)
