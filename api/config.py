@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     USE_CONTEXT_CACHE: bool = os.getenv("USE_CONTEXT_CACHE", "false").lower() == "true"
     LLM_TIMEOUT_MS: int = int(os.getenv("LLM_TIMEOUT_MS", "15000"))
     EMBEDDING_TIMEOUT_MS: int = int(os.getenv("EMBEDDING_TIMEOUT_MS", "7000"))
+    # Google Search Grounding ile canlı emsal taraması, kapalı-küme seçiminden
+    # belirgin biçimde yavaştır. Tek bir LLM_TIMEOUT_MS bütçesi paylaşıldığında
+    # üretimde sürekli 504 DEADLINE_EXCEEDED alınıyordu.
+    GROUNDED_SEARCH_TIMEOUT_MS: int = int(os.getenv("GROUNDED_SEARCH_TIMEOUT_MS", "45000"))
 
     # Cloud Run Secret Manager bağlantıları bu değerleri environment'a enjekte eder.
     # Import sırasında Secret Manager çağrısı yapmak cold-start'ı ve hata yüzeyini büyütür.
@@ -78,6 +82,14 @@ class Settings(BaseSettings):
 
     # CORS — production'da virgülle ayrılmış domain listesi
     CORS_ALLOWED_ORIGINS: str = os.getenv("CORS_ALLOWED_ORIGINS", "")
+
+    # Seçim promptuna hangi kanıtın gireceğini denetleyen ablasyon bayrakları.
+    # İkisi birden: (1) benchmark'ta her maddenin doğruluk katkısını tek tek
+    # ölçmeyi sağlar — hepsi kapalıyken alınan ölçüm baseline'dır; (2) üretimde
+    # bir madde doğruluğu düşürürse yeniden deploy etmeden kapatma imkânı verir.
+    SELECTION_USE_RAW_TEXT: bool = os.getenv("SELECTION_USE_RAW_TEXT", "true").lower() == "true"
+    SELECTION_USE_PRECEDENTS: bool = os.getenv("SELECTION_USE_PRECEDENTS", "true").lower() == "true"
+    SELECTION_USE_CHAPTER_NOTES: bool = os.getenv("SELECTION_USE_CHAPTER_NOTES", "true").lower() == "true"
 
     # RAG & Decision Settings
     # BTB'ler retrieval/reranking için değerli emsallerdir; ancak üçüncü kişiler

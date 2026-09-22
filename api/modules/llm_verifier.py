@@ -31,12 +31,60 @@ class LLMFactVerifier:
         except Exception:
             return None
 
+    _LEVEL_PREFIX = {"CHAPTER": 2, "HEADING": 4, "SUBHEADING": 6, "GTIP": 8}
+
+    @classmethod
+    def _precedent_evidence(
+        cls,
+        level: str,
+        nodes: List[Dict[str, Any]],
+        precedents: Optional[List[Any]],
+    ) -> List[Dict[str, Any]]:
+        """Bu seviyedeki seçeneklerle aynı ön-eki paylaşan emsalleri seçer.
+
+        Emsaller bağlayıcı değildir (başka kişiye verilmiş BTB/EBTI kararları),
+        fakat aynı eşya için idarenin daha önce ne yaptığını gösterir. Seviyeyle
+        ilgisiz emsal prompta gürültü katacağı için ön-ek filtresi uygulanır.
+        """
+        if not precedents:
+            return []
+        width = cls._LEVEL_PREFIX.get(level, 4)
+        allowed = {
+            re.sub(r"\D", "", str(node.get("gtip_code") or ""))[:width]
+            for node in nodes
+        }
+        allowed.discard("")
+
+        evidence: List[Dict[str, Any]] = []
+        for item in precedents:
+            code = re.sub(r"\D", "", str(getattr(item, "gtip_code", "") or getattr(item, "cn_code", "")))
+            if not code:
+                continue
+            # CHAPTER seviyesinde tüm fasıllar seçenek olduğundan filtre elemez;
+            # alt seviyelerde yalnız kardeş dallara ait emsaller kalır.
+            if allowed and code[:width] not in allowed:
+                continue
+            evidence.append({
+                "kaynak": str(getattr(item, "source_type", None) or "EU_EBTI"),
+                "referans_no": str(getattr(item, "btb_no", None) or getattr(item, "reference_no", "")),
+                "karar_kodu": str(getattr(item, "gtip_code", None) or getattr(item, "cn_code", "")),
+                "esya_tanimi": str(getattr(item, "product_description", ""))[:600],
+                "hukuki_gerekce": str(getattr(item, "legal_justification", ""))[:400],
+                "benzerlik": round(float(getattr(item, "similarity_score", 0.0) or 0.0), 3),
+            })
+            if len(evidence) >= 4:
+                break
+        return evidence
+
     def select_tariff_node(
         self,
         raw_text: str,
         level: str,
         nodes: List[Dict[str, Any]],
         _no_match_retries: int = 2,
+        *,
+        precedents: Optional[List[Any]] = None,
+        chapter_notes: Optional[str] = None,
     ) -> CandidateSelection:
         """Select one server-owned node without accepting a model-written code."""
         bounded_nodes = nodes[:250]
@@ -66,6 +114,23 @@ class LLMFactVerifier:
             }
             for option_id, node in option_map.items()
         ]
+        evidence = self._precedent_evidence(level, bounded_nodes, precedents)
+        evidence_block = (
+            "EMSAL KARARLAR (DELİLDİR, BAĞLAYICI DEĞİLDİR — başka kişilere verilmiş "
+            "BTB/EBTI kararlarıdır):\n"
+            "- Emsalle aynı yönde seçim yaparsan reasoning_points içinde referans_no yaz.\n"
+            "- Ürün emsalden maddi olarak farklıysa emsali AÇIKÇA reddet ve farkı yaz.\n"
+            "- Emsal, resmî seçenek metni veya fasıl notuyla çelişirse METİN VE NOT ÜSTÜNDÜR.\n"
+            f"{json.dumps(evidence, ensure_ascii=False)}\n\n"
+        ) if evidence else ""
+
+        notes_block = (
+            "İLGİLİ FASIL NOTLARI (RESMÎ METİN — GİR 1 uyarınca pozisyon metinleriyle "
+            "birlikte BAĞLAYICIDIR). Özellikle 'bu fasıla dahil değildir' biçimindeki "
+            "dışlama hükümlerine uy:\n"
+            f"{str(chapter_notes)[:6000]}\n\n"
+        ) if chapter_notes else ""
+
         level_rule = (
             "11. CHAPTER bir yönlendirme seviyesidir: ürünün esas niteliği, adı ve işlevine göre en uygun faslı mutlaka "
             "SELECT et. Bu seviyede malzeme gibi ayrıntıları sorma ve INSUFFICIENT_INFORMATION kullanma."
@@ -103,8 +168,14 @@ class LLMFactVerifier:
             "10. EŞLEŞME YOKSA: Hiçbir seçenek eşleşmiyorsa NO_MATCH kullan.\n"
             f"{level_rule}\n\n"
             f"SEVİYE: {level}\n"
-            f"<product_data>{raw_text}</product_data>\n"
+            # Seçenek listesi bu seviye için SABİTTİR (yalnız fasıl listesi
+            # ~20.000 token). Değişken ürün metni bu bloktan önce gelirse
+            # istekler arasında ortak ön-ek kalmaz ve prompt önbelleklemesi
+            # imkânsızlaşır; bu yüzden sabit blok değişken bloktan ÖNCE gelir.
             f"RESMÎ KAPALI SEÇENEKLER: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            f"{notes_block}"
+            f"{evidence_block}"
+            f"<product_data>{raw_text}</product_data>\n"
             "Yalnız şu JSON biçimini döndür: "
             "{\"status\":\"SELECT|INSUFFICIENT_INFORMATION|NO_MATCH\","
             "\"selected_candidate_id\":\"N1 veya null\","
@@ -194,6 +265,10 @@ class LLMFactVerifier:
                     level,
                     nodes,
                     _no_match_retries=_no_match_retries - 1,
+                    # Yeniden denemede emsal ve fasıl notu bağlamı korunmalıdır;
+                    # aksi halde retry ilk denemeden daha az bilgiyle çalışır.
+                    precedents=precedents,
+                    chapter_notes=chapter_notes,
                 )
             return selection
         except Exception as exc:

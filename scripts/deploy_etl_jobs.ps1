@@ -128,6 +128,7 @@ Pause-SchedulerIfPresent $DailyScheduler
 Pause-SchedulerIfPresent $BtbScheduler
 $EbtiJob = "gtip-ebti-sync"
 $EbtiScheduler = "ebti-daily-sync"
+$BenchmarkJob = "gtip-benchmark"
 Pause-SchedulerIfPresent $EbtiScheduler
 
 Deploy-EtlJob $ArchiveJob "-m,scripts.spider_resmi_gazete_archive,--mode,archive" "86400s" "4Gi" "2" "2"
@@ -135,11 +136,18 @@ Deploy-EtlJob $DailyJob "-m,scripts.spider_resmi_gazete_archive,--mode,daily,--d
 Deploy-EtlJob $BtbJob "-m,scripts.scrape_official_btb" "21600s" "2Gi" "1" "2"
 Deploy-EtlJob $EbtiJob "-m,scripts.fetch_ebti_data,--limit,2000" "7200s" "2Gi" "1" "2"
 
+# Doğruluk ölçümü. Scheduler'a BAĞLANMAZ: elle, prompt/retrieval değişikliklerinden
+# önce ve sonra çalıştırılır. Ground truth Cloud SQL'deki gerçek BTB kararlarıdır.
+#   gcloud run jobs execute gtip-benchmark --region <bölge> --project <proje>
+# max-retries 0: kısmi bir tekrar çalıştırma ölçümü bozar.
+Deploy-EtlJob $BenchmarkJob "-m,scripts.evaluate_gtip_benchmark,--sample,300" "10800s" "2Gi" "1" "0"
+
 Upsert-Scheduler $DailyScheduler $DailyJob "0 2 * * *" "Günlük Resmi Gazete GTIP senkronu"
 Upsert-Scheduler $BtbScheduler $BtbJob "0 3 * * *" "Günlük resmi BTB senkronu"
 Upsert-Scheduler $EbtiScheduler $EbtiJob "0 4 * * *" "Günlük AB EBTI karar senkronu"
 
-Write-Host "Dört ETL job aynı immutable digest ile hazırlandı: $Image"
+Write-Host "Dört ETL job ve benchmark job'u aynı immutable digest ile hazırlandı: $Image"
+Write-Host "Doğruluk ölçümü: gcloud run jobs execute $BenchmarkJob --region $Region --project $ProjectId"
 Write-Host "Schedulerlar PAUSED bırakıldı. Daily, BTB ve EBTI manuel execution doğrulandıktan sonra resume edin."
 Write-Host "EBTI ilk çalıştırma: gcloud run jobs execute $EbtiJob --region $Region --project $ProjectId"
 

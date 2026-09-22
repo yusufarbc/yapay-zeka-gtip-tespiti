@@ -82,6 +82,33 @@ function Get-TaggedUrl([string]$ServiceName, [string]$Tag) {
     return [string]$traffic.url
 }
 
+function Remove-StaleCandidateTags([string]$ServiceName, [string]$KeepTag) {
+    # Her deploy yeni bir "candidate-*" etiketi bırakır. Etiketli revizyon
+    # adreslenebilir kalır ve min-instances=1 ile sürekli sıcak tutulur; trafik
+    # almasa bile always-on instance olarak faturalanır. Trafik kaydırma ve
+    # doğrulama tamamlandıktan sonra eskiler temizlenir.
+    #
+    # --remove-tags revizyonu SİLMEZ; yalnız etiketli URL'yi kaldırır. Revizyonlar
+    # rollback için (update-traffic --to-revisions) erişilebilir kalır.
+    $description = Get-ServiceDescription $ServiceName
+    $stale = @($description.status.traffic) |
+        Where-Object { $_.PSObject.Properties.Match('tag').Count -gt 0 -and $_.tag } |
+        ForEach-Object { [string]$_.tag } |
+        Where-Object { $_ -like 'candidate-*' -and $_ -ne $KeepTag } |
+        Select-Object -Unique
+
+    if (-not $stale) { return }
+
+    Write-Host "Eski candidate etiketleri kaldırılıyor ($ServiceName): $($stale -join ', ')"
+    & gcloud.cmd run services update-traffic $ServiceName --region $Region --project $ProjectId `
+        --remove-tags ($stale -join ',') --quiet
+    # Temizlik başarısızlığı dağıtımı geçersiz kılmaz; yalnız maliyet bırakır.
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Eski candidate etiketleri kaldırılamadı ($ServiceName). Elle temizleyin: gcloud run services update-traffic $ServiceName --region $Region --remove-tags $($stale -join ',')"
+        $global:LASTEXITCODE = 0
+    }
+}
+
 function Wait-HttpOk([string]$Url, [int]$Attempts = 12) {
     $lastError = $null
     for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
@@ -305,6 +332,7 @@ try {
     Assert-LastExitCode "Backend candidate trafiğe alınamadı."
     $BackendUrl = [string](Get-ServiceDescription $BackendService).status.url
     Wait-HttpOk "$BackendUrl/api/v1/ready" | Out-Null
+    Remove-StaleCandidateTags $BackendService $CandidateTag
 
     $BackendHost = ([Uri]$BackendUrl).Host
     $WebEnvFile = [System.IO.Path]::GetTempFileName()
@@ -337,6 +365,7 @@ try {
     $WebUrl = [string](Get-ServiceDescription $WebService).status.url
     Wait-HttpOk $WebUrl | Out-Null
     Wait-HttpOk "$WebUrl/api/v1/health" | Out-Null
+    Remove-StaleCandidateTags $WebService $CandidateTag
 
     $corsOrigins = @($WebUrl) + @($AdditionalCorsOrigins) | Where-Object { $_ } | Select-Object -Unique
     $CorsFile = [System.IO.Path]::GetTempFileName()

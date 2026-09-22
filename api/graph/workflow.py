@@ -9,12 +9,14 @@ an active database leaf.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import time
 import uuid
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, Set
 
+from api.config import settings
 from api.db.database import SessionLocal, validate_leaf_gtip
 from api.db.gcp_emulator import local_state_store
 from api.modules.discriminator_engine import DiscriminatorQuestion
@@ -49,6 +51,107 @@ def get_customs_trade_measures(gtip_code: Optional[str]) -> Dict[str, Any]:
     }
 
 
+def _record_run(
+    session_id: str,
+    raw_text: str,
+    features: Optional[ProductFeatures],
+    traversal: Dict[str, Any],
+    decision: GTIPDecision,
+) -> None:
+    """Kararı değişmez bir çalışma kaydı olarak saklar.
+
+    Denetim logu yalnız COMPLETED kararları tutuyordu ve ürün tanımını 50
+    karaktere kesiyordu; sistemin başarısız olduğu vakalar hiç görünmüyor,
+    görünenler de yeniden üretilemiyordu. `classification_run` tablosu tam bu iş
+    için tanımlanmış ama hiç yazılmamıştı.
+
+    Yazma hatası karar akışını bloke etmez: denetim kaydı kullanıcıya dönen
+    sonucu düşürecek kadar kritik değildir.
+    """
+    try:
+        from api.db.database import ClassificationRunModel
+
+        with SessionLocal() as db_session:
+            db_session.add(ClassificationRunModel(
+                session_id=session_id,
+                query_text=str(raw_text or ""),          # TAM metin, kesilmeden
+                extracted_facts=features.model_dump_json() if features else "{}",
+                candidate_codes=json.dumps(traversal, ensure_ascii=False, default=str),
+                selected_gtip=re.sub(r"\D", "", str(decision.gtip_code or "")) or None,
+                status=decision.status,                   # başarısızlıklar dahil
+                confidence_score=decision.confidence_score,
+                tariff_year=decision.tariff_year,
+                model_version=settings.REASONING_LLM_MODEL,
+            ))
+            db_session.commit()
+    except Exception:
+        logger.exception("classification_run kaydı yazılamadı (session=%s)", session_id)
+
+
+def compute_confidence(
+    traversal: Dict[str, Any],
+    precedents: List[Any],
+    ebti_precedents: List[Any],
+) -> float:
+    """Kararın gerçek kanıt durumundan bir güven skoru türetir.
+
+    Önceden her karar sabit 0.90 dönüyordu: arayüzdeki "%90 güven" hiçbir şey
+    ölçmüyordu, `settings.CONFIDENCE_THRESHOLD` hiç okunmuyordu ve modelin emin
+    olup yanıldığı durumlarda hiçbir fren yoktu.
+
+    Sinyaller, kapalı-küme mimarisinin kendi güvencelerini yansıtır: kod her
+    durumda sunucuda doğrulanmış aktif bir yapraktır (taban), üstüne emsal
+    desteği ve gerekçelendirme eklenir, zayıf seçim düşülür.
+    """
+    # Birebir eşleşen BTB emsali: kodu model değil, idarenin kendi kararı verdi.
+    if traversal.get("selection_source") == "BTB_EXACT":
+        return 0.97
+
+    # Taban: kapalı küme + ebeveyn yolu + aktif 12 haneli yaprak doğrulaması.
+    score = 0.55
+
+    best_btb = max((float(getattr(p_, "similarity_score", 0.0) or 0.0) for p_ in precedents), default=0.0)
+    best_ebti = max((float(getattr(p_, "similarity_score", 0.0) or 0.0) for p_ in ebti_precedents), default=0.0)
+    # BTB ulusal emsaldir, EBTI yalnız CN-8 düzeyinde yol gösterir.
+    score += min(0.22, 0.22 * best_btb)
+    score += min(0.08, 0.08 * best_ebti)
+
+    # Model kararını resmî bir yorum kuralına bağladıysa izlenebilirlik artar.
+    if traversal.get("applied_gir_keys"):
+        score += 0.05
+    # Müşavir teknik ayrımı bizzat yanıtladıysa belirsizlik giderilmiştir.
+    if traversal.get("hitl_answer_count"):
+        score += 0.08
+    # Model hiçbir özel dalı eşleştiremedi, kalan tek "diğerleri" dalına düşüldü.
+    if traversal.get("used_residual_fallback"):
+        score -= 0.25
+
+    return round(max(0.0, min(0.99, score)), 3)
+
+
+def _restore_precedents(traversal: Dict[str, Any]) -> List[Any]:
+    """HITL devamında emsalleri oturum durumundan yeniden kurar.
+
+    Devam eden oturumda emsaller yeniden aranmaz; ilk analizde bulunanlar
+    saklanır. Aksi halde aynı ürün için HITL'li ve HITL'siz yol farklı delille
+    karar verirdi.
+    """
+    from api.schemas.product import PrecedentEBTI
+
+    restored: List[Any] = []
+    for raw in traversal.get("btb_precedents") or []:
+        try:
+            restored.append(PrecedentBTB(**raw))
+        except Exception:
+            continue
+    for raw in traversal.get("ebti_precedents") or []:
+        try:
+            restored.append(PrecedentEBTI(**raw))
+        except Exception:
+            continue
+    return restored
+
+
 def _as_hitl_question(question: DiscriminatorQuestion) -> HITLQuestion:
     return HITLQuestion(
         question_id=f"disc_{question.parameter_name}_{question.session_id[:8]}",
@@ -74,8 +177,12 @@ class GTIPWorkflowEngine:
         note: str,
         stage: str,
         gtip_code: Optional[str] = None,
+        *,
+        raw_text: str = "",
+        features: Optional[ProductFeatures] = None,
+        traversal: Optional[Dict[str, Any]] = None,
     ) -> GTIPDecision:
-        return GTIPDecision(
+        decision = GTIPDecision(
             session_id=session_id,
             status="MANUAL_REVIEW_REQUIRED",
             gtip_code=gtip_code,
@@ -83,6 +190,9 @@ class GTIPWorkflowEngine:
             state_machine_stage=stage,
             audit_notes=[note],
         )
+        # Başarısızlıklar da kaydedilir: en çok iyileştirme bu vakalardan çıkar.
+        _record_run(session_id, raw_text, features, traversal or {}, decision)
+        return decision
 
     def _pause(
         self,
@@ -143,6 +253,7 @@ class GTIPWorkflowEngine:
                 session_id,
                 "Model seçimi sunucunun resmi kapalı yaprak kümesine bağlanamadı.",
                 "MODEL_BINDING_FAILED",
+                raw_text=raw_text, features=features, traversal=traversal,
             )
 
         try:
@@ -154,6 +265,7 @@ class GTIPWorkflowEngine:
                 session_id,
                 f"Yürürlükteki GTİP yaprak kaydı doğrulanamadı: {exc}",
                 "DATABASE_VALIDATION_ERROR",
+                raw_text=raw_text, features=features, traversal=traversal,
             )
         if not is_valid_leaf:
             decision = self._manual_review(
@@ -161,6 +273,7 @@ class GTIPWorkflowEngine:
                 "Seçilen kod yürürlükteki TGTC veritabanında 12 haneli yaprak değildir.",
                 "DATABASE_LEAF_REJECTED",
                 _format_gtip_code(locked_digits),
+                raw_text=raw_text, features=features, traversal=traversal,
             )
             decision.guardrail_status = "REJECTED_NON_LEAF"
             return decision
@@ -218,8 +331,10 @@ class GTIPWorkflowEngine:
         # Uluslararası Emsaller (ABD CBP CROSS / CustomsMobile, Çin GACC, AB EBTI)
         from api.schemas.product import InternationalRuling
         raw_intl = traversal.get("international_rulings") or []
-        # Eğer henüz taranmadıysa ve kullanıcı araştırma istediyse veya yerel emsal yetersizse tara
-        if not raw_intl and (traversal.get("enable_international_research") or (len(precedents) == 0 and len(ebti_precedents) == 0)):
+        # Grounding'li canlı arama yavaştır (GROUNDED_SEARCH_TIMEOUT_MS). Yerel emsal
+        # yokluğunda örtük tetiklemek her belirsiz üründe sıcak yola on saniyeler
+        # ekliyordu; yalnız kullanıcı açıkça istediğinde çalıştırılır.
+        if not raw_intl and traversal.get("enable_international_research"):
             try:
                 from api.modules.international_search import search_international_rulings
                 found_intl = search_international_rulings(
@@ -241,6 +356,18 @@ class GTIPWorkflowEngine:
         has_intl = len(international_rulings) > 0
         if has_intl:
             consulted = list(dict.fromkeys(consulted + ["US_CBP_CROSS", "CN_GACC"]))
+
+        # Uluslararası emsal bulunamadıysa kullanıcıya uydurma karar değil, resmi
+        # portallarda elle araması için doğrudan arama bağlantıları sunulur.
+        research_portal_links: Optional[Dict[str, str]] = None
+        if not has_intl:
+            try:
+                from api.modules.international_search import generate_portal_links
+                research_portal_links = generate_portal_links(
+                    raw_text, locked_digits[:6] if locked_digits else None
+                )
+            except Exception as exc_links:
+                logger.warning("Portal bağlantıları üretilemedi: %s", exc_links)
 
         intl_legal_sources = [
             LegalSource(
@@ -292,11 +419,14 @@ class GTIPWorkflowEngine:
                 seen_source_keys.add(s_key)
                 dedup_legal_sources.append(src)
 
+        confidence = compute_confidence(traversal, precedents, ebti_precedents)
+        below_threshold = confidence < settings.CONFIDENCE_THRESHOLD
+
         decision = GTIPDecision(
             session_id=session_id,
             status="COMPLETED",
             gtip_code=formatted_code,
-            confidence_score=0.90,
+            confidence_score=confidence,
             official_statute_text=f"2026 TGTC {formatted_code}: {description}",
             llm_reasoning_commentary=(
                 "Ürün açıklaması gerçek BTB havuzundaki emsal kararla tam eşleşti; BTB kodu "
@@ -314,12 +444,17 @@ class GTIPWorkflowEngine:
             precedent_btbs=precedents,
             precedent_ebtis=ebti_precedents,
             international_rulings=international_rulings,
+            research_portal_links=research_portal_links,
             legal_sources=dedup_legal_sources,
             consulted_sources=consulted,
             trade_measures=get_customs_trade_measures(formatted_code),
             state_machine_stage="MODEL_CLOSED_SET_COMPLETED",
             guardrail_status="VERIFIED_LEAF",
-            legal_validation_status="PASSED",
+            # Statü COMPLETED kalır: arayüz statüyü tam eşitlikle render ettiği
+            # için yeni bir statü boş ekran üretirdi. Eşik altı kararlar şemada
+            # zaten tanımlı MANUAL_REVIEW değeriyle işaretlenir; GTIPResultCard
+            # düşük skoru kendi güven bantlarıyla zaten uyarı olarak gösterir.
+            legal_validation_status="MANUAL_REVIEW" if below_threshold else "PASSED",
             audit_notes=[
                 (
                     "Kod, tam eşleşen gerçek BTB emsalinden alındı; model GTİP kodu üretmedi."
@@ -327,6 +462,16 @@ class GTIPWorkflowEngine:
                     else "Model serbest GTİP kodu üretmedi; yalnız sunulan seçenek kimliğini seçti."
                 ),
                 "Kod, ebeveyn yolu, 12 haneli yaprak ve yürürlük durumu sunucuda doğrulandı.",
+                *(
+                    [f"BROKER_APPROVAL_REQUIRED: Güven skoru {confidence:.2f} < eşik "
+                     f"{settings.CONFIDENCE_THRESHOLD:.2f}; kıdemli müşavir onayı gerekir."]
+                    if below_threshold else []
+                ),
+                *(
+                    ["RESIDUAL_FALLBACK: Model hiçbir özel dalı eşleştiremedi; "
+                     "resmî kalıntı ('diğerleri') dalı seçildi."]
+                    if traversal.get("used_residual_fallback") else []
+                ),
                 *(
                     [f"AB EBTI emsali bulundu: {len(ebti_precedents)} karar (CN-8 uyumu ile)."]
                     if has_ebti else []
@@ -337,6 +482,7 @@ class GTIPWorkflowEngine:
                 ),
             ],
         )
+        _record_run(session_id, raw_text, features, traversal, decision)
         local_state_store.save_state(session_id, {
             "session_id": session_id,
             "routing_mode": "MODEL_CLOSED_SET",
@@ -358,6 +504,8 @@ class GTIPWorkflowEngine:
         session_id: str,
         features: ProductFeatures,
         *,
+        raw_text: str = "",
+        precedents: Optional[List[Any]] = None,
         locked_chapter: Optional[str] = None,
         locked_heading: Optional[str] = None,
         locked_subheading: Optional[str] = None,
@@ -374,6 +522,8 @@ class GTIPWorkflowEngine:
             locked_subheading=locked_subheading,
             locked_gtip=locked_gtip,
             query_vector=query_vector,
+            raw_text=raw_text,
+            precedents=precedents,
         )
 
     def start_analysis(
@@ -381,11 +531,15 @@ class GTIPWorkflowEngine:
         raw_text: str,
         image_uri: str = None,
         enable_international_research: bool = False,
+        exclude_btb_refs: Optional[Set[str]] = None,
     ) -> GTIPDecision:
+        """`exclude_btb_refs` yalnız benchmark içindir; üretim yolunda None'dır."""
         session_id = str(uuid.uuid4())
         started = time.perf_counter()
         features = feature_extractor.extract_features(raw_text, image_uri)
-        btb_precedents = rag_engine.search_btb_precedents(raw_text)
+        btb_precedents = rag_engine.search_btb_precedents(
+            raw_text, exclude_refs=exclude_btb_refs
+        )
         # EBTI araması: BTB aramasından bağımsız çalışır, hata durumunda boş liste döner
         try:
             ebti_precedents = rag_engine.search_ebti_precedents(raw_text)
@@ -421,7 +575,14 @@ class GTIPWorkflowEngine:
                 },
             )
         else:
-            tree_result = self._search(session_id, features)
+            # BTB ve EBTI emsalleri artık yalnız ekranda gösterilmiyor; seçim
+            # yapan modele delil olarak veriliyor.
+            tree_result = self._search(
+                session_id,
+                features,
+                raw_text=raw_text,
+                precedents=[*btb_precedents, *ebti_precedents],
+            )
             tree_result.traversal_state["btb_precedents"] = [
                 item.model_dump() for item in btb_precedents
             ]
@@ -430,17 +591,31 @@ class GTIPWorkflowEngine:
             ]
             tree_result.traversal_state["international_rulings"] = international_rulings
             tree_result.traversal_state["enable_international_research"] = enable_international_research
-        logger.info(
-            "[PipelineTiming] session=%s stage=model_closed_set duration_ms=%.2f btb_hits=%d ebti_hits=%d intl_hits=%d",
-            session_id,
-            (time.perf_counter() - started) * 1000,
-            len(btb_precedents),
-            len(ebti_precedents),
-            len(international_rulings),
-        )
+        duration_ms = (time.perf_counter() - started) * 1000
         if tree_result.discriminator_question:
-            return self._pause(session_id, raw_text, image_uri, features, tree_result)
-        return self._complete(session_id, raw_text, image_uri, features, tree_result)
+            decision = self._pause(session_id, raw_text, image_uri, features, tree_result)
+        else:
+            decision = self._complete(session_id, raw_text, image_uri, features, tree_result)
+
+        # Yapılandırılmış alanlar: log-based metric'ler metin ayrıştırmadan
+        # doğrudan jsonPayload üzerinden türetilebilir (api/logging_config.py).
+        logger.info(
+            "[PipelineTiming] stage=model_closed_set status=%s duration_ms=%.2f",
+            decision.status,
+            duration_ms,
+            extra={
+                "session_id": session_id,
+                "stage": "model_closed_set",
+                "decision_status": decision.status,
+                "duration_ms": round(duration_ms, 2),
+                "btb_hits": len(btb_precedents),
+                "ebti_hits": len(ebti_precedents),
+                "intl_hits": len(international_rulings),
+                "gtip_code": decision.gtip_code,
+                "confidence_score": decision.confidence_score,
+            },
+        )
+        return decision
 
 
     async def start_analysis_async(
@@ -492,10 +667,16 @@ class GTIPWorkflowEngine:
             raise LookupError("Seçilen yanıt güncel soru seçenekleri arasında değil.")
         selected_branch = str((option.get("impact_data") or {}).get("selected_branch") or "")
         if not selected_branch:
+            # Bu vaka geri bildirim için değerlidir: müşavir ayrımı bilmiyorsa
+            # soru ya yanlış sorulmuştur ya da kullanıcıca gözlenebilir değildir.
             decision = self._manual_review(
                 session_id,
                 "Kullanıcı gerekli teknik ayrımı bilmiyor olarak işaretledi.",
                 "USER_INFORMATION_MISSING",
+                raw_text=state.get("raw_text", ""),
+                features=ProductFeatures(**state.get("product_features", {}))
+                if state.get("product_features") else None,
+                traversal=dict(state.get("discriminator_traversal") or {}),
             )
             state.update({"status": decision.status, "hitl_question": None})
             local_state_store.save_state(session_id, state)
@@ -523,15 +704,34 @@ class GTIPWorkflowEngine:
         tree_result = self._search(
             session_id,
             features,
+            raw_text=state.get("raw_text", ""),
+            precedents=_restore_precedents(traversal),
             locked_chapter=locked_chapter,
             locked_heading=locked_heading,
             locked_subheading=locked_subheading,
             locked_gtip=locked_gtip,
             query_vector=traversal.get("query_vector"),
         )
-        tree_result.traversal_state["btb_precedents"] = list(
-            traversal.get("btb_precedents") or []
+        # Yalnız btb_precedents'i geri yüklemek, HITL'den geçen kararların
+        # doğrudan tamamlananlardan farklı hukuki dayanakla sonuçlanmasına yol
+        # açıyordu; ayrıca uluslararası arama her devamda yeniden tetikleniyordu.
+        for carried_key in (
+            "btb_precedents",
+            "ebti_precedents",
+            "international_rulings",
+            "enable_international_research",
+            "applied_gir_keys",
+            "cited_chapter_notes",
+            "used_residual_fallback",
+        ):
+            if carried_key in traversal:
+                tree_result.traversal_state.setdefault(carried_key, traversal[carried_key])
+
+        # Müşavir kaç teknik ayrımı yanıtladı: güven skoruna girer.
+        tree_result.traversal_state["hitl_answer_count"] = (
+            int(traversal.get("hitl_answer_count") or 0) + 1
         )
+
         if tree_result.discriminator_question:
             return self._pause(
                 session_id,

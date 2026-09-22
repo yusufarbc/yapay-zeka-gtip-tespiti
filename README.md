@@ -50,6 +50,76 @@ Proje kökünde temel derleme kontrolleri:
 npm.cmd --prefix web run build
 ```
 
+## Doğruluk ölçümü (benchmark)
+
+Prompt, retrieval veya model ayarı değiştiren her çalışma **önce ve sonra** ölçülmelidir.
+Ground truth elle yazılmış örnekler değil, Cloud SQL'deki gerçek Ticaret Bakanlığı BTB
+kararlarıdır; her kayıt bir (ürün açıklaması, resmî GTİP) çiftidir. Numunenin kendi
+kararı emsal havuzundan çıkarılarak sızıntı önlenir.
+
+Benchmark canlı Vertex AI ve Cloud SQL erişimi ister; bu yüzden CI kapısı **değildir**.
+Birincil yol, üretim imajıyla çalışan Cloud Run Job'udur:
+
+```powershell
+gcloud.cmd run jobs execute gtip-benchmark --region us-central1 --project gumruk-mevzuat --wait
+gcloud.cmd logging read 'resource.labels.job_name="gtip-benchmark"' --limit 80 --format='value(textPayload)'
+```
+
+Yerelde çalıştırmak için Cloud SQL Auth Proxy ve ADC gerekir:
+
+```powershell
+gcloud.cmd auth application-default login
+.\cloud-sql-proxy.exe gumruk-mevzuat:us-central1:gumruk-db --port 5432
+# ikinci terminalde
+$env:ENVIRONMENT = 'production'
+$env:DATABASE_URL = 'postgresql+psycopg2://postgres:<parola>@127.0.0.1:5432/gtip_db'
+.\.venv\Scripts\python.exe -m scripts.evaluate_gtip_benchmark --sample 300
+```
+
+Sonuç `benchmark_results/benchmark-<zaman>.json` altına yazılır. Bir önceki ölçümle
+karşılaştırmak için:
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.evaluate_gtip_benchmark --sample 300 `
+  --baseline benchmark_results/<baseline-dosyası>.json
+```
+
+Doğruluk (`leaf_acc`, `heading_acc`) ile kapsam (`coverage`, `hitl_rate`) ayrı
+raporlanır: modelin soru sorması bir sınıflandırma hatası değildir, kapsam kaybıdır.
+
+### Kanıt bayrakları ve ablasyon ölçümü
+
+Seçim promptuna giren üç kanıt ayrı ayrı kapatılabilir:
+
+| Bayrak | Ne enjekte eder |
+|---|---|
+| `SELECTION_USE_RAW_TEXT` | Ham müşteri beyanı (özellik çıkarımıyla damıtılmadan) |
+| `SELECTION_USE_PRECEDENTS` | Seviyeyle eşleşen BTB/EBTI emsalleri |
+| `SELECTION_USE_CHAPTER_NOTES` | İlgili faslın resmî notları (GİR 1 dışlama hükümleri) |
+
+Bu, her maddenin doğruluk katkısını tek tek ölçmeyi sağlar; aynı zamanda bir madde
+üretimde doğruluğu düşürürse yeniden deploy etmeden kapatma imkânı verir.
+
+Ölçüm sırası — **önce baseline**, sonra maddeler tek tek eklenir:
+
+```powershell
+# 1. Baseline: tüm kanıt kapalı (kanıt zinciri öncesi davranış)
+gcloud.cmd run jobs execute gtip-benchmark --region us-central1 --args='-m,scripts.evaluate_gtip_benchmark,--sample,300,--baseline-run' --wait
+
+# 2. Yalnız ham beyan açık
+... --args='-m,scripts.evaluate_gtip_benchmark,--sample,300,--ablate,SELECTION_USE_PRECEDENTS,--ablate,SELECTION_USE_CHAPTER_NOTES'
+
+# 3. Ham beyan + emsaller
+... --args='-m,scripts.evaluate_gtip_benchmark,--sample,300,--ablate,SELECTION_USE_CHAPTER_NOTES'
+
+# 4. Hepsi açık (varsayılan üretim davranışı)
+... --args='-m,scripts.evaluate_gtip_benchmark,--sample,300'
+```
+
+Her rapor hangi bayrakların açık olduğunu `evidence_flags` alanında saklar; karşılaştırma
+çıktısı iki ölçümün bayrak farkını da yazar. Bir adım `leaf_acc` veya `heading_acc`
+değerini düşürürse o bayrak üretimde `false` bırakılır.
+
 ## GCP üretim dağıtımı
 
 Dağıtım betikleri boş veritabanı oluşturmaz ve `latest` etiketiyle deploy etmez.
@@ -87,6 +157,20 @@ gcloud.cmd scheduler jobs resume resmi-gazete-daily-sync --location us-central1 
 gcloud.cmd scheduler jobs resume official-btb-daily-sync --location us-central1 --project gumruk-mevzuat
 .\scripts\verify_deployment.ps1 -RequireSchedulersEnabled
 ```
+
+### Rollback
+
+Trafik önceki revizyona anında geri alınabilir; eski revizyonlar silinmez:
+
+```powershell
+gcloud.cmd run revisions list --service gtip-backend --region us-central1 --project gumruk-mevzuat
+gcloud.cmd run services update-traffic gtip-backend --region us-central1 --project gumruk-mevzuat `
+  --to-revisions '<önceki-revizyon-adı>=100'
+```
+
+Dağıtım betiği trafiği kaydırdıktan sonra eski `candidate-*` etiketlerini temizler.
+Etiketli revizyonlar `min-instances=1` ile adreslenebilir kaldığında trafik almasalar
+bile sürekli açık instance olarak faturalanır.
 
 Ayrıntılı geri yükleme, IAM, smoke test ve rollback kapıları için
 [GCP dağıtım planına](gcp_deploy_plan.md) bakın.

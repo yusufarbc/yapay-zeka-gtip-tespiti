@@ -1,5 +1,7 @@
 """Unit tests for International Customs Rulings Search and Schemas."""
 
+import pathlib
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -7,7 +9,6 @@ from api.main import app
 from api.modules.international_search import (
     generate_portal_links,
     search_international_rulings,
-    _build_fallback_rulings,
 )
 from api.schemas.product import InternationalRuling, GTIPDecision
 
@@ -37,23 +38,51 @@ def test_generate_portal_links():
     assert "gjzwfw.gov.cn" in links["cn_gacc"]
 
 
-def test_build_fallback_rulings():
-    rulings = _build_fallback_rulings("Ahşap yemek sandalyesi", hs_code_hint="9401.61")
-    assert len(rulings) == 3
-    countries = {r.country for r in rulings}
-    assert countries == {"US", "CN", "EU"}
-    assert any("customsmobile.com" in r.source_url for r in rulings)
-    assert any("gjzwfw.gov.cn" in r.source_url for r in rulings)
+def test_no_fabricated_ruling_generator_exists():
+    """Uydurma emsal karar üreticisi kalıcı olarak kaldırıldı."""
+    import api.modules.international_search as intl
+
+    assert not hasattr(intl, "_build_fallback_rulings")
+    source = pathlib.Path(intl.__file__).read_text(encoding="utf-8")
+
+    # Modül InternationalRuling'i YALNIZ modelin döndürdüğü veriden kurabilir.
+    # Literal alanlarla kurulan her örnek uydurma emsal demektir.
+    constructions = [
+        line.strip() for line in source.splitlines() if "InternationalRuling(" in line
+    ]
+    assert constructions == ["rulings.append(InternationalRuling(**item))"], constructions
 
 
-def test_search_international_rulings_fallback():
-    # In test/emulator mode, should return fallback rulings safely without network error
+def test_search_returns_empty_when_live_search_unavailable():
+    """Emülatör/erişimsiz ortamda uydurma karar değil, boş liste dönmeli."""
     results = search_international_rulings("kablosuz kulaklık", hs_code_hint="8518.30", max_results=3)
-    assert len(results) <= 3
-    assert len(results) > 0
-    for r in results:
-        assert isinstance(r, InternationalRuling)
-        assert r.country in ["US", "CN", "EU"]
+    assert results == []
+
+
+def test_search_returns_empty_when_provider_raises(monkeypatch):
+    """Canlı arama hata verirse sistem sessizce sahte emsal üretmemeli."""
+    import api.modules.international_search as intl
+
+    monkeypatch.setattr(intl.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(intl.settings, "GCP_PROJECT_ID", "test-project")
+
+    def _boom():
+        raise TimeoutError("504 DEADLINE_EXCEEDED")
+
+    monkeypatch.setattr("api.modules.vertex_client.get_grounded_search_client", _boom)
+
+    results = search_international_rulings("kablosuz kulaklık", hs_code_hint="8518.30")
+    assert results == []
+
+
+def test_decision_never_carries_fabricated_intl_legal_sources():
+    """Emsal yokken karara hiçbir INTL_* hukuki kaynak girmemeli."""
+    from api.graph.workflow import workflow_engine
+
+    decision = workflow_engine.start_analysis("ahşap sandalye")
+    intl_sources = [s for s in decision.legal_sources if s.source_type.startswith("INTL_")]
+    assert intl_sources == []
+    assert decision.international_rulings == []
 
 
 def test_international_search_api_endpoint():
@@ -69,8 +98,10 @@ def test_international_search_api_endpoint():
     )
     assert response.status_code == 200
     data = response.json()
-    assert data["total_found"] > 0
-    assert len(data["rulings"]) > 0
+    # Emülatör/test ortamında canlı arama yapılamaz; uydurma emsal DÖNMEMELİ.
+    assert data["total_found"] == 0
+    assert data["rulings"] == []
+    # Kullanıcı araştırmayı sürdürebilsin diye portal bağlantıları her durumda döner.
     assert "portal_links" in data
     assert "us_customsmobile" in data["portal_links"]
     assert "cn_gacc" in data["portal_links"]

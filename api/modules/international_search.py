@@ -52,95 +52,6 @@ def _clean_json_text(raw_text: str) -> str:
     return text
 
 
-def _build_fallback_rulings(
-    product_text: str,
-    hs_code_hint: Optional[str] = None,
-    target_countries: Optional[List[str]] = None,
-) -> List[InternationalRuling]:
-    """
-    Offline, emülatör veya bağlantı kesintisi durumlarında fail-safe çalışan
-    bağlamsal emsal kararlar üretir (Sistem asla çökmez).
-    """
-    countries = [c.upper() for c in (target_countries or ["US", "CN", "EU"])]
-    clean_hs = (hs_code_hint or "").replace(".", "").strip()
-    prefix4 = clean_hs[:4] if len(clean_hs) >= 4 else "8471"
-    prefix6 = clean_hs[:6] if len(clean_hs) >= 6 else f"{prefix4}30"
-
-    p_lower = product_text.lower()
-    rulings: List[InternationalRuling] = []
-
-    # 1. ABD CBP CROSS / CustomsMobile Emsali
-    if "US" in countries:
-        rulings.append(
-            InternationalRuling(
-                country="US",
-                ruling_no=f"NY N{prefix4}892",
-                hs_code=f"{prefix6[:4]}.{prefix6[4:6]}.00",
-                product_description=f"{product_text[:120]} (evaluated for classification under HTSUS)",
-                legal_justification=(
-                    f"Classified pursuant to General Rule of Interpretation (GRI) 1 and GRI 6. "
-                    f"The merchandise fulfills the specifications of heading {prefix4} and subheading {prefix6}."
-                ),
-                summary_tr=(
-                    f"ABD Gümrük ve Sınır Muhafaza (CBP) kararı: Ürün GİR 1 ve GİR 6 uyarınca {prefix6[:4]}.{prefix6[4:6]} "
-                    f"alt pozisyonunda sınıflandırılmıştır. WCO 6 haneli HS seviyesinde Türk GTİP ile tam uyumludur."
-                ),
-                issue_date="2024-05-14",
-                source_url=f"https://www.customsmobile.com/rulings/search?q={prefix6}",
-                source_name="ABD CBP CROSS (CustomsMobile)",
-                similarity_score=0.92,
-            )
-        )
-
-    # 2. Çin GACC Emsali
-    if "CN" in countries:
-        rulings.append(
-            InternationalRuling(
-                country="CN",
-                ruling_no=f"Z2024-{prefix4}01",
-                hs_code=f"{prefix6[:4]}.{prefix6[4:6]}",
-                product_description=f"商品名称: {product_text[:80]} (海关总署商品归类决定)",
-                legal_justification=(
-                    f"根据《进出口税则归类总规则》规则一及规则六，该商品应归入税则号列 {prefix6[:4]}.{prefix6[4:6]}。"
-                ),
-                summary_tr=(
-                    f"Çin Gümrükler Genel İdaresi (GACC) Emsali: Ürün, GTİP Genel Yorum Kuralları 1 ve 6 uyarınca "
-                    f"{prefix6[:4]}.{prefix6[4:6]} alt pozisyonuna bağlanmıştır. Çin menşeli ithalatlarda esas teşkil eder."
-                ),
-                issue_date="2023-11-20",
-                source_url=CHINA_GACC_PORTAL_URL,
-                source_name="Çin GACC (海关总署 归类决定)",
-                similarity_score=0.88,
-            )
-        )
-
-    # 3. AB EBTI Emsali
-    if "EU" in countries:
-        cn8_candidate = f"{prefix6}00" if len(prefix6) == 6 else "84713000"
-        rulings.append(
-            InternationalRuling(
-                country="EU",
-                ruling_no=f"DE/{prefix4}/2024/0912",
-                hs_code=cn8_candidate,
-                product_description=f"{product_text[:120]} (Binding Tariff Information decision)",
-                legal_justification=(
-                    f"Classification is determined by General Rules 1 and 6 for the interpretation of the "
-                    f"Combined Nomenclature (CN) and the wording of CN codes {cn8_candidate}."
-                ),
-                summary_tr=(
-                    f"Avrupa Birliği EBTI Kararı: Ürün Kombine Nomanklatür (CN) 8 haneli {cn8_candidate} kodunda "
-                    f"sınıflandırılmıştır. Türkiye-AB Gümrük Birliği gereğince Türk GTİP ilk 8 hanesiyle %100 örtüşür."
-                ),
-                issue_date="2024-03-10",
-                source_url=EBTI_CONSULTATION_URL,
-                source_name="AB EBTI (EC TAXUD)",
-                similarity_score=0.95,
-            )
-        )
-
-    return rulings
-
-
 def search_international_rulings(
     product_text: str,
     hs_code_hint: Optional[str] = None,
@@ -156,16 +67,18 @@ def search_international_rulings(
 
     countries = target_countries or ["US", "CN", "EU"]
 
-    # Test/Emülatör Ortamı veya API Key Eksikliği Kontrolü
+    # Test/Emülatör ortamında veya sağlayıcı erişimi yokken canlı arama yapılamaz.
+    # Uydurma karar üretmek yerine boş dönülür; çağıran taraf kullanıcıya
+    # generate_portal_links() ile resmi portal arama bağlantılarını sunar.
     if settings.USE_GCP_EMULATOR or not (settings.GEMINI_API_KEY or settings.GCP_PROJECT_ID):
-        logger.info("[InternationalSearch] Emülatör modunda bağlamsal fallback kararları dönülüyor.")
-        return _build_fallback_rulings(product_text, hs_code_hint, countries)[:max_results]
+        logger.info("[InternationalSearch] Canlı arama yapılamıyor; emsal listesi boş dönülüyor.")
+        return []
 
     try:
-        from api.modules.vertex_client import get_genai_client
+        from api.modules.vertex_client import get_grounded_search_client
         from google.genai import types
 
-        client = get_genai_client()
+        client = get_grounded_search_client()
         hs_context = f"Tahmini veya aday WCO HS Kodu: {hs_code_hint}" if hs_code_hint else ""
 
         prompt = f"""
@@ -230,15 +143,17 @@ YALNIZCA geçerli bir JSON listesi döndür. Açıklama veya markdown formatı e
             )
             return rulings[:max_results]
 
-        logger.warning("[InternationalSearch] Canlı arama boş sonuç döndü, bağlamsal fallback kullanılıyor.")
-        return _build_fallback_rulings(product_text, hs_code_hint, countries)[:max_results]
+        logger.warning("[InternationalSearch] Canlı arama boş sonuç döndü; emsal listesi boş dönülüyor.")
+        return []
 
     except Exception as exc:
+        # Uydurma emsal üretmek, kullanıcıya sahte hukuki dayanak sunmak demektir.
+        # Arama başarısızsa karar uluslararası emsal olmadan tamamlanır.
         logger.warning(
-            "[InternationalSearch] Canlı arama sırasında hata (%s), bağlamsal fallback uygulanıyor.",
+            "[InternationalSearch] Canlı arama başarısız (%s); uluslararası emsal olmadan devam ediliyor.",
             exc,
         )
-        return _build_fallback_rulings(product_text, hs_code_hint, countries)[:max_results]
+        return []
 
 
 async def search_international_rulings_async(

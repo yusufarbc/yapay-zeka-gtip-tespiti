@@ -1,0 +1,54 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    env:
+      # Çevrimdışı mod: Vertex AI çağrısı yapılmaz (llm_verifier kapalı-küme
+      # stub'ına düşer) ve veritabanı geçici SQLite'a bağlanır.
+      # Doğruluk ölçümü burada YAPILMAZ; o, canlı Vertex ve Cloud SQL gerektiren
+      # `gtip-benchmark` Cloud Run Job'udur (bkz. README).
+      ENVIRONMENT: testing
+      USE_GCP_EMULATOR: "true"
+      PYTHONPATH: .
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"   # Dockerfile ile aynı sürüm
+          cache: pip
+
+      - name: Bağımlılıkları kur
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r api/requirements.txt
+          pip install pytest
+
+      - name: Testler
+        run: pytest tests/ -q
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Bağımlılıkları kur
+        working-directory: web
+        run: npm ci
+
+      - name: Derleme
+        working-directory: web
+        run: npm run build
