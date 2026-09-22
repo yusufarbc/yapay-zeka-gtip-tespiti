@@ -19,13 +19,19 @@ class LLMFactVerifier:
     """Keeps the historical class name while exposing one focused operation."""
 
     @staticmethod
-    def _config() -> Optional[Any]:
+    def _config(narrowing: bool = False) -> Optional[Any]:
         try:
             from google.genai import types
 
+            # İlk deneme deterministik ve ucuzdur. Daraltma denemesi ancak model
+            # hiçbir seçeneği eşleştiremediğinde çalışır; aynı promptu aynı
+            # sıcaklıkta tekrar göndermek deterministik kurulumda aynı cevabı
+            # üretir, bu yüzden bütçe ve sıcaklık bilinçli olarak değiştirilir.
             return types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
-                temperature=0.0,
+                thinking_config=types.ThinkingConfig(
+                    thinking_budget=settings.THINKING_BUDGET_EXCLUSION if narrowing else 0
+                ),
+                temperature=0.3 if narrowing else 0.0,
                 response_mime_type="application/json",
             )
         except Exception:
@@ -85,6 +91,7 @@ class LLMFactVerifier:
         *,
         precedents: Optional[List[Any]] = None,
         chapter_notes: Optional[str] = None,
+        narrowing: bool = False,
     ) -> CandidateSelection:
         """Select one server-owned node without accepting a model-written code."""
         bounded_nodes = nodes[:250]
@@ -131,6 +138,19 @@ class LLMFactVerifier:
             f"{str(chapter_notes)[:6000]}\n\n"
         ) if chapter_notes else ""
 
+        # Daraltma denemesi: NO_MATCH bir çıkmazdır. Model tam eşleşme bulamasa
+        # bile en yakın kardeş dalları verebilirse, sistem ölü uç yerine
+        # müşavire sorulabilir sınırlı bir soru üretir.
+        narrowing_block = (
+            "ÖNEMLİ — İKİNCİ DENEME: Önceki denemende hiçbir seçeneği eşleştiremedin.{nl}"
+            "- Tam eşleşme bulamıyorsan bile EN YAKIN 2-4 seçeneği alternative_candidate_ids "
+            "olarak ver ve status=INSUFFICIENT_INFORMATION döndür.{nl}"
+            "- NO_MATCH yalnız ürün bu tarife dalıyla tamamen ilgisizse geçerlidir "
+            "(örneğin canlı hayvan seçenekleri arasında elektronik bir cihaz).{nl}"
+            "- Ürün bu dala ait ama hangi alt ayrıma girdiği belirsizse bu bir NO_MATCH "
+            "değil, bilgi eksikliğidir.{nl}{nl}"
+        ).format(nl=chr(10)) if narrowing else ""
+
         level_rule = (
             "11. CHAPTER bir yönlendirme seviyesidir: ürünün esas niteliği, adı ve işlevine göre en uygun faslı mutlaka "
             "SELECT et. Bu seviyede malzeme gibi ayrıntıları sorma ve INSUFFICIENT_INFORMATION kullanma."
@@ -175,6 +195,7 @@ class LLMFactVerifier:
             f"RESMÎ KAPALI SEÇENEKLER: {json.dumps(payload, ensure_ascii=False)}\n\n"
             f"{notes_block}"
             f"{evidence_block}"
+            f"{narrowing_block}"
             f"<product_data>{raw_text}</product_data>\n"
             "Yalnız şu JSON biçimini döndür: "
             "{\"status\":\"SELECT|INSUFFICIENT_INFORMATION|NO_MATCH\","
@@ -194,7 +215,7 @@ class LLMFactVerifier:
                     response = get_genai_client().models.generate_content(
                         model=settings.REASONING_LLM_MODEL,
                         contents=prompt,
-                        config=self._config(),
+                        config=self._config(narrowing),
                     )
                     break
                 except Exception as exc:
@@ -254,7 +275,7 @@ class LLMFactVerifier:
             )
             if should_retry_choice and _no_match_retries > 0:
                 logger.warning(
-                    "Tariff node selection returned %s at level=%s; retrying closed-set choice (%s left)",
+                    "Tariff node selection returned %s at level=%s; narrowing retry (%s left)",
                     selection.status,
                     level,
                     _no_match_retries,
@@ -269,6 +290,9 @@ class LLMFactVerifier:
                     # aksi halde retry ilk denemeden daha az bilgiyle çalışır.
                     precedents=precedents,
                     chapter_notes=chapter_notes,
+                    # Aynı promptu tekrar göndermek yerine modelden en yakın
+                    # dalları istemek, çıkmazı sorulabilir bir soruya çevirir.
+                    narrowing=True,
                 )
             return selection
         except Exception as exc:
