@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from api.modules import llm_verifier as verifier_module
+from api.modules.llm_verifier import option_id
 from api.modules.rag_engine import RAGEngine
 from api.schemas.predicate import CandidateSelection, CandidateSelectionStatus
 
@@ -89,7 +90,7 @@ def test_retry_after_no_match_asks_for_nearest_branches(monkeypatch):
                 return SimpleNamespace(text='{"status":"NO_MATCH","selected_candidate_id":null}')
             return SimpleNamespace(text=(
                 '{"status":"INSUFFICIENT_INFORMATION","selected_candidate_id":null,'
-                '"alternative_candidate_ids":["N1","N2"],"question_text":"Hangisi?"}'
+                '"alternative_candidate_ids":["A","B"],"question_text":"Hangisi?"}'
             ))
 
     monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
@@ -110,7 +111,7 @@ def test_retry_after_no_match_asks_for_nearest_branches(monkeypatch):
     assert "EN YAKIN" in prompts[1]
     # Çıkmaz, sorulabilir bir belirsizliğe dönüşmeli.
     assert result.status == CandidateSelectionStatus.INSUFFICIENT_INFORMATION
-    assert result.alternative_candidate_ids == ["N1", "N2"]
+    assert result.alternative_candidate_ids == ["A", "B"]
 
 
 def test_narrowing_retry_changes_sampling(monkeypatch):
@@ -184,7 +185,7 @@ def test_reselecting_a_rejected_branch_is_refused(monkeypatch):
     """Model dışlamayı yok sayarsa seçim kapalı kabul edilmeli."""
     class Models:
         def generate_content(self, **kwargs):
-            return SimpleNamespace(text='{"status":"SELECT","selected_candidate_id":"N1"}')
+            return SimpleNamespace(text='{"status":"SELECT","selected_candidate_id":"A"}')
 
     monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
     monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
@@ -207,7 +208,7 @@ def test_rejection_is_stated_in_the_prompt(monkeypatch):
     class Models:
         def generate_content(self, **kwargs):
             prompts.append(kwargs["contents"])
-            return SimpleNamespace(text='{"status":"SELECT","selected_candidate_id":"N2"}')
+            return SimpleNamespace(text='{"status":"SELECT","selected_candidate_id":"B"}')
 
     monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
     monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
@@ -262,7 +263,7 @@ def test_model_returning_too_many_alternatives_does_not_kill_the_selection(monke
     """
     class Models:
         def generate_content(self, **kwargs):
-            ids = [f"N{i}" for i in range(1, 12)]   # 11 alternatif
+            ids = [option_id(i) for i in range(11)]   # 11 alternatif
             return SimpleNamespace(text=json.dumps({
                 "status": "INSUFFICIENT_INFORMATION",
                 "selected_candidate_id": None,
@@ -285,7 +286,7 @@ def test_model_returning_too_many_alternatives_does_not_kill_the_selection(monke
     # Fazla üretim bir sözleşme ihlali değil, sapmadır: kırpılır, düşürülmez.
     assert result.status == CandidateSelectionStatus.INSUFFICIENT_INFORMATION
     assert len(result.alternative_candidate_ids) <= 4
-    assert result.alternative_candidate_ids == ["N1", "N2", "N3", "N4"]
+    assert result.alternative_candidate_ids == ["A", "B", "C", "D"]
 
 
 def test_oversized_lists_are_clamped_not_rejected(monkeypatch):
@@ -294,7 +295,7 @@ def test_oversized_lists_are_clamped_not_rejected(monkeypatch):
         def generate_content(self, **kwargs):
             return SimpleNamespace(text=json.dumps({
                 "status": "SELECT",
-                "selected_candidate_id": "N1",
+                "selected_candidate_id": "A",
                 "reasoning_points": [f"r{i}" for i in range(20)],
                 "applied_gir_keys": [f"GIR_{i}" for i in range(20)],
                 "cited_chapter_notes": [str(i) for i in range(20)],
@@ -309,7 +310,53 @@ def test_oversized_lists_are_clamped_not_rejected(monkeypatch):
         "pompa", "HEADING", [{"gtip_code": "8413", "description": "Pompalar"}])
 
     assert result.status == CandidateSelectionStatus.SELECT
-    assert result.selected_candidate_id == "N1"
+    assert result.selected_candidate_id == "A"
     assert len(result.reasoning_points) <= 6
     assert len(result.applied_gir_keys) <= 10
     assert len(result.cited_chapter_notes) <= 10
+
+
+# ---------------------------------------------------------------------------
+# Seçenek kimliği / tarife kodu ayrışması
+# ---------------------------------------------------------------------------
+
+def test_option_ids_cannot_be_read_as_tariff_codes():
+    """
+    Kimlikler önceden N1, N2, ... idi ve fasıl kodlarıyla hizalıydı: N1..N76 tam
+    olarak Fasıl 01..76'ya denk geliyor, Fasıl 77 Armonize Sistem'de ayrıldığı
+    için sonrası bir kayıyordu. Model "Fasıl 85" demek isteyip N85 yazdığında
+    sunucu Fasıl 86 çözüyordu — sessiz, sistematik ve en yoğun fasılları
+    (84/85, korpusun %52'si) vuran bir hata.
+    """
+    ids = [option_id(i) for i in range(300)]
+    assert ids[:3] == ["A", "B", "C"]
+    assert ids[25:28] == ["Z", "AA", "AB"]
+    # Hiçbir kimlik rakam içermemeli: sayısal eşleşme imkânsız olmalı.
+    assert all(not any(ch.isdigit() for ch in i) for i in ids)
+    assert len(set(ids)) == len(ids)
+
+
+def test_chapter_option_ids_do_not_track_chapter_numbers(monkeypatch):
+    """Fasıl 77 boşluğu kimlik ile kod arasında kayma yaratmamalı."""
+    captured = {}
+
+    class Models:
+        def generate_content(self, **kwargs):
+            captured["prompt"] = kwargs["contents"]
+            return SimpleNamespace(text='{"status":"SELECT","selected_candidate_id":"A"}')
+
+    monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr("api.modules.vertex_client.get_genai_client",
+                        lambda: SimpleNamespace(models=Models()))
+
+    # Fasıl 77 yok: eski şemada N77 -> 78 kayması buradan başlıyordu.
+    nodes = [{"gtip_code": f"{n:02d}", "description": f"Fasıl {n}"}
+             for n in list(range(1, 77)) + list(range(78, 98))]
+    verifier_module.llm_verifier.select_tariff_node("ürün", "CHAPTER", nodes)
+
+    prompt = captured["prompt"]
+    # Kimlik ile kodun eşleştiği hiçbir satır olmamalı.
+    assert '"option_id":"A"' in prompt.replace(" ", "")
+    assert "N85" not in prompt
+    assert "option_id HARF kimliğidir" in prompt

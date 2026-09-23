@@ -15,6 +15,27 @@ from api.schemas.predicate import CandidateSelection, CandidateSelectionStatus
 logger = logging.getLogger("ClosedSetModelSelector")
 
 
+def option_id(index: int) -> str:
+    """0-tabanlı sırayı harf kimliğine çevirir: A, B, ... Z, AA, AB, ...
+
+    Kimlikler önceden N1, N2, ... biçimindeydi ve tarife kodlarıyla tehlikeli
+    biçimde hizalıydı: fasıl listesinde N1..N76 tam olarak Fasıl 01..76'ya denk
+    geliyor, Fasıl 77 Armonize Sistem'de ayrıldığı için sonrası bir kayıyordu.
+    Model "Fasıl 85" demek isteyip N85 yazdığında sunucu Fasıl 86 çözüyordu —
+    sessiz ve sistematik bir hata (üretimde kablosuz kulaklık böyle kayboldu).
+
+    Harf kimlikleri hiçbir tarife koduyla karıştırılamaz.
+    """
+    if index < 0:
+        raise ValueError("Seçenek sırası negatif olamaz")
+    letters = ""
+    index += 1
+    while index:
+        index, remainder = divmod(index - 1, 26)
+        letters = chr(ord("A") + remainder) + letters
+    return letters
+
+
 class LLMFactVerifier:
     """Keeps the historical class name while exposing one focused operation."""
 
@@ -102,11 +123,11 @@ class LLMFactVerifier:
                 reasoning_points=["Bu tarife dalında resmî bir seçenek bulunamadı."],
             )
 
-        option_map = {f"N{index + 1}": node for index, node in enumerate(bounded_nodes)}
+        option_map = {option_id(index): node for index, node in enumerate(bounded_nodes)}
         if settings.USE_GCP_EMULATOR or settings.ENVIRONMENT == "testing":
             return CandidateSelection(
                 status=CandidateSelectionStatus.SELECT,
-                selected_candidate_id="N1",
+                selected_candidate_id=option_id(0),
                 reasoning_points=["Test ortamında ilk kapalı-küme seçeneği kullanıldı."],
                 applied_gir_keys=["GIR_1", "GIR_6"],
                 cited_chapter_notes=[],
@@ -175,6 +196,8 @@ class LLMFactVerifier:
             "Ürünü, aşağıdaki SUNUCU TARAFINDAN SAĞLANAN resmî seçeneklerden birine bağla.\n\n"
             "KATI HUKUKİ SINIFLANDIRMA VE YORUM KURALLARI (GYK / GİR):\n"
             "1. YENİ KOD UYDURMA: Yeni GTİP/fasıl/pozisyon kodu yazma veya düzeltme; yalnız option_id döndür.\n"
+            "   option_id HARF kimliğidir (A, B, ... AA, AB). Tarife koduyla İLGİSİZDİR; "
+            "seçmek istediğin seçeneğin option_id alanını birebir kopyala.\n"
             "2. KAPALI KÜME: Seçenekler dışında bilgi uydurma. Ürün açıkça bir seçeneğe uyuyorsa SELECT kullan.\n"
             "3. GYK 1 & BÖLÜM/FASIL DIŞLAMA NOTLARI (EXCLUSION NOTES):\n"
             "   - Sınıflandırma öncelikle tarife pozisyonu metinlerine ve fasıl notlarına göre yapılır.\n"
@@ -213,8 +236,8 @@ class LLMFactVerifier:
             f"<product_data>{raw_text}</product_data>\n"
             "Yalnız şu JSON biçimini döndür: "
             "{\"status\":\"SELECT|INSUFFICIENT_INFORMATION|NO_MATCH\","
-            "\"selected_candidate_id\":\"N1 veya null\","
-            "\"alternative_candidate_ids\":[\"N1\",\"N2\"],"
+            "\"selected_candidate_id\":\"A veya null\","
+            "\"alternative_candidate_ids\":[\"A\",\"B\"],"
             "\"question_text\":\"Türkçe soru veya null\","
             "\"reasoning_points\":[\"kısa Türkçe gerekçe\"],"
             "\"applied_gir_keys\":[\"GIR_1\",\"GIR_3A\",\"GIR_3B\",\"GIR_6\"],"

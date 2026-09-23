@@ -219,7 +219,7 @@ def test_model_selects_only_server_owned_option_ids(monkeypatch):
         "api.modules.rag_engine.llm_verifier.select_tariff_node",
         lambda *args, **kwargs: CandidateSelection(
             status=CandidateSelectionStatus.SELECT,
-            selected_candidate_id="N2",
+            selected_candidate_id="B",
         ),
     )
     selected, question, applied_gir, cited_notes = rag_engine._select_node("session", "buğday", "HEADING", nodes)
@@ -237,7 +237,7 @@ def test_hallucinated_option_id_is_rejected(monkeypatch):
         "api.modules.rag_engine.llm_verifier.select_tariff_node",
         lambda *args, **kwargs: CandidateSelection(
             status=CandidateSelectionStatus.SELECT,
-            selected_candidate_id="N999",
+            selected_candidate_id="ZZZZ",
         ),
     )
     selected, question, applied_gir, cited_notes = rag_engine._select_node(
@@ -325,7 +325,7 @@ def test_model_selector_retries_a_transient_provider_failure(monkeypatch):
             if self.calls == 1:
                 raise TimeoutError("temporary deadline")
             return SimpleNamespace(text=(
-                '{"status":"SELECT","selected_candidate_id":"N1",'
+                '{"status":"SELECT","selected_candidate_id":"A",'
                 '"alternative_candidate_ids":[],"question_text":null,'
                 '"reasoning_points":[]}'
             ))
@@ -340,7 +340,7 @@ def test_model_selector_retries_a_transient_provider_failure(monkeypatch):
         "kulaklık", "HEADING", [{"gtip_code": "8518", "description": "Kulaklıklar"}]
     )
 
-    assert result.selected_candidate_id == "N1"
+    assert result.selected_candidate_id == "A"
     assert models.calls == 2
 
 
@@ -349,7 +349,7 @@ def test_model_selector_retries_an_unexpected_no_match(monkeypatch):
 
     replies = iter([
         '{"status":"NO_MATCH","selected_candidate_id":null}',
-        '{"status":"SELECT","selected_candidate_id":"N1"}',
+        '{"status":"SELECT","selected_candidate_id":"A"}',
     ])
 
     class Models:
@@ -369,7 +369,7 @@ def test_model_selector_retries_an_unexpected_no_match(monkeypatch):
         "kulaklık", "HEADING", [{"gtip_code": "8518", "description": "Kulaklıklar"}]
     )
 
-    assert result.selected_candidate_id == "N1"
+    assert result.selected_candidate_id == "A"
     assert models.calls == 2
 
 
@@ -383,7 +383,7 @@ def test_real_ambiguity_becomes_a_bounded_user_question():
     ]
     selection = CandidateSelection(
         status=CandidateSelectionStatus.INSUFFICIENT_INFORMATION,
-        alternative_candidate_ids=["N1", "N2", "N404"],
+        alternative_candidate_ids=["A", "B", "ZZZZ"],
         question_text="Ürün özellikle çocuklar için mi tasarlanmıştır?",
     )
     question = rag_engine._question("session", "GTIP", nodes, selection)
@@ -402,7 +402,7 @@ def test_small_sibling_question_always_exposes_the_complete_official_set():
     ]
     selection = CandidateSelection(
         status=CandidateSelectionStatus.INSUFFICIENT_INFORMATION,
-        alternative_candidate_ids=["N1", "N2"],
+        alternative_candidate_ids=["A", "B"],
         question_text="Yalnız iki dalı kapsayan model sorusu",
     )
 
@@ -520,7 +520,7 @@ def test_static_option_block_precedes_variable_product_text(monkeypatch):
     class Models:
         def generate_content(self, **kwargs):
             captured["prompt"] = kwargs["contents"]
-            return SimpleNamespace(text='{"status":"SELECT","selected_candidate_id":"N1"}')
+            return SimpleNamespace(text='{"status":"SELECT","selected_candidate_id":"A"}')
 
     monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
     monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
