@@ -123,29 +123,32 @@ def test_narrowing_retry_changes_sampling(monkeypatch):
     assert second.thinking_config.thinking_budget > first.thinking_config.thinking_budget
 
 
-def test_wrong_chapter_is_retried_without_the_failed_chapter(monkeypatch):
+def test_backtracking_keeps_option_ids_stable_and_states_the_rejection(monkeypatch):
     """
-    CHAPTER seviyesinde prompt INSUFFICIENT_INFORMATION'ı yasaklar, yani model
-    fasıl seçmek zorundadır. Yanlış seçerse doğru pozisyon o fasılda hiç
-    bulunmaz; traversal eskiden kurtarılamıyordu.
+    option_id konumsaldır (N1, N2, ...). Reddedilen dalı listeden çıkarmak tüm
+    kimlikleri kaydırır: model deterministik olduğu için aynı id'yi döndürür ve
+    sistem sessizce KOMŞU dala geçer. Üretim logunda tam olarak bu görüldü —
+    model iki denemede de N85 dedi, sistem önce Fasıl 86'ya sonra 87'ye gitti.
+
+    Doğru davranış: liste sabit kalır, dışlama modele açıkça bildirilir.
     """
     from api.schemas.product import ProductFeatures
 
     seen_chapter_sets = []
+    seen_rejections = []
     calls = {"n": 0}
 
     def _fake_select(session_id, product_text, level, nodes, **kwargs):
         if level == "CHAPTER":
-            seen_chapter_sets.append({n["gtip_code"] for n in nodes})
+            seen_chapter_sets.append([n["gtip_code"] for n in nodes])
+            seen_rejections.append(kwargs.get("rejected_codes"))
             calls["n"] += 1
-            # İlk denemede 70'i, ikinci denemede 76'yı seçer.
             pick = "70" if calls["n"] == 1 else "76"
             chosen = next((n for n in nodes if n["gtip_code"] == pick), nodes[0])
             return chosen, None, [], []
         if level == "HEADING":
-            # Fasıl 70 altında hiçbir pozisyon eşleşmiyor (yanlış fasıl).
             if nodes and nodes[0]["gtip_code"].startswith("70"):
-                return None, None, [], []
+                return None, None, [], []   # yanlış fasıl: hiçbir pozisyon uymuyor
             return nodes[0], None, [], []
         return None, None, [], []
 
@@ -168,11 +171,58 @@ def test_wrong_chapter_is_retried_without_the_failed_chapter(monkeypatch):
     )
 
     assert calls["n"] == 2, "fasıl seçimi yeniden denenmedi"
-    # İkinci denemede başarısız fasıl seçenek kümesinden çıkarılmalı.
-    assert "70" in seen_chapter_sets[0]
-    assert "70" not in seen_chapter_sets[1]
+    # KİMLİK KARARLILIĞI: seçenek listesi iki denemede de aynı olmalı.
+    assert seen_chapter_sets[0] == seen_chapter_sets[1] == ["70", "76"]
+    # Dışlama modele bildirilmeli, listeden sessizce düşürülmemeli.
+    assert seen_rejections[0] is None
+    assert seen_rejections[1] == ["70"]
     assert result.traversal_state.get("used_chapter_backtrack") is True
     assert result.traversal_state.get("locked_chapter") == "76"
+
+
+def test_reselecting_a_rejected_branch_is_refused(monkeypatch):
+    """Model dışlamayı yok sayarsa seçim kapalı kabul edilmeli."""
+    class Models:
+        def generate_content(self, **kwargs):
+            return SimpleNamespace(text='{"status":"SELECT","selected_candidate_id":"N1"}')
+
+    monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr("api.modules.vertex_client.get_genai_client",
+                        lambda: SimpleNamespace(models=Models()))
+    monkeypatch.setattr(verifier_module.time, "sleep", lambda _: None)
+
+    result = verifier_module.llm_verifier.select_tariff_node(
+        "ürün", "CHAPTER",
+        [{"gtip_code": "86", "description": "Demiryolu"},
+         {"gtip_code": "87", "description": "Motorlu taşıt"}],
+        rejected_codes=["86"],
+    )
+    assert result.status == CandidateSelectionStatus.NO_MATCH
+
+
+def test_rejection_is_stated_in_the_prompt(monkeypatch):
+    prompts = []
+
+    class Models:
+        def generate_content(self, **kwargs):
+            prompts.append(kwargs["contents"])
+            return SimpleNamespace(text='{"status":"SELECT","selected_candidate_id":"N2"}')
+
+    monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr("api.modules.vertex_client.get_genai_client",
+                        lambda: SimpleNamespace(models=Models()))
+
+    verifier_module.llm_verifier.select_tariff_node(
+        "ürün", "CHAPTER",
+        [{"gtip_code": "86", "description": "Demiryolu"},
+         {"gtip_code": "87", "description": "Motorlu taşıt"}],
+        rejected_codes=["86"],
+    )
+    assert "ÖNCEKİ DENEME BAŞARISIZ" in prompts[0]
+    assert "86" in prompts[0]
+    assert "TEKRAR SEÇME" in prompts[0]
 
 
 def test_chapter_backtracking_is_bounded(monkeypatch):
