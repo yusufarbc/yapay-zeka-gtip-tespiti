@@ -149,3 +149,17 @@ def test_expert_gives_up_when_no_official_branch_holds_the_answer():
 
     result = answer_as_expert(waiting, "700719800000", Engine())
     assert result.status == "WAITING_FOR_USER"
+
+
+def test_auc_measures_ranking_not_absolute_scores():
+    """
+    AUC, doğru kararın yanlıştan yüksek skor alma olasılığıdır. Skorun ayırt
+    edip etmediğini ölçmenin doğru yolu budur: ortalamalara bakmak, herkesin
+    aynı skoru aldığı bir sistemde yanıltır.
+    """
+    from scripts.calibrate_confidence import auc
+
+    assert auc([0.9, 0.8], [0.2, 0.1]) == 1.0        # kusursuz ayrım
+    assert auc([0.1, 0.2], [0.8, 0.9]) == 0.0        # tersine ayrım
+    assert auc([0.6, 0.6], [0.6, 0.6]) == 0.5        # hiç ayırt etmiyor
+    assert auc([], [0.5]) == 0.5                      # veri yok
