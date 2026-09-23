@@ -58,6 +58,39 @@ def _normalize_product_text(value: Any) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", text))
 
 
+def _shorten_siblings(nodes: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Kardeş seçeneklerin paylaştığı ortak yol önekini atar.
+
+    Açıklamalar artık kökten yaprağa tam yol taşıyor. Aynı ebeveynin altındaki
+    seçeneklerde bu yolun baş kısmı birebir aynıdır: seçimi belirleyen bilgi
+    değil, yalnız tekrar. Hem modelin promptunda hem müşavire sorulan soruda
+    ayrımı gömüyor ve seviye başına yüzlerce token harcıyordu.
+
+    Yalnız TAMAMEN ortak olan seviyeler atılır; ayrım başlar başlamaz durulur.
+    Tek seçenek varsa dokunulmaz (karşılaştıracak kardeş yoktur).
+    """
+    if len(nodes) < 2:
+        return list(nodes)
+
+    paths = [_description(node).split(" > ") for node in nodes]
+    if any(len(path) < 2 for path in paths):
+        return list(nodes)
+
+    shared = 0
+    while (
+        all(len(path) > shared + 1 for path in paths)
+        and len({path[shared].strip().casefold() for path in paths}) == 1
+    ):
+        shared += 1
+    if not shared:
+        return list(nodes)
+
+    trimmed = []
+    for node, path in zip(nodes, paths):
+        trimmed.append({**node, "branch_context": " > ".join(path[shared:])})
+    return trimmed
+
+
 def _formatted_code(value: Any) -> str:
     code = _digits(value)
     if len(code) == 12:
@@ -541,6 +574,9 @@ class RAGEngine:
         if len(nodes) == 1:
             return nodes[0], None, ["GIR_1", "GIR_6"], []
 
+        # Ortak önek hem prompta hem soruya gürültü olarak giriyordu.
+        nodes = _shorten_siblings(nodes)
+
         selection = llm_verifier.select_tariff_node(
             product_text,
             level,
@@ -762,8 +798,12 @@ class RAGEngine:
             ),
             {},
         )
+        # Yaprak açıklamaları kökten yaprağa tam yol taşıdığı için ebeveyn
+        # bağlamını başa eklemek yolu ikiye katlıyordu. Bunun yerine kardeşlerin
+        # paylaştığı ortak önek atılarak ayrım öne çıkarılır.
         parent_context = _description(selected_subheading)
-        if parent_context:
+        if parent_context and leaves and " > " not in _description(leaves[0]):
+            # Eski biçimli (yol taşımayan) katalog: ebeveyn bağlamı hâlâ gerekli.
             leaves = [
                 {**leaf, "branch_context": f"{parent_context} > {_description(leaf)}"}
                 for leaf in leaves
