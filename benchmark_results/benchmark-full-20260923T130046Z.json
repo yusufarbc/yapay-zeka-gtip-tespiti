@@ -1,0 +1,439 @@
+{
+  "generated_at": "2026-09-23T13:00:46.299270+00:00",
+  "model": "gemini-2.5-flash",
+  "extractor_model": "gemini-2.5-flash-lite",
+  "sample_size": 120,
+  "seed": 42,
+  "evidence_flags": {
+    "SELECTION_USE_RAW_TEXT": true,
+    "SELECTION_USE_PRECEDENTS": true,
+    "SELECTION_USE_CHAPTER_NOTES": true
+  },
+  "metrics": {
+    "chapter_acc": 55.83,
+    "heading_acc": 49.17,
+    "subheading_acc": 39.17,
+    "leaf_acc": 35.83,
+    "coverage": 77.5,
+    "hitl_rate": 20.83,
+    "manual_review_rate": 1.67,
+    "exception_rate": 0.0,
+    "residual_fallback_rate": 0.0,
+    "coverage_with_expert": 80.0,
+    "heading_acc_with_expert": 50.83,
+    "leaf_acc_with_expert": 37.5,
+    "leaf_acc_of_completed": 46.24
+  },
+  "latency_ms": {
+    "p50": 10170.5,
+    "p95": 26649.1,
+    "mean": 12852.5
+  },
+  "status_breakdown": {
+    "WAITING_FOR_USER": 25,
+    "COMPLETED": 93,
+    "MANUAL_REVIEW_REQUIRED": 2
+  },
+  "failures": [
+    {
+      "reference_no": "TR340000210070",
+      "description": "LOWER SEVEN MARKA PH DÜŞÜRÜCÜ VE TUZLULUK GİDERİCİ",
+      "expected_gtip": "292419000029",
+      "predicted_gtip": null,
+      "status": "WAITING_FOR_USER",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR340000250236",
+      "description": "STALEKS PRO MARKA, DOS-20/100 ÜRÜN KODLU, BİR UCU SİVRİ DİĞER UCU EĞİK OLARAK DÜZLEŞTİRİLMİŞ, SİVRİLTİLMİŞ UCU SAYESİNDE TIRNAK ETLERİNİ GERİYE İTME, TIRNAK YÜZEYİNİ TEMİZLEME GİBİ TIRNAK BAKIMI/MANİK",
+      "expected_gtip": "442199990019",
+      "predicted_gtip": null,
+      "status": "WAITING_FOR_USER",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR410000230052",
+      "description": "Plastik krom pompalı polireçine sabunluk PL-5396-KUM",
+      "expected_gtip": "847989979019",
+      "predicted_gtip": "392590800000",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR350000250083",
+      "description": "Dimes marka \"Cool Sour Prism 310 ml Böğürtlen Aromalı Şurup''",
+      "expected_gtip": "210690980019",
+      "predicted_gtip": null,
+      "status": "WAITING_FOR_USER",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR340000250171",
+      "description": "S5AV13Z4-QBC-MIX ASSORTMENT MODEL, KUM, UNI-SPACE CANVAS PAINTING SET TİCARİ TANIMLI, 2 ADET 10x10 CM EBATLARINDA DESENLİ BOYAMA TUALİ, 6 ADET FARKLI RENKTE SU BAZLI BOYA VE 1 ADET FIRÇADAN MÜTEŞEKKİL",
+      "expected_gtip": "321310000000",
+      "predicted_gtip": null,
+      "status": "WAITING_FOR_USER",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR340000220202",
+      "description": "ZALONA MARKA T102 MODEL TİGER’S EYE STONE EARRINGS,ALONA MARKA T102 MODEL TİGER’S EYE STONE EARRINGS TİCARİ TANIMLI KUVARTZ ESASLI KIYMETLİ/YARI KIYMETLİ TAŞTAN MAMUL KÜPE CİNSİ EŞYA.",
+      "expected_gtip": "711620800000",
+      "predicted_gtip": "710399000019",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR350000220111",
+      "description": "\" URIT D16 DETERGENT \" ticari tanımlı, idrar tahlil cihazlarına takılan ve 35 ml. hacminde bir ambalaj içerisinde bulunan, %2 sodyum hipoklorit, %98 su içeren sıvıdır. Söz konusu sıvı, belli süre aral",
+      "expected_gtip": "282890001011",
+      "predicted_gtip": "340239909019",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR060000230021",
+      "description": "DAHUA MARKA ROUND SLİNG (ÇEMBER SAPAN) İSİMLİ POLYESTER SAPAN TİCARİ TANIMLI, YAKLAŞIK 5CM ENİNDE VE 3M UZUNLUĞUNDA ÇEMBER ŞEKLİNDE, BİRLEŞİM YERİ AYRICA TAKVİYE EDİLMİŞ VE DİKİLMİŞ, NUMUNENİN İÇ KISM",
+      "expected_gtip": "560900000000",
+      "predicted_gtip": "591190990019",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR330000250030",
+      "description": "LİMONATA BEZESİ: Sıkma limon suyu, şeker, limon kabuğu rendesi ve portakal suyundan imal edilmiş konsantre limonata. Fruktoz=%0,72, Glukoz=%0,56, Sakkaroz=%37,34, Maltoz=%0, Laktoz=%0, Sakkaroz/İnvert",
+      "expected_gtip": "200990510000",
+      "predicted_gtip": "220210000019",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR340000220184",
+      "description": "MİSVAK” TİCARİ İSİMLİ EŞYANIN PERAKENDE SATIŞ İÇİN AMBALAJLANMIŞ 19,8 CM UZUNLUĞUNDA, ORTALAMA 0,9  CM ÇAPINDA SİLİNDİRİK ÇUBUK ŞEKLİNDE AĞIZ TEMİZLİĞİNDE DOĞAL BİR DİŞ FIRÇASI OLARAK KULLANILAN SALVA",
+      "expected_gtip": "121190860049",
+      "predicted_gtip": "140490009919",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR340000220241",
+      "description": "DODGE MARKALI 8972818 KOD NUMARALI 520 ML KAPASİTEYE SAHİP, KAPAK VE TAŞIMA AKSESUARI İLE DONATILMIŞ İÇECEK İÇMEK İÇİN ESNEK TÜPÜ/PİPETİ OLAN PLASTİKTEN (POLİKARBONAT) MAMUL KAP",
+      "expected_gtip": "392490000019",
+      "predicted_gtip": "392330100019",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR340000250216",
+      "description": "ET-SVL32SMEGWW MODEL NUMARALI, ANALİZ RAPORUNA GÖRE; 2,2 CM X 25 CM EBATLARINDA, UÇ KISIMLARINDA METALDEN BAĞLANTI APARATLARI BULUNAN, KAYIŞ KISMI POLİAMİD LİFLERDEN MAMUL BUKLELİ ÖRME MENSUCATTAN OLU",
+      "expected_gtip": "911390002000",
+      "predicted_gtip": "600122000009",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR340000260104",
+      "description": "MEDİCİTY MARKA, ICU TP2 MODEL, PLASTİKTEN MAMUL, T ŞEKLİNDE VE 3 GİRİŞE SAHİP, YOĞUN BAKIM ÜNİTELERİNDE (ICU) HASTALARIN TEDAVİSİNDE KULLANILAN NEBÜLİZATÖR CİHAZININ, SOLUNUM DEVRESİNİN VE HAVA AKIŞ S",
+      "expected_gtip": "901920900000",
+      "predicted_gtip": "392590800000",
+      "status": "COMPLETED",
+      "confidence": 0.45
+    },
+    {
+      "reference_no": "TR330000220001",
+      "description": "LUBRİMAX KAUÇUKLU GRES: Suya dayanıklı ve çok amaçlı kalsiyum sabunlu kauçuklu gres, düz ve rulmanlı yatakların yağlanmasında kullanılır.",
+      "expected_gtip": "271019990025",
+      "predicted_gtip": null,
+      "status": "WAITING_FOR_USER",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR160000250014",
+      "description": "Otto.40426c Mıckey Mouse Kırtasiye Seti’ ticari tanımlı eşya, 1 adet not defteri, 1 adet kalemtraş, 1 adet cetvel, 1 adet silgi ve 3 adet kurşun kalemden oluşmaktadır. Eşyanın analizinin yapılması içi",
+      "expected_gtip": "960910100000",
+      "predicted_gtip": "482010300000",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR330000250043",
+      "description": "KROM KAPLI İNDİKSÜYONLU MİL: Krom kaplamalı alaşımsız çelikten mamul 2,5 cm çapında enine kesiti dairesel olan soğuk şekil verilmiş çubuktur.",
+      "expected_gtip": "721550801011",
+      "predicted_gtip": null,
+      "status": "WAITING_FOR_USER",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR340000260165",
+      "description": "TARRİNGTON HOUSE MARKA, 3873072 ÜRÜN KODLU, 70X70 CM BOYUTLARINDA, YEŞİL RENK DEKORE EDİLMİŞ KAĞITTAN MAMUL, KATLANMIŞ BİÇİMDE PAKETLENMİŞ, BÜNYESİNDE YER ALAN SIKMA İPİ YARDIMIYLA ÜÇ BOYUTLU VE ALTI ",
+      "expected_gtip": "482390851019",
+      "predicted_gtip": null,
+      "status": "WAITING_FOR_USER",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR060000230010",
+      "description": "HEMOSTASİS VALF KİTİ HV01 KİT; Y HEMOSTAZ VALFİ, TORK (BURGU) CİHAZI VE KILAVUZ TEL İĞNESİNDEN OLUŞUR. TEK KULLANIMLIK OLUP, STERİL PAKET İÇERİSİNDEDİR.",
+      "expected_gtip": "901839000029",
+      "predicted_gtip": null,
+      "status": "WAITING_FOR_USER",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR350000220080",
+      "description": "KONTAK ELEMANI (KOD:35036895)ticari tanımlı malzeme soğutucu altında iletkenliği sağlamak amacıyla kullanılan ,bakır alaşımdan mamul ,sistem tanımı \"SPRING SMD EMI  SQ-26G 3,4x2x2,6 mm ROHS \" olan eşy",
+      "expected_gtip": "853690950000",
+      "predicted_gtip": null,
+      "status": "WAITING_FOR_USER",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR340000220181",
+      "description": "HOOKAH FRUITS LİME MINT 100G FLAVOUR TİCARİ TANIMLI DİLİMLENMİŞ %100 MEYVE PARÇACIKLARI İÇEREN, NİKOTİN VE TÜTÜN İÇERMEYEN NARGİLELERDE DE KULLANILAN MÜSTAHZAR",
+      "expected_gtip": "240399900000",
+      "predicted_gtip": null,
+      "status": "WAITING_FOR_USER",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR350000230067",
+      "description": "İzole Whey Proteini (LACPRODAN SP-9225 Instant Whey Protein Isolate), 15 kg net ağırlıkta olup %90,6 oranında protein ihtiva eden konsantre peynir altı suyu proteinidir.",
+      "expected_gtip": "350220910000",
+      "predicted_gtip": null,
+      "status": "WAITING_FOR_USER",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR340000220169",
+      "description": "MELİSSA & DOUG MARKA “UNDER THE SEA” TİCARİ İSİMLİ 19445 MODEL SU DOLDURULABİLEN PLASTİK BİR TÜP ŞEKLİNDE BİR  FIRÇA VE 4  SAYFADAN OLUŞAN 25.4CM X 15.2CM X 1.3CM BOYUTLARINDA BOYAMA KİTABI, KİTABPTAK",
+      "expected_gtip": "490300009000",
+      "predicted_gtip": null,
+      "status": "MANUAL_REVIEW_REQUIRED",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR340000250035",
+      "description": "LTB MARKA, 44087 ARTİKEL NUMARALI, %100 PU BAYAN CEKET TİCARİ TANIMLI, ANALİZ RAPORUNA GÖRE; 292 G/M2 AĞIRLIĞINDA BİR YÜZÜ GÖZENEKLİ PLASTİK (POLİÜRETAN) İLE SIVANMIŞ KAPLANMIŞ 59.03 TARİFE POZİSYONUN",
+      "expected_gtip": "611300900000",
+      "predicted_gtip": "610433000000",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR340000240131",
+      "description": "DJI MATRICE 350 RTK H20T COMBO KIT MARKA VE MODEL, teknik rapora göre; maksimum kalkış ağırlığı 9.2 kg olan, 44.76v 5880mah değerlerinde lityum batarya ile maksimum 55dk uçuş süresine sahip, gps, glon",
+      "expected_gtip": "880693000000",
+      "predicted_gtip": null,
+      "status": "WAITING_FOR_USER",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR160000250015",
+      "description": "Dış kısmı renkli plastikten iç kısmı sert strafordan mamul üst kısmında havalandırma deliği bulunan ve çene altından kayışla ayarlanabilir özelliklikte bisiklet scooter vb. sürerken kafayı olası darbe",
+      "expected_gtip": "650610109000",
+      "predicted_gtip": "950699900000",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR350000220047",
+      "description": "gasket kod 30096649 \"Gasket (Kod 30096649)\" ticari tanımlı SMD EMI Shielding Gasket  7.5x12.5x7.5mm Çamaşır ve Bulaşık makinaların tuş kartında dokunmayı algılamak için kullanılan eşya",
+      "expected_gtip": "741980909000",
+      "predicted_gtip": "854370900019",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR410000240005",
+      "description": "PANTHER MARKA, PT-1092 MODEL, NON RECHARGEABLE LED TORCH TİCARİ TANIMLI EŞYA PİL İLE ÇALIŞAN EL FENERİ, PUSULA VE DÜDKTEN OLUŞMAKTADIR",
+      "expected_gtip": "920890000000",
+      "predicted_gtip": "851310009000",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR340000250230",
+      "description": "ANALİZ RAPORUNA GÖRE EŞYANIN AVUÇ İÇİ ÖRME, DIŞ KISMININ İSE BİR TARAFI GÖZENEKSİZ PLASTİK (POLİÜRETAN, PU) KAPLI VASIFSIZ MENSUCATTAN (59.03 TARİFE POZİSYONLU) MAMUL OUTSHOCK MARKA 5057059 İTEM VE 88",
+      "expected_gtip": "611610800000",
+      "predicted_gtip": "621020000000",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR350000210006",
+      "description": "İçerisindeki 9,6 g Naturel Sızma Zeytinyağı ile 2,4 g Limon suyu bulunan \r\nkullanıma hazır özel ambalajlanmış zeytinyağı ve limon sosu..",
+      "expected_gtip": "151790990000",
+      "predicted_gtip": "210390900018",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR160000200063",
+      "description": "BARBUNYA PİLAKİ KONSERVE-400 gramlık ambalajlı konserve kutusu içerisinde pişmiş halde tüketime hazır halde bulunmaktadır. Esas içeriği barbunya olmak üzere biber, salça, yağ vb. gıda maddelerine  sah",
+      "expected_gtip": "200551000000",
+      "predicted_gtip": null,
+      "status": "WAITING_FOR_USER",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR160000250027",
+      "description": "\"Metal Bağlantı Parçası (Metal Joınts) CV-9\" tanımlı eşya, adi metalden mamul olup endüstriyel montaj hatları, depolama ve raf sistemleri, taşıma arabaları ve malzeme taşıma sistemleri, ofis ve sergi ",
+      "expected_gtip": "830242000019",
+      "predicted_gtip": "730890590011",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR350000230018",
+      "description": "KM-CW-001 Model Numaralı, 0,35 mm. kalınlığında, tek parçadan oluşan kalça dahil vücudun alt kısmını kaplayan, dışı dokunmuş mensucattan, içi  PVC’den mamul, su geçirmez, balıkçılık, avcılık vb. işler",
+      "expected_gtip": "621050000019",
+      "predicted_gtip": "621139000039",
+      "status": "COMPLETED",
+      "confidence": 0.45
+    },
+    {
+      "reference_no": "TR350000210046",
+      "description": "DİĞER DİŞÇİ ÇİMENTOSU VE DİĞER DİŞ DOLGU MADDESİ",
+      "expected_gtip": "382499969068",
+      "predicted_gtip": "300640000018",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR340000230039",
+      "description": "AQUA ROSE 3'Ü 1 ARADA TEMİZLEME, PEELİNG VE MASKE TİCARİ İSİMLİ 94417 MODEL NUMARALI; BİRDEN FAZLA KULLANIM ALANI BULUNAN, PERAKENDE SATILACAK HALE GETİRİLMİŞ, YÜZEY AKTİF BİLEŞEN İÇEREN KURU VE ISLAK",
+      "expected_gtip": "340130000000",
+      "predicted_gtip": "330499009000",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR350000250086",
+      "description": "Orbus marka, ORB-VL kodlu ledli tavan vantilatörü.",
+      "expected_gtip": "940511900000",
+      "predicted_gtip": null,
+      "status": "WAITING_FOR_USER",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR340000210171",
+      "description": "PAREKENDE SATILACAK HALE GETİRİLMİŞ 908G ‘LIK AMBALAJINDA LİMON AROMALI GIDA MÜSTAHZARI.",
+      "expected_gtip": "210690920000",
+      "predicted_gtip": null,
+      "status": "WAITING_FOR_USER",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR340000250108",
+      "description": "978-1-83994-871-8 ISBN KODLU PİP AND POSY  IN THE GARDEN TİCARİ TANIMLI, RENKLİ, RESİMLİ VE İNGİLİZCE OLARAK BASILMIŞ, TOPLAM 10 SAYFADAN OLUŞAN, KİTABIN SAĞ TARAFINDA VE TOPLAM 4 SAYFADA KİTABIN SOL ",
+      "expected_gtip": "490300009000",
+      "predicted_gtip": "490199000019",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR340000200287",
+      "description": "DC MOTORA SAHİP KALEM GİBİ KOLAY TUTMAYI VE İŞLEM YAPMAYI SAĞLAYAN ERGONOMİK TASARIMLI VE UCUNA TAKILAN İĞNELERİN İLERİ GERİ, HIZLA HAREKET ETMESİ İLE SONUCUNDA DERİYE BOYA ZERK ETMEYE YARAYAN CHEYENN",
+      "expected_gtip": "846729850000",
+      "predicted_gtip": "847989979019",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR060000210033",
+      "description": "CERRAHİ ALET DÜZENLEYİCİ (040.564) CERRAHİ İMPLANT YERLEŞTİRME SIRASINDA İMPLANT, ABUTMENT, DAYANAK BAĞLANTILARI VE CERRAHİ ALETLERİ TUTMAK İÇİN UYGUN BOYUTLARDA YAPILMIŞ ALET DÜZENLEYİCİDİR. ALETLERİ",
+      "expected_gtip": "420299009000",
+      "predicted_gtip": null,
+      "status": "MANUAL_REVIEW_REQUIRED",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR350000250108",
+      "description": "8705906008 model Pirinç Adaptör. İki veya daha fazla cihazı birbirine bağlamak için kullanılan pirinçten mamul bağlantı parçasıdır.",
+      "expected_gtip": "741220000011",
+      "predicted_gtip": "830249000000",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR340000230189",
+      "description": "FLODBJÖRK 005.379.68 MARKA MODEL, 47CM YÜKSEKLİĞİNDE, ÜST KISMI 45CM, ALT KISMI 35CM ÇAPINDA, ÇAPI 5MM OLAN PLASTİK (POLİETİLEN) BORULARDAN (3917 TARİFE POZİSYONU) MAMÜL, BU BORULARIN METAL BİR İSKELE",
+      "expected_gtip": "460290009000",
+      "predicted_gtip": "392590100000",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR340000240259",
+      "description": "OTTOBOCK MARKA, 50S9 MALLEO DİREXA STİRRUP MODEL, ANALİZ RAPORUNA GÖRE; POLYESTER ÖRME MENSUCATTAN MAMUL CIRT BANTLARLA BİRBİRİNE BAĞLANMIŞ İKİ ADET YUMUŞAK PED VE İKİ ADET SERT PLASTİK PARÇADAN OLUŞA",
+      "expected_gtip": "630790100019",
+      "predicted_gtip": "902110100019",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR340000220111",
+      "description": "BBKING MARKA BİODEGRADABLE PLASTİC BALL\" MODEL 6MM ÇAPINDA, 0.28 GR AĞIRLIĞINDA, DOĞADA ÇÖZÜNEBİLEN PLASTİKTEN MAMUL, İÇİ DOLU KÜRE ŞEKLİNDE, GELİŞMİŞ HASSASİYETTEKİ AİRSOFT TÜFEK VE TABANCALARDA MÜHİ",
+      "expected_gtip": "930690900000",
+      "predicted_gtip": "392690979029",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR340000250155",
+      "description": "OTTOBOCK MARKA 50R232 SMARTSPINE LSO  HIGH   MODEL, ÖRME KISMI POLYESTERDEN MAMUL OLAN, ÖN,ARKA VE YAN TARAFINDA YUMUŞAK PEDLER BULUNAN, BEL BÖLGESİNDE KULLANILAN,  ÜZERİNDE HAREKETİ SINIRLAYICI HERHA",
+      "expected_gtip": "621290000019",
+      "predicted_gtip": null,
+      "status": "WAITING_FOR_USER",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR340000210168",
+      "description": "PAREKENDE SATILACAK HALE GETİRİLMİŞ 360G ‘LIK AMBALAJINDA ÇİKOLATA İÇEREN SPORCU GIDA MÜSTAHZARI",
+      "expected_gtip": "180690900000",
+      "predicted_gtip": "210690920000",
+      "status": "COMPLETED",
+      "confidence": 0.751
+    },
+    {
+      "reference_no": "TR350000210049",
+      "description": "1950 Gr Teneke kutu içerisinde pirinç , asma yaprağı , soğan yağ , su ve baharat içeren Yaprak Sarma Konserve",
+      "expected_gtip": "190490109000",
+      "predicted_gtip": null,
+      "status": "WAITING_FOR_USER",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR340000240066",
+      "description": "20532031 ARTİKEL NUMARALI, %100 POLYESTER SENTETİK FİLAMENT İPLİKLERİNDEN DOKUNMUŞ MENSUCATTAN MAMUL, BELİRLİ NOKTALARINDA BAĞLANTI KAYIŞLARI VE CIRT BANTLAR BULUNAN, ÇARDAK CİNSİ EŞYANIN ÇATI KAPLAMA",
+      "expected_gtip": "630622000000",
+      "predicted_gtip": null,
+      "status": "WAITING_FOR_USER",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR060000230005",
+      "description": "SAFL 300 MODEL AYAKLI SEYYAR LED PROJEKTÖR. 5 METREDE 13 METREKARELİK BİR IŞIK KAPSAM\r\nALANI SAĞLAMAKTADIR",
+      "expected_gtip": "940542100000",
+      "predicted_gtip": "853952000000",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR340000210134",
+      "description": "RİTMİK JİMNASTİK İÇİN TASARLANAN İKİ UCU ISIL İŞLEMLE KAPATILMIŞ 1 CM ÇAPINDA 3M UZUNLUĞUNDA SENTETİK LİFLERDEN MAMUL (POLİPROPİLEN) İP",
+      "expected_gtip": "560900000000",
+      "predicted_gtip": "950691900000",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    },
+    {
+      "reference_no": "TR350000240090",
+      "description": "Shimano marka SPD SL serisine ait SM SH-10 kodlu pedal kali. Tüm üç delikli yol bisikleti ayakkabılarıyla uyumlu olup metal, kauçuk  ve plastik malzemeden oluşmaktadır. Paket içerisinde 1 çift kal, 6 ",
+      "expected_gtip": "640690909000",
+      "predicted_gtip": "830249000000",
+      "status": "COMPLETED",
+      "confidence": 0.6
+    }
+  ]
+}
