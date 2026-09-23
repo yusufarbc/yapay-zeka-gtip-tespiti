@@ -502,7 +502,8 @@ class RAGEngine:
         nodes: Sequence[Dict[str, Any]],
         selection: CandidateSelection,
     ) -> Optional[DiscriminatorQuestion]:
-        option_map = {f"N{index + 1}": node for index, node in enumerate(nodes)}
+        from api.modules.llm_verifier import option_id
+        option_map = {option_id(index): node for index, node in enumerate(nodes)}
         model_alternatives = [
             option_map[option_id]
             for option_id in selection.alternative_candidate_ids
@@ -593,8 +594,9 @@ class RAGEngine:
         cited_chapter_notes = list(getattr(selection, "cited_chapter_notes", []) or [])
 
         if selection.status == CandidateSelectionStatus.SELECT:
-            match = re.fullmatch(r"N([1-9][0-9]*)", selection.selected_candidate_id or "")
-            index = int(match.group(1)) - 1 if match else -1
+            from api.modules.llm_verifier import option_id
+            index_by_id = {option_id(i): i for i in range(len(nodes))}
+            index = index_by_id.get(selection.selected_candidate_id or "", -1)
             if 0 <= index < len(nodes):
                 logger.info(
                     "Closed-set selection level=%s option=%s code=%s choices=%s",
