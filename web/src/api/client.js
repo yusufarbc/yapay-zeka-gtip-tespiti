@@ -69,11 +69,16 @@ export const searchInternationalRulings = async (productText, hsCode = null, tar
 };
 
 export const respondHITL = async (sessionId, questionId, selectedOptionId, customNote = '') => {
+  // Timeout yoktu: axios varsayilani 0 (sinirsiz), yani sunucu yanit vermezse
+  // arayuz suresiz asili kaliyordu. Devam da tam bir tarife taramasi calistirir,
+  // bu yuzden analizle ayni butceyi kullanir.
   const response = await axios.post(`${API_BASE_URL}/hitl/respond`, {
     session_id: sessionId,
     question_id: questionId,
     selected_option_id: selectedOptionId,
     custom_note: customNote,
+  }, {
+    timeout: 45000
   });
   return response.data;
 };

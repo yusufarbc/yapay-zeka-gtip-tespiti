@@ -360,3 +360,119 @@ def test_chapter_option_ids_do_not_track_chapter_numbers(monkeypatch):
     assert '"option_id":"A"' in prompt.replace(" ", "")
     assert "N85" not in prompt
     assert "option_id HARF kimliğidir" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Süre bütçesi: tek tek çağrıların timeout'u vardı ama hattın bütünü için sınır
+# yoktu. Bir sağlayıcı hatası (429/504) retry'larla çarpılıp dört seviyeye
+# yayılınca analiz 91 saniyeye çıkabiliyordu; arayüz 45 saniyede vazgeçiyor ve
+# kullanıcı hiçbir şey alamıyordu.
+# ---------------------------------------------------------------------------
+
+def test_expired_budget_skips_the_model_call_entirely(monkeypatch):
+    """Bütçe dolduysa çağrı yapılmaz: kalan süre yoktur, beklemek boşunadır."""
+    import time as _time
+
+    called = {"n": 0}
+
+    class Models:
+        def generate_content(self, **kwargs):
+            called["n"] += 1
+            return SimpleNamespace(text='{"status":"SELECT","selected_candidate_id":"A"}')
+
+    monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr("api.modules.vertex_client.get_genai_client",
+                        lambda: SimpleNamespace(models=Models()))
+
+    result = verifier_module.llm_verifier.select_tariff_node(
+        "ürün", "HEADING",
+        [{"gtip_code": "8413", "description": "Pompalar"},
+         {"gtip_code": "8414", "description": "Kompresörler"}],
+        deadline=_time.monotonic() - 1,      # bütçe dolmuş
+    )
+    assert called["n"] == 0
+    assert result.status == CandidateSelectionStatus.NO_MATCH
+
+
+def test_provider_failure_uses_real_backoff_not_a_token_pause(monkeypatch):
+    """429 kota hatası 0.35 saniyede düzelmez; bekleme üstel olmalı."""
+    slept = []
+
+    class Models:
+        calls = 0
+
+        def generate_content(self, **kwargs):
+            Models.calls += 1
+            if Models.calls == 1:
+                raise RuntimeError("429 RESOURCE_EXHAUSTED")
+            return SimpleNamespace(text='{"status":"SELECT","selected_candidate_id":"A"}')
+
+    monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr("api.modules.vertex_client.get_genai_client",
+                        lambda: SimpleNamespace(models=Models()))
+    monkeypatch.setattr(verifier_module.time, "sleep", lambda s: slept.append(s))
+
+    verifier_module.llm_verifier.select_tariff_node(
+        "ürün", "HEADING", [{"gtip_code": "8413", "description": "Pompalar"}])
+
+    assert slept, "sağlayıcı hatasından sonra beklenmedi"
+    assert slept[0] >= 1.0, f"bekleme çok kısa: {slept[0]} sn"
+
+
+def test_no_retry_when_backoff_would_exhaust_the_budget(monkeypatch):
+    """
+    Beklemek kalan bütçeyi tüketecekse beklenmez: geriye kalan süre sonraki
+    seviyeler için daha değerlidir.
+    """
+    import time as _time
+
+    slept = []
+
+    class Models:
+        def generate_content(self, **kwargs):
+            raise RuntimeError("504 DEADLINE_EXCEEDED")
+
+    monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr("api.modules.vertex_client.get_genai_client",
+                        lambda: SimpleNamespace(models=Models()))
+    monkeypatch.setattr(verifier_module.time, "sleep", lambda s: slept.append(s))
+
+    result = verifier_module.llm_verifier.select_tariff_node(
+        "ürün", "HEADING", [{"gtip_code": "8413", "description": "Pompalar"}],
+        deadline=_time.monotonic() + 0.2,    # backoff sığmaz
+    )
+    assert slept == [], "bütçe yokken beklendi"
+    assert result.status == CandidateSelectionStatus.NO_MATCH
+
+
+def test_budget_prevents_chapter_backtracking(monkeypatch):
+    """Geri alma ikinci bir fasıl+pozisyon turu demektir; bütçe yoksa yapılmaz."""
+    import time as _time
+
+    from api.schemas.product import ProductFeatures
+
+    calls = {"chapter": 0}
+
+    def _fake_select(session_id, product_text, level, nodes, **kwargs):
+        if level == "CHAPTER":
+            calls["chapter"] += 1
+            return nodes[0], None, [], []
+        return None, None, [], []
+
+    monkeypatch.setattr(RAGEngine, "_select_node", staticmethod(_fake_select))
+    monkeypatch.setattr(RAGEngine, "_chapter_nodes", staticmethod(lambda: [
+        {"gtip_code": "70", "description": "Cam"},
+        {"gtip_code": "76", "description": "Alüminyum"},
+    ]))
+    monkeypatch.setattr(RAGEngine, "_heading_nodes", staticmethod(
+        lambda chapter: [{"gtip_code": f"{chapter}05", "description": "Pozisyon"}]))
+
+    RAGEngine().search_candidates_hierarchical(
+        session_id="s1",
+        features=ProductFeatures(product_name="x", primary_material="y", intended_use="z"),
+        deadline=_time.monotonic() - 1,      # bütçe dolmuş
+    )
+    assert calls["chapter"] == 1, "bütçe yokken geri alma yapıldı"

@@ -71,6 +71,17 @@ class Settings(BaseSettings):
     # üretimde sürekli 504 DEADLINE_EXCEEDED alınıyordu.
     GROUNDED_SEARCH_TIMEOUT_MS: int = int(os.getenv("GROUNDED_SEARCH_TIMEOUT_MS", "45000"))
 
+    # Hattın TOPLAM süre bütçesi. Tek tek çağrıların timeout'u vardı ama hattın
+    # bütünü için sınır yoktu: bir sağlayıcı hatası (429/504) retry'larla
+    # çarpılıp dört seviyeye yayılınca analiz 91 saniyeye kadar çıkabiliyordu.
+    # Arayüz 45 saniyede vazgeçtiği için kullanıcı hiçbir şey alamıyordu.
+    # Bütçe dolduğunda hat zarifçe durur ve elindeki en iyi sonucu döndürür;
+    # cevapsız bir timeout yerine cevaplanabilir bir soru daha değerlidir.
+    ANALYSIS_BUDGET_MS: int = int(os.getenv("ANALYSIS_BUDGET_MS", "32000"))
+    # Sağlayıcı hatalarında (429 kota, 504 deadline) bekleme. 0.35 sn kotanın
+    # yenilenmesi için anlamsızdı; üstel artış uygulanır.
+    PROVIDER_RETRY_BASE_MS: int = int(os.getenv("PROVIDER_RETRY_BASE_MS", "1200"))
+
     # Cloud Run Secret Manager bağlantıları bu değerleri environment'a enjekte eder.
     # Import sırasında Secret Manager çağrısı yapmak cold-start'ı ve hata yüzeyini büyütür.
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")

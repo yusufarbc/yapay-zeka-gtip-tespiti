@@ -114,6 +114,7 @@ class LLMFactVerifier:
         chapter_notes: Optional[str] = None,
         narrowing: bool = False,
         rejected_codes: Optional[List[str]] = None,
+        deadline: Optional[float] = None,
     ) -> CandidateSelection:
         """Select one server-owned node without accepting a model-written code."""
         bounded_nodes = nodes[:250]
@@ -121,6 +122,13 @@ class LLMFactVerifier:
             return CandidateSelection(
                 status=CandidateSelectionStatus.NO_MATCH,
                 reasoning_points=["Bu tarife dalında resmî bir seçenek bulunamadı."],
+            )
+
+        if deadline is not None and time.monotonic() >= deadline:
+            logger.warning("Süre bütçesi doldu; seviye=%s için model çağrılmadı.", level)
+            return CandidateSelection(
+                status=CandidateSelectionStatus.NO_MATCH,
+                reasoning_points=["Analiz süre bütçesi doldu."],
             )
 
         option_map = {option_id(index): node for index, node in enumerate(bounded_nodes)}
@@ -258,12 +266,22 @@ class LLMFactVerifier:
                 except Exception as exc:
                     if attempt == 3:
                         raise
+                    # 429 (kota) ve 504 (deadline) 0.35 saniyede düzelmez; üstel
+                    # bekleme uygulanır. Bütçe kalmadıysa beklemek yerine vazgeç:
+                    # geriye kalan süre sonraki seviyeler için daha değerlidir.
+                    backoff = (settings.PROVIDER_RETRY_BASE_MS / 1000.0) * (2 ** (attempt - 1))
+                    if deadline is not None and time.monotonic() + backoff >= deadline:
+                        logger.warning(
+                            "Sağlayıcı hatası sonrası bütçe kalmadı; yeniden denenmiyor: %s", exc
+                        )
+                        raise
                     logger.warning(
-                        "Tariff node selection attempt %s/3 failed; retrying: %s",
+                        "Tariff node selection attempt %s/3 failed; %.1f sn sonra yeniden: %s",
                         attempt,
+                        backoff,
                         exc,
                     )
-                    time.sleep(0.35 * attempt)
+                    time.sleep(backoff)
             match = re.search(r"\{.*\}", response.text or "", re.DOTALL)
             data = json.loads(match.group(0) if match else (response.text or ""))
             # Şema sınırları BURADA uygulanmalı: CandidateSelection(**data) bunları
@@ -335,7 +353,8 @@ class LLMFactVerifier:
                 selection.status == CandidateSelectionStatus.NO_MATCH
                 or (level == "CHAPTER" and selection.status != CandidateSelectionStatus.SELECT)
             )
-            if should_retry_choice and _no_match_retries > 0:
+            budget_left = deadline is None or time.monotonic() < deadline
+            if should_retry_choice and _no_match_retries > 0 and budget_left:
                 logger.warning(
                     "Tariff node selection returned %s at level=%s; narrowing retry (%s left)",
                     selection.status,
@@ -356,6 +375,7 @@ class LLMFactVerifier:
                     # dalları istemek, çıkmazı sorulabilir bir soruya çevirir.
                     narrowing=True,
                     rejected_codes=rejected_codes,
+                    deadline=deadline,
                 )
             return selection
         except Exception as exc:

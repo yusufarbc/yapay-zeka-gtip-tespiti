@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import date
@@ -570,6 +571,7 @@ class RAGEngine:
         traversal: Optional[Dict[str, Any]] = None,
         precedents: Optional[Sequence[Any]] = None,
         rejected_codes: Optional[List[str]] = None,
+        deadline: Optional[float] = None,
     ) -> Tuple[Optional[Dict[str, Any]], Optional[DiscriminatorQuestion], List[str], List[str]]:
         if not nodes:
             return None, None, [], []
@@ -589,6 +591,7 @@ class RAGEngine:
                 if settings.SELECTION_USE_CHAPTER_NOTES else None
             ),
             rejected_codes=list(rejected_codes or []) or None,
+            deadline=deadline,
         )
         applied_gir_keys = list(getattr(selection, "applied_gir_keys", []) or [])
         cited_chapter_notes = list(getattr(selection, "cited_chapter_notes", []) or [])
@@ -692,6 +695,7 @@ class RAGEngine:
         query_vector: Optional[List[float]] = None,
         raw_text: str = "",
         precedents: Optional[Sequence[Any]] = None,
+        deadline: Optional[float] = None,
     ) -> HierarchicalSearchResult:
         """Traverse chapter → heading → subheading → leaf with model choices."""
         del applied_gir_rules  # Compatibility only; no product-routing rules remain.
@@ -731,7 +735,7 @@ class RAGEngine:
                 node, question, g_keys, c_notes = self._select_node(
                     session_id, product_text, "CHAPTER", self._chapter_nodes(),
                     traversal=traversal, precedents=precedents,
-                    rejected_codes=rejected_chapters or None,
+                    rejected_codes=rejected_chapters or None, deadline=deadline,
                 )
                 _merge_rules(g_keys, c_notes)
                 if question:
@@ -747,7 +751,7 @@ class RAGEngine:
 
             node, question, g_keys, c_notes = self._select_node(
                 session_id, product_text, "HEADING", self._heading_nodes(locked_chapter),
-                traversal=traversal, precedents=precedents,
+                traversal=traversal, precedents=precedents, deadline=deadline,
             )
             _merge_rules(g_keys, c_notes)
             if question:
@@ -758,7 +762,8 @@ class RAGEngine:
                 break
 
             # Pozisyon bulunamadı: büyük olasılıkla fasıl yanlış seçildi.
-            if attempt + 1 < max_chapter_attempts:
+            budget_left = deadline is None or time.monotonic() < deadline
+            if attempt + 1 < max_chapter_attempts and budget_left:
                 logger.warning(
                     "No heading matched in chapter=%s; backtracking to chapter selection",
                     locked_chapter,
@@ -780,7 +785,7 @@ class RAGEngine:
         if not locked_subheading:
             node, question, g_keys, c_notes = self._select_node(
                 session_id, product_text, "SUBHEADING", subheading_nodes,
-                traversal=traversal, precedents=precedents,
+                traversal=traversal, precedents=precedents, deadline=deadline,
             )
             _merge_rules(g_keys, c_notes)
             if question:
@@ -814,7 +819,7 @@ class RAGEngine:
         if not locked_gtip:
             node, question, g_keys, c_notes = self._select_node(
                 session_id, product_text, "GTIP", leaves,
-                traversal=traversal, precedents=precedents,
+                traversal=traversal, precedents=precedents, deadline=deadline,
             )
             _merge_rules(g_keys, c_notes)
             if question:

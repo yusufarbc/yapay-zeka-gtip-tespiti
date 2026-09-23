@@ -511,6 +511,7 @@ class GTIPWorkflowEngine:
         *,
         raw_text: str = "",
         precedents: Optional[List[Any]] = None,
+        deadline: Optional[float] = None,
         locked_chapter: Optional[str] = None,
         locked_heading: Optional[str] = None,
         locked_subheading: Optional[str] = None,
@@ -529,6 +530,7 @@ class GTIPWorkflowEngine:
             query_vector=query_vector,
             raw_text=raw_text,
             precedents=precedents,
+            deadline=deadline,
         )
 
     def start_analysis(
@@ -587,6 +589,7 @@ class GTIPWorkflowEngine:
                 features,
                 raw_text=raw_text,
                 precedents=[*btb_precedents, *ebti_precedents],
+                deadline=started + settings.ANALYSIS_BUDGET_MS / 1000.0,
             )
             tree_result.traversal_state["btb_precedents"] = [
                 item.model_dump() for item in btb_precedents
@@ -711,6 +714,7 @@ class GTIPWorkflowEngine:
             features,
             raw_text=state.get("raw_text", ""),
             precedents=_restore_precedents(traversal),
+            deadline=time.monotonic() + settings.ANALYSIS_BUDGET_MS / 1000.0,
             locked_chapter=locked_chapter,
             locked_heading=locked_heading,
             locked_subheading=locked_subheading,
