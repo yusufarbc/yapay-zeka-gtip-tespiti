@@ -69,10 +69,6 @@ class Settings(BaseSettings):
     # Google Search Grounding ile canlı emsal taraması, kapalı-küme seçiminden
     # belirgin biçimde yavaştır. Tek bir LLM_TIMEOUT_MS bütçesi paylaşıldığında
     # üretimde sürekli 504 DEADLINE_EXCEEDED alınıyordu.
-    # Arayüzün istek timeout'u 45 sn. Sınıflandırma tipik olarak ~11 sn sürdüğü
-    # için grounding'li aramaya kalan payı aşmayacak bir sınır verilir; aksi halde
-    # kullanıcı sınıflandırma sonucunu da göremeden zaman aşımı alıyordu.
-    GROUNDED_SEARCH_TIMEOUT_MS: int = int(os.getenv("GROUNDED_SEARCH_TIMEOUT_MS", "20000"))
 
     # Hattın TOPLAM süre bütçesi. Tek tek çağrıların timeout'u vardı ama hattın
     # bütünü için sınır yoktu: bir sağlayıcı hatası (429/504) retry'larla

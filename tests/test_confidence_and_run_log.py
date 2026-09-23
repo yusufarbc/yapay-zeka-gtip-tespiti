@@ -144,34 +144,6 @@ def test_chapter_backtracking_penalises_confidence():
     assert review_reasons({"used_chapter_backtrack": True})
 
 
-def test_international_research_does_not_starve_the_classification(monkeypatch):
-    """
-    Grounding'li arama istek başında çalıştırılıyor ve onlarca saniye sürüyordu.
-    Süre bütçesi istek başlangıcından sayıldığı için traversal başladığında
-    süre bitmiş oluyor, her tarife seviyesi atlanıyor ve karar
-    MODEL_BINDING_FAILED ile manuel incelemeye düşüyordu.
-
-    Arayüzde "Uluslararası Emsalleri Canlı Araştır" kutusu işaretliyken her
-    analiz bu yüzden sonuçsuz kalıyordu.
-    """
-    called = {"n": 0}
-
-    def _slow_search(*args, **kwargs):
-        called["n"] += 1
-        return []
-
-    monkeypatch.setattr(
-        "api.modules.international_search.search_international_rulings", _slow_search
-    )
-
-    decision = workflow_engine.start_analysis(
-        "alüminyum doğrama cam balkon sistemi", enable_international_research=True
-    )
-
-    # Sınıflandırma öncesi çağrılmamalı; arama kod kilitlendikten sonra
-    # ve HS ipucuyla yapılır.
-    assert called["n"] == 0 or decision.status == "COMPLETED"
-
 
 def test_budget_clock_starts_at_traversal_not_at_request(monkeypatch):
     """Bütçe tarife taraması içindir; öncesindeki emsal aramaları onu yememeli."""
@@ -198,79 +170,6 @@ def test_budget_clock_starts_at_traversal_not_at_request(monkeypatch):
     )
 
 
-# ---------------------------------------------------------------------------
-# Uluslararası emsal: gösterim değil, bağımsız çapraz kontrol
-# ---------------------------------------------------------------------------
-
-def test_foreign_disagreement_lowers_confidence_below_threshold():
-    """
-    Armonize Sistem ilk altı hanede uluslararası ortaktır. Yabancı bir idare
-    aynı eşyayı farklı alt pozisyona koyduysa bu gerçek bir uyuşmazlıktır ve
-    kararın otomatik onaylanmasını engellemelidir. Önceden bu kararlar yalnız
-    ekranda gösteriliyor, sınıflandırmaya hiç etki etmiyordu.
-    """
-    agreed = compute_confidence({"applied_gir_keys": ["GIR_1"]}, [_btb(0.9)], [])
-    disputed = compute_confidence(
-        {"applied_gir_keys": ["GIR_1"], "international_disagreement": ["392590"]},
-        [_btb(0.9)], [],
-    )
-    assert disputed < agreed
-    # Yabancı uyuşmazlık, emsal ne kadar güçlü olursa olsun incelemeye gider.
-    from api.graph.workflow import review_reasons
-    assert review_reasons({"international_disagreement": ["392590"]})
-
-
-def test_search_runs_without_the_hs_hint(monkeypatch):
-    """
-    Seçilen kodu ipucu olarak vermek, modelin o kodu DOĞRULAYAN kararlar
-    bulmasına yol açıyordu: bağımsız kontrol gibi görünen ama olmayan bir teyit.
-    """
-    import api.modules.international_search as intl
-
-    seen = {}
-
-    def _capture(product_text, hs_code_hint=None, target_countries=None,
-                 max_results=4, timeout_ms=None):
-        seen["hint"] = hs_code_hint
-        seen["timeout"] = timeout_ms
-        return []
-
-    monkeypatch.setattr(intl, "search_international_rulings", _capture)
-    workflow_engine.start_analysis(
-        "alüminyum doğrama cam balkon sistemi", enable_international_research=True
-    )
-    if "hint" in seen:
-        assert seen["hint"] is None, "arama seçilen kodla beslenmiş"
-
-
-def test_search_is_skipped_when_too_little_time_remains(monkeypatch):
-    """
-    Grounding'li arama ~20 sn sürüyor. Birkaç saniye kalmışken denemek yalnız
-    kullanıcıyı bekletir ve istemci zaman aşımı riskini artırır.
-    """
-    import api.graph.workflow as wf
-
-    called = {"n": 0}
-
-    def _never(*args, **kwargs):
-        called["n"] += 1
-        return []
-
-    monkeypatch.setattr(
-        "api.modules.international_search.search_international_rulings", _never
-    )
-    decision = wf.GTIPWorkflowEngine._complete(
-        wf.workflow_engine,
-        "s1", "ürün", None,
-        __import__("api.schemas.product", fromlist=["ProductFeatures"]).ProductFeatures(
-            product_name="x", primary_material="y", intended_use="z"),
-        wf.HierarchicalSearchResult(traversal_state={
-            "enable_international_research": True,
-            "intl_deadline": time.monotonic() - 5,   # süre bitmiş
-        }),
-    )
-    assert called["n"] == 0
-    assert decision.session_id
 
 
 def test_threshold_flags_weak_cases_not_every_decision():
@@ -284,8 +183,6 @@ def test_threshold_flags_weak_cases_not_every_decision():
         {"applied_gir_keys": ["GIR_1"], "used_residual_fallback": True}, [], [])
     backtracked = compute_confidence(
         {"applied_gir_keys": ["GIR_1"], "used_chapter_backtrack": True}, [], [])
-    disputed = compute_confidence(
-        {"applied_gir_keys": ["GIR_1"], "international_disagreement": ["3925"]}, [], [])
 
     # Sıradan karar onaya takılmamalı: kullanıcı sonucu görmeli.
     assert normal >= settings.CONFIDENCE_THRESHOLD, (
@@ -294,7 +191,6 @@ def test_threshold_flags_weak_cases_not_every_decision():
     from api.graph.workflow import review_reasons
     assert review_reasons({"used_residual_fallback": True})
     assert review_reasons({"used_chapter_backtrack": True})
-    assert review_reasons({"international_disagreement": ["3925"]})
     # Sıradan kararda hiçbir gerekçe olmamalı.
     assert review_reasons({"applied_gir_keys": ["GIR_1"]}) == []
-    assert residual < normal and backtracked < normal and disputed < normal
+    assert residual < normal and backtracked < normal

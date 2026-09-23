@@ -27,10 +27,6 @@ from api.schemas.product import GTIPCandidate, GTIPDecision, HITLOption, HITLQue
 
 logger = logging.getLogger("GTIPWorkflowEngine")
 
-# Bundan kısa bir süreyle grounding'li arama tamamlanamaz; denemek yalnız
-# kullanıcıyı bekletir ve istemci zaman aşımı riskini artırır.
-MIN_INTERNATIONAL_SEARCH_MS = 8000
-
 
 def _format_gtip_code(value: str) -> str:
     digits = re.sub(r"\D", "", str(value or ""))
@@ -66,9 +62,6 @@ REVIEW_REASONS = {
     "used_chapter_backtrack": (
         "İlk fasıl seçimi hiçbir pozisyonla eşleşmedi ve geri alındı; "
         "varılan sonuç modelin ikinci tercihidir."
-    ),
-    "international_disagreement": (
-        "Yabancı gümrük idaresi aynı eşyayı farklı alt pozisyonda sınıflandırmış."
     ),
 }
 
@@ -156,8 +149,6 @@ def compute_confidence(
         score -= 0.25
     if traversal.get("used_chapter_backtrack"):
         score -= 0.15
-    if traversal.get("international_disagreement"):
-        score -= 0.20
 
     return round(max(0.0, min(0.99, score)), 3)
 
@@ -361,98 +352,19 @@ class GTIPWorkflowEngine:
             for ep in ebti_precedents
         ] if has_ebti else []
 
-        # Uluslararası Emsaller (ABD CBP CROSS / CustomsMobile, Çin GACC, AB EBTI)
-        from api.schemas.product import InternationalRuling
-        raw_intl = traversal.get("international_rulings") or []
-        # Grounding'li canlı arama yavaştır (GROUNDED_SEARCH_TIMEOUT_MS). Yerel emsal
-        # yokluğunda örtük tetiklemek her belirsiz üründe sıcak yola on saniyeler
-        # ekliyordu; yalnız kullanıcı açıkça istediğinde çalıştırılır.
-        if not raw_intl and traversal.get("enable_international_research"):
-            # Kalan süre kadar pay verilir; çok az kaldıysa hiç denenmez.
-            remaining_ms = 0
-            intl_deadline = traversal.get("intl_deadline")
-            if intl_deadline:
-                remaining_ms = int(max(0.0, (intl_deadline - time.monotonic()) * 1000))
-            if remaining_ms >= MIN_INTERNATIONAL_SEARCH_MS:
-                try:
-                    from api.modules.international_search import search_international_rulings
-                    # HS İPUCU VERİLMEZ. Seçilen kodu ipucu olarak vermek, modelin
-                    # o kodu DOĞRULAYAN kararlar bulmasına yol açıyordu: bağımsız
-                    # bir kontrol gibi görünen ama olmayan bir teyit. İpucusuz
-                    # arama, yabancı idarenin aynı eşyaya ne dediğini bağımsız
-                    # olarak söyler; WCO uyumu 6 hanede olduğu için bu karşılaştırma
-                    # anlamlıdır.
-                    found_intl = search_international_rulings(
-                        product_text=raw_text,
-                        hs_code_hint=None,
-                        timeout_ms=remaining_ms,
-                    )
-                    raw_intl = [item.model_dump() for item in found_intl]
-                except Exception as exc_intl:
-                    logger.warning("Uluslararası emsal arama atlandı: %s", exc_intl)
-                    raw_intl = []
-            else:
-                logger.info(
-                    "Uluslararası arama atlandı: kalan süre %d ms < %d ms",
-                    remaining_ms, MIN_INTERNATIONAL_SEARCH_MS,
-                )
-
-        international_rulings: List[InternationalRuling] = []
-        for item in raw_intl:
-            try:
-                international_rulings.append(InternationalRuling(**item))
-            except Exception:
-                pass
-
-        has_intl = len(international_rulings) > 0
-        if has_intl:
-            consulted = list(dict.fromkeys(consulted + ["US_CBP_CROSS", "CN_GACC"]))
-
-        # ÇAPRAZ KONTROL. Armonize Sistem ilk altı hanede uluslararası ortaktır:
-        # yabancı bir idare aynı eşyayı farklı bir alt pozisyona koyduysa bu,
-        # bilinmesi gereken gerçek bir uyuşmazlık sinyalidir. Daha önce bu
-        # kararlar yalnız ekranda gösteriliyor, sınıflandırmaya hiç etki
-        # etmiyordu.
-        our_hs6 = locked_digits[:6]
-        disagreeing = sorted({
-            re.sub(r"\D", "", str(ruling.hs_code))[:6]
-            for ruling in international_rulings
-            if len(re.sub(r"\D", "", str(ruling.hs_code))) >= 6
-            and re.sub(r"\D", "", str(ruling.hs_code))[:6] != our_hs6
-        })
-        if disagreeing:
-            traversal["international_disagreement"] = disagreeing
-            logger.warning(
-                "Uluslararası emsal uyuşmazlığı: seçilen=%s yabancı=%s",
-                our_hs6, disagreeing,
-            )
-
-        # Uluslararası emsal bulunamadıysa kullanıcıya uydurma karar değil, resmi
-        # portallarda elle araması için doğrudan arama bağlantıları sunulur.
+        # Canlı uluslararası arama kaldırıldı. Üretimde her çağrı 504 ile
+        # bitiyor, ~25 saniye harcayıp sıfır sonuç dönüyordu; yalın promptla
+        # bile 63 saniye sürdüğü ölçüldü. Sonuçlar zaten sınıflandırmaya etki
+        # etmiyor, yalnız gösterime giriyordu. Kullanıcı araştırmayı resmî
+        # portal bağlantılarıyla sürdürür (model çağrısı yok, maliyeti yok).
         research_portal_links: Optional[Dict[str, str]] = None
-        if not has_intl:
-            try:
-                from api.modules.international_search import generate_portal_links
-                research_portal_links = generate_portal_links(
-                    raw_text, locked_digits[:6] if locked_digits else None
-                )
-            except Exception as exc_links:
-                logger.warning("Portal bağlantıları üretilemedi: %s", exc_links)
-
-        intl_legal_sources = [
-            LegalSource(
-                source_type=f"INTL_{ir.country}",
-                reference_no=ir.ruling_no,
-                title=f"{ir.source_name} {ir.ruling_no} ({ir.country})",
-                publication_date=ir.issue_date or None,
-                excerpt=ir.product_description[:300],
-                source_url=ir.source_url,
-                legal_role="INDIVIDUAL_PRECEDENT",
-                authority_level=4,
-                is_binding=False,
+        try:
+            from api.modules.international_search import generate_portal_links
+            research_portal_links = generate_portal_links(
+                raw_text, locked_digits[:6] if locked_digits else None
             )
-            for ir in international_rulings
-        ] if has_intl else []
+        except Exception as exc_links:
+            logger.warning("Portal bağlantıları üretilemedi: %s", exc_links)
 
         # Resmi Kanuni Maddeler (Model yazmaz; sistem doğrudan veritabanından çeker)
         applied_gir_keys = list(traversal.get("applied_gir_keys") or [])
@@ -480,7 +392,7 @@ class GTIPWorkflowEngine:
         all_legal_sources = official_statutes + [
             s for s in candidate.legal_sources
             if s.source_type not in {"TGTC_2026", "GIR", "TGTC_HEADING", "TGTC_SUBHEADING", "TGTC_LEAF", "FASIL_NOTU"}
-        ] + ebti_legal_sources + intl_legal_sources
+        ] + ebti_legal_sources
         dedup_legal_sources = []
         seen_source_keys = set()
         for src in all_legal_sources:
@@ -516,7 +428,6 @@ class GTIPWorkflowEngine:
             applied_gir_rules=applied_gir_rule_texts,
             precedent_btbs=precedents,
             precedent_ebtis=ebti_precedents,
-            international_rulings=international_rulings,
             research_portal_links=research_portal_links,
             legal_sources=dedup_legal_sources,
             consulted_sources=consulted,
@@ -550,17 +461,6 @@ class GTIPWorkflowEngine:
                 *(
                     [f"AB EBTI emsali bulundu: {len(ebti_precedents)} karar (CN-8 uyumu ile)."]
                     if has_ebti else []
-                ),
-                *(
-                    [f"Uluslararası emsal bulundu: {len(international_rulings)} karar (ABD CBP / Çin GACC / AB EBTI)."]
-                    if has_intl else []
-                ),
-                *(
-                    ["INTERNATIONAL_DISAGREEMENT: Yabancı gümrük idareleri aynı eşyayı "
-                     f"{', '.join(disagreeing)} alt pozisyon(lar)ında sınıflandırmış; "
-                     f"sistem {our_hs6} seçti. Armonize Sistem ilk altı hanede ortak "
-                     "olduğundan bu fark incelenmelidir."]
-                    if disagreeing else []
                 ),
             ],
         )
@@ -614,7 +514,6 @@ class GTIPWorkflowEngine:
         self,
         raw_text: str,
         image_uri: str = None,
-        enable_international_research: bool = False,
         exclude_btb_refs: Optional[Set[str]] = None,
     ) -> GTIPDecision:
         """`exclude_btb_refs` yalnız benchmark içindir; üretim yolunda None'dır."""
@@ -631,12 +530,6 @@ class GTIPWorkflowEngine:
             logger.warning("EBTI emsal araması atlandı: %s", exc_ebti)
             ebti_precedents = []
 
-        # Uluslararası emsal araması burada ÇALIŞTIRILMAZ. Grounding'li arama
-        # onlarca saniye sürebiliyor ve sınıflandırmanın süre bütçesini tüketip
-        # her tarife seviyesinin atlanmasına yol açıyordu (MODEL_BINDING_FAILED).
-        # Ayrıca burada HS ipucu henüz yok; `_complete` aramayı kod kilitlendikten
-        # sonra, ilk altı haneyi ipucu vererek çok daha isabetli yapar.
-        international_rulings: List[Dict[str, Any]] = []
 
         exact_btb = rag_engine.exact_btb_candidate(btb_precedents)
         if exact_btb:
@@ -650,8 +543,6 @@ class GTIPWorkflowEngine:
                     "selection_source": "BTB_EXACT",
                     "btb_precedents": [item.model_dump() for item in btb_precedents],
                     "ebti_precedents": [item.model_dump() for item in ebti_precedents],
-                    "international_rulings": international_rulings,
-                    "enable_international_research": enable_international_research,
                 },
             )
         else:
@@ -673,14 +564,6 @@ class GTIPWorkflowEngine:
             tree_result.traversal_state["ebti_precedents"] = [
                 item.model_dump() for item in ebti_precedents
             ]
-            tree_result.traversal_state["international_rulings"] = international_rulings
-            tree_result.traversal_state["enable_international_research"] = enable_international_research
-            # Uluslararası aramanın payı: istemci zaman aşımından (45 sn) geriye
-            # kalan, güvenlik payı düşülmüş süre. Sınıflandırma ne kadar sürerse
-            # aramaya o kadar az kalır ve gerekirse hiç yapılmaz.
-            tree_result.traversal_state["intl_deadline"] = (
-                started + settings.CLIENT_REQUEST_BUDGET_MS / 1000.0
-            )
         duration_ms = (time.perf_counter() - started) * 1000
         if tree_result.discriminator_question:
             decision = self._pause(session_id, raw_text, image_uri, features, tree_result)
@@ -700,7 +583,6 @@ class GTIPWorkflowEngine:
                 "duration_ms": round(duration_ms, 2),
                 "btb_hits": len(btb_precedents),
                 "ebti_hits": len(ebti_precedents),
-                "intl_hits": len(international_rulings),
                 "gtip_code": decision.gtip_code,
                 "confidence_score": decision.confidence_score,
             },
@@ -712,22 +594,20 @@ class GTIPWorkflowEngine:
         self,
         raw_text: str,
         image_uri: str = None,
-        enable_international_research: bool = False,
     ) -> GTIPDecision:
-        return await asyncio.to_thread(self.start_analysis, raw_text, image_uri, enable_international_research)
+        return await asyncio.to_thread(self.start_analysis, raw_text, image_uri)
 
     async def start_analysis_stream(
         self,
         raw_text: str,
         image_uri: str = None,
-        enable_international_research: bool = False,
     ) -> AsyncIterator[Dict[str, Any]]:
         yield {
             "stage": "MODEL_TARIFF_SELECTION",
             "status": "IN_PROGRESS",
             "message": "Gemini resmi TGTC ağacında fasıl, pozisyon ve alt pozisyon seçiyor.",
         }
-        decision = await self.start_analysis_async(raw_text, image_uri, enable_international_research)
+        decision = await self.start_analysis_async(raw_text, image_uri)
         yield {
             "stage": "COMPLETED",
             "status": decision.status,
@@ -809,8 +689,6 @@ class GTIPWorkflowEngine:
         for carried_key in (
             "btb_precedents",
             "ebti_precedents",
-            "international_rulings",
-            "enable_international_research",
             "applied_gir_keys",
             "cited_chapter_notes",
             "used_residual_fallback",

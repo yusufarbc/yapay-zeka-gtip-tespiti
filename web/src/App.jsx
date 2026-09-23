@@ -49,12 +49,12 @@ export function App() {
     if (AUDIT_LOGS_ENABLED) fetchLogs();
   }, []);
 
-  const handleStartAnalysis = async (description, enableInternational = false) => {
+  const handleStartAnalysis = async (description) => {
     setIsAnalyzing(true);
     setDecision(null);
 
     try {
-      const result = await analyzeProduct(description, null, enableInternational);
+      const result = await analyzeProduct(description);
       setDecision(result);
     } catch (err) {
       console.error(err);

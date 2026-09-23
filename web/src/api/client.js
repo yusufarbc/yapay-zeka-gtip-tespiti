@@ -32,7 +32,7 @@ export const uploadFileDirectlyToGCS = async (file, uploadUrl) => {
   });
 };
 
-export const analyzeProduct = async (productDescription, imageFile = null, enableInternationalResearch = false) => {
+export const analyzeProduct = async (productDescription, imageFile = null) => {
   let imageUri = null;
   
   if (imageFile) {
@@ -48,25 +48,13 @@ export const analyzeProduct = async (productDescription, imageFile = null, enabl
   // Use the JSON endpoint which accepts image_uri instead of multipart file
   const response = await axios.post(`${API_BASE_URL}/analyze-json`, {
     product_description: productDescription,
-    image_uri: imageUri,
-    enable_international_research: enableInternationalResearch
+    image_uri: imageUri
   }, {
     timeout: 45000
   });
   return response.data;
 };
 
-export const searchInternationalRulings = async (productText, hsCode = null, targetCountries = ['US', 'CN', 'EU']) => {
-  const response = await axios.post(`${API_BASE_URL}/precedents/international-search`, {
-    product_text: productText,
-    hs_code: hsCode,
-    target_countries: targetCountries,
-    max_results: 4
-  }, {
-    timeout: 45000
-  });
-  return response.data;
-};
 
 export const respondHITL = async (sessionId, questionId, selectedOptionId, customNote = '') => {
   // Timeout yoktu: axios varsayilani 0 (sinirsiz), yani sunucu yanit vermezse

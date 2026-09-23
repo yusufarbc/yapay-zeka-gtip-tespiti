@@ -1,109 +1,77 @@
-"""Unit tests for International Customs Rulings Search and Schemas."""
+"""Uluslararası portal bağlantıları.
+
+Bu modülde daha önce Gemini Google Search Grounding ile canlı karar araması
+vardı; ölçüm kaldırılmasını gerektirdi (her çağrı 504, ~25 sn harcayıp sıfır
+sonuç; yalın promptla bile 63 sn). Geriye kullanıcının araştırmayı kendisi
+sürdürmesini sağlayan portal bağlantıları kaldı: model çağrısı yok.
+
+Daha eski bir sürüm ise SAHTE karar numaraları (NY N…, Z2024-…) üretip bunları
+karara hukuki dayanak olarak ekliyordu. Buradaki testler o davranışın hiçbir
+biçimde geri gelmemesini güvenceye alır.
+"""
 
 import pathlib
 
-import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app
-from api.modules.international_search import (
-    generate_portal_links,
-    search_international_rulings,
-)
-from api.schemas.product import InternationalRuling, GTIPDecision
+from api.modules import international_search as intl
+from api.modules.international_search import generate_portal_links
 
 
-def test_international_ruling_schema():
-    ruling = InternationalRuling(
-        country="US",
-        ruling_no="NY N320145",
-        hs_code="8518.30.20",
-        product_description="Wireless Bluetooth headphones with microphone",
-        legal_justification="Classified under HTSUS 8518.30 pursuant to GRI 1 and GRI 6.",
-        summary_tr="ABD CBP Kararı: Ürün 8518.30 alt pozisyonunda sınıflandırılmıştır.",
-        issue_date="2024-01-15",
-        source_url="https://www.customsmobile.com/rulings/search?q=NY+N320145",
-        source_name="ABD CBP CROSS (CustomsMobile)",
-        similarity_score=0.92,
-    )
-    assert ruling.country == "US"
-    assert ruling.ruling_no == "NY N320145"
-    assert "8518.30" in ruling.hs_code
-
-
-def test_generate_portal_links():
+def test_portal_links_point_to_the_official_databases():
     links = generate_portal_links("laptop computer", "8471.30")
     assert "customsmobile.com" in links["us_customsmobile"]
+    assert "rulings.cbp.gov" in links["us_cbp_cross"]
     assert "ec.europa.eu" in links["eu_ebti"]
     assert "gjzwfw.gov.cn" in links["cn_gacc"]
 
 
-def test_no_fabricated_ruling_generator_exists():
-    """Uydurma emsal karar üreticisi kalıcı olarak kaldırıldı."""
-    import api.modules.international_search as intl
+def test_portal_links_work_without_an_hs_code():
+    links = generate_portal_links("ahşap sandalye")
+    assert all(value.startswith("http") for value in links.values())
 
-    assert not hasattr(intl, "_build_fallback_rulings")
+
+def test_query_is_url_encoded():
+    """Türkçe karakter ve boşluk içeren sorgu bağlantıyı bozmamalı."""
+    links = generate_portal_links("alüminyum doğrama cam balkon")
+    assert " " not in links["eu_ebti"]
+    assert "ü" not in links["eu_ebti"]
+
+
+def test_module_makes_no_model_calls():
+    """
+    Canlı arama kaldırıldı: bu modül artık yalnız URL üretir. Bir model çağrısı
+    geri gelirse gecikme ve 504'ler de geri gelir.
+    """
     source = pathlib.Path(intl.__file__).read_text(encoding="utf-8")
-
-    # Modül InternationalRuling'i YALNIZ modelin döndürdüğü veriden kurabilir.
-    # Literal alanlarla kurulan her örnek uydurma emsal demektir.
-    constructions = [
-        line.strip() for line in source.splitlines() if "InternationalRuling(" in line
-    ]
-    assert constructions == ["rulings.append(InternationalRuling(**item))"], constructions
+    for forbidden in ("generate_content", "GoogleSearch", "get_genai_client",
+                      "get_grounded_search_client"):
+        assert forbidden not in source, f"model çağrısı geri gelmiş: {forbidden}"
+    assert not hasattr(intl, "search_international_rulings")
 
 
-def test_search_returns_empty_when_live_search_unavailable():
-    """Emülatör/erişimsiz ortamda uydurma karar değil, boş liste dönmeli."""
-    results = search_international_rulings("kablosuz kulaklık", hs_code_hint="8518.30", max_results=3)
-    assert results == []
+def test_no_fabricated_ruling_generator_exists():
+    """Sahte karar numarası üreten kod hiçbir biçimde geri gelmemeli."""
+    source = pathlib.Path(intl.__file__).read_text(encoding="utf-8")
+    assert not hasattr(intl, "_build_fallback_rulings")
+    assert "InternationalRuling(" not in source
 
 
-def test_search_returns_empty_when_provider_raises(monkeypatch):
-    """Canlı arama hata verirse sistem sessizce sahte emsal üretmemeli."""
-    import api.modules.international_search as intl
-
-    monkeypatch.setattr(intl.settings, "USE_GCP_EMULATOR", False)
-    monkeypatch.setattr(intl.settings, "GCP_PROJECT_ID", "test-project")
-
-    def _boom():
-        raise TimeoutError("504 DEADLINE_EXCEEDED")
-
-    monkeypatch.setattr("api.modules.vertex_client.get_grounded_search_client", _boom)
-
-    results = search_international_rulings("kablosuz kulaklık", hs_code_hint="8518.30")
-    assert results == []
-
-
-def test_decision_never_carries_fabricated_intl_legal_sources():
-    """Emsal yokken karara hiçbir INTL_* hukuki kaynak girmemeli."""
+def test_decision_carries_portal_links_and_no_foreign_legal_sources():
     from api.graph.workflow import workflow_engine
 
     decision = workflow_engine.start_analysis("ahşap sandalye")
-    intl_sources = [s for s in decision.legal_sources if s.source_type.startswith("INTL_")]
-    assert intl_sources == []
-    assert decision.international_rulings == []
+    foreign = [s for s in decision.legal_sources if s.source_type.startswith("INTL_")]
+    assert foreign == []
+    if decision.status == "COMPLETED":
+        assert decision.research_portal_links, "portal bağlantıları dönmedi"
 
 
-def test_international_search_api_endpoint():
+def test_removed_search_endpoint_is_gone():
     client = TestClient(app)
     response = client.post(
         "/api/v1/precedents/international-search",
-        json={
-            "product_text": "Taşınabilir dizüstü bilgisayar 16GB RAM 512GB SSD",
-            "hs_code": "8471.30",
-            "target_countries": ["US", "CN", "EU"],
-            "max_results": 3,
-        },
+        json={"product_text": "laptop"},
     )
-    assert response.status_code == 200
-    data = response.json()
-    # Emülatör/test ortamında canlı arama yapılamaz; uydurma emsal DÖNMEMELİ.
-    assert data["total_found"] == 0
-    assert data["rulings"] == []
-    # Kullanıcı araştırmayı sürdürebilsin diye portal bağlantıları her durumda döner.
-    assert "portal_links" in data
-    assert "us_customsmobile" in data["portal_links"]
-    assert "cn_gacc" in data["portal_links"]
-    assert "eu_ebti" in data["portal_links"]
-
+    assert response.status_code == 404

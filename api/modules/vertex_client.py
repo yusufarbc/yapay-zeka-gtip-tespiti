@@ -58,46 +58,6 @@ def get_genai_client():
         logger.error(f"[Vertex AI] GenAI Client oluşturulamadı: {e}")
         raise
 
-_grounded_client = None
-
-
-def get_grounded_search_client():
-    """
-    Google Search Grounding çağrıları için ayrı, uzun timeout'lu istemci.
-
-    Varsayılan istemci `LLM_TIMEOUT_MS` (15s) ile kurulur; grounding'li arama bu
-    bütçeye sığmadığı için üretimde sürekli 504 DEADLINE_EXCEEDED üretiyordu.
-    """
-    global _grounded_client
-    if _grounded_client is not None:
-        return _grounded_client
-
-    from google import genai
-
-    timeout = settings.GROUNDED_SEARCH_TIMEOUT_MS
-    if not settings.USE_GCP_EMULATOR:
-        try:
-            _grounded_client = genai.Client(
-                vertexai=True,
-                project=settings.GCP_PROJECT_ID,
-                location=settings.VERTEX_AI_LOCATION,
-                http_options={"timeout": timeout},
-            )
-            return _grounded_client
-        except Exception as exc:
-            logger.warning(f"[Vertex AI] Grounded istemci Vertex modunda kurulamadı: {exc}")
-
-    if settings.GEMINI_API_KEY:
-        _grounded_client = genai.Client(
-            api_key=settings.GEMINI_API_KEY,
-            http_options={"timeout": timeout},
-        )
-        return _grounded_client
-
-    _grounded_client = genai.Client(http_options={"timeout": timeout})
-    return _grounded_client
-
-
 def generate_embedding(text: str, model: str = None) -> List[float]:
     """
     Vertex AI text-embedding-005 ile 768 boyutlu semantik embedding üretir.

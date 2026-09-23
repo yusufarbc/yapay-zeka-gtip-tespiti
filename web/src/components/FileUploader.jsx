@@ -3,12 +3,11 @@ import { Sparkles, FileSearch } from 'lucide-react';
 
 export const ProductInputForm = ({ onStartAnalysis, isLoading }) => {
   const [description, setDescription] = useState('');
-  const [enableInternational, setEnableInternational] = useState(false);
 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (isLoading || description.trim().length < 3) return;
-    onStartAnalysis(description.trim(), enableInternational);
+    onStartAnalysis(description.trim());
   };
 
   return (
@@ -43,18 +42,10 @@ export const ProductInputForm = ({ onStartAnalysis, isLoading }) => {
           />
         </div>
 
-        {/* Buton ve Uluslararası Araştırma Opsiyonu */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border-subtle)', paddingTop: '16px', flexWrap: 'wrap', gap: '12px' }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.84rem', color: 'var(--text-secondary)', userSelect: 'none' }}>
-            <input
-              type="checkbox"
-              checked={enableInternational}
-              onChange={(e) => setEnableInternational(e.target.checked)}
-              style={{ width: '16px', height: '16px', accentColor: '#2563eb', cursor: 'pointer' }}
-            />
-            <span>🌐 <strong>Uluslararası Emsalleri Canlı Araştır</strong> (ABD CBP CROSS, Çin GACC, AB EBTI)</span>
-          </label>
-
+        {/* Analiz butonu. Canlı uluslararası arama kaldırıldı: üretimde her
+            çağrı 504 ile bitiyor, ~25 saniye harcayıp sıfır sonuç dönüyordu.
+            Karar kartında resmî portallara doğrudan arama bağlantıları var. */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', borderTop: '1px solid var(--border-subtle)', paddingTop: '16px' }}>
           <button type="submit" className="btn-primary" disabled={isLoading || description.trim().length < 3}>
             <Sparkles size={18} />
             <span>{isLoading ? 'GTİP Analiz Ediliyor...' : 'GTİP Analizini Başlat'}</span>

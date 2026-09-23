@@ -17,7 +17,7 @@ from api.logging_config import configure as configure_logging
 # yapılandırılır; aksi halde logger.error çağrıları da INFO olarak görünür.
 configure_logging()
 
-from api.schemas.product import GTIPDecision, HITLResponse, InternationalRuling
+from api.schemas.product import GTIPDecision, HITLResponse
 from api.schemas.audit import AuditLogEntry, AuditLogQueryResponse
 from api.graph.workflow import workflow_engine
 from api.exporter import pdf_exporter
@@ -155,10 +155,6 @@ ProductDescription = Annotated[str, StringConstraints(strip_whitespace=True, min
 class AnalyzeJSONRequest(BaseModel):
     product_description: ProductDescription = Field(..., description="Ürün tanımı veya fatura metni")
     image_uri: Optional[str] = Field(default=None, max_length=1000)
-    enable_international_research: bool = Field(
-        default=False,
-        description="ABD (CBP CROSS), Çin (GACC) ve AB (EBTI) uluslararası emsal kararlarını canlı araştır",
-    )
 
     @field_validator("image_uri")
     @classmethod
@@ -294,7 +290,6 @@ async def analyze_product(
     background_tasks: BackgroundTasks,
     product_description: Annotated[ProductDescription, Form()],
     image: Optional[UploadFile] = File(None),
-    enable_international_research: bool = Form(False),
 ):
     start_time = time.time()
     try:
@@ -319,7 +314,6 @@ async def analyze_product(
         decision = await workflow_engine.start_analysis_async(
             raw_text=clean_desc,
             image_uri=image_uri,
-            enable_international_research=enable_international_research,
         )
         execution_ms = (time.time() - start_time) * 1000
 
@@ -349,7 +343,6 @@ async def analyze_product(
 async def analyze_product_stream(
     product_description: Annotated[ProductDescription, Query()],
     request: Request,
-    enable_international_research: bool = Query(False),
 ):
     """
     Canlı Akışlı Karar Takibi (Server-Sent Events / SSE) Endpoint'i.
@@ -371,7 +364,6 @@ async def analyze_product_stream(
     async def event_generator():
         async for event_data in workflow_engine.start_analysis_stream(
             raw_text=clean_desc.strip(),
-            enable_international_research=enable_international_research,
         ):
             yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
 
@@ -393,7 +385,6 @@ async def analyze_product_json(payload: AnalyzeJSONRequest, request: Request, ba
         decision = await workflow_engine.start_analysis_async(
             raw_text=clean_desc,
             image_uri=payload.image_uri,
-            enable_international_research=payload.enable_international_research,
         )
         execution_ms = (time.time() - start_time) * 1000
 
@@ -417,60 +408,6 @@ async def analyze_product_json(payload: AnalyzeJSONRequest, request: Request, ba
     except Exception:
         logger.exception("GTİP JSON analizi başarısız")
         raise HTTPException(status_code=500, detail="GTİP analizi tamamlanamadı.")
-
-
-class InternationalSearchRequest(BaseModel):
-    product_text: ProductDescription = Field(..., description="Araştırılacak ürünün teknik tanımı veya ticari adı")
-    hs_code: Optional[str] = Field(default=None, max_length=20, description="Tahmini veya aday WCO HS kodu (örn. 8471, 9401.61)")
-    target_countries: Optional[List[str]] = Field(default=["US", "CN", "EU"], description="Hedef ülkeler: US, CN, EU")
-    max_results: int = Field(default=4, ge=1, le=10)
-
-
-class InternationalSearchResponse(BaseModel):
-    product_text: str
-    hs_code_hint: Optional[str] = None
-    target_countries: List[str]
-    total_found: int
-    rulings: List[InternationalRuling]
-    portal_links: Dict[str, str]
-
-
-@app.post("/api/v1/precedents/international-search", response_model=InternationalSearchResponse)
-async def search_international_precedents(
-    payload: InternationalSearchRequest,
-    request: Request,
-):
-    """
-    Avrupa Birliği (EBTI), ABD (CBP CROSS / CustomsMobile) ve Çin (GACC)
-    gümrük sınıflandırma kararlarını (Rulings) bağımsız olarak canlı araştırır.
-    """
-    user_session = get_current_user_session(request)
-    demo_rate_limiter.check(
-        request,
-        user_session,
-        "intl-search",
-        settings.PUBLIC_DEMO_RATE_LIMIT_PER_MINUTE,
-    )
-    from api.modules.international_search import (
-        search_international_rulings_async,
-        generate_portal_links,
-    )
-    clean_text, _ = model_armor.inspect_and_sanitize(payload.product_text)
-    rulings = await search_international_rulings_async(
-        product_text=clean_text,
-        hs_code_hint=payload.hs_code,
-        target_countries=payload.target_countries,
-        max_results=payload.max_results,
-    )
-    portal_links = generate_portal_links(clean_text, payload.hs_code)
-    return InternationalSearchResponse(
-        product_text=clean_text,
-        hs_code_hint=payload.hs_code,
-        target_countries=payload.target_countries or ["US", "CN", "EU"],
-        total_found=len(rulings),
-        rulings=rulings,
-        portal_links=portal_links,
-    )
 
 
 @app.post("/api/v1/analyze/batch", response_model=List[GTIPDecision])
