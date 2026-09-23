@@ -78,6 +78,14 @@ class Settings(BaseSettings):
     # Bütçe dolduğunda hat zarifçe durur ve elindeki en iyi sonucu döndürür;
     # cevapsız bir timeout yerine cevaplanabilir bir soru daha değerlidir.
     ANALYSIS_BUDGET_MS: int = int(os.getenv("ANALYSIS_BUDGET_MS", "32000"))
+    # CHAPTER seçenek listesi hattın en yavaş ve 504 alan çağrısıydı (~21.000
+    # token). Kapsam LİSTESİNİ kesmek yanlış çözümdü: Fasıl 61'de 6109 (tişört)
+    # gibi yaygın pozisyonlar listeden düşüyordu. Bunun yerine pozisyon
+    # ETİKETLERİ kısaltılır; her pozisyon görünür kalır, prompt yarıya iner.
+    # 55 -> 20 karakter: ~21.000 -> ~11.300 token.
+    CHAPTER_HEADING_LABEL_CHARS: int = int(os.getenv("CHAPTER_HEADING_LABEL_CHARS", "20"))
+    # Tek bir faslın kapsamı için üst sınır (Fasıl 84'te 84 pozisyon var).
+    CHAPTER_SCOPE_CHARS: int = int(os.getenv("CHAPTER_SCOPE_CHARS", "2600"))
     # Sağlayıcı hatalarında (429 kota, 504 deadline) bekleme. 0.35 sn kotanın
     # yenilenmesi için anlamsızdı; üstel artış uygulanır.
     PROVIDER_RETRY_BASE_MS: int = int(os.getenv("PROVIDER_RETRY_BASE_MS", "1200"))

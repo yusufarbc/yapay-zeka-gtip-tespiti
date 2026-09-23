@@ -371,13 +371,22 @@ class RAGEngine:
         for chapter in sorted(chapter_labels):
             # The catalog has no separate chapter-title rows. This compact
             # synopsis gives the model the real scope without product rules.
+            # Prompt küçültmesi LİSTEYİ değil ETİKETLERİ keser. Listeyi kesmek
+            # Fasıl 61'de 6109 (tişört) gibi yaygın pozisyonları düşürüyordu;
+            # model o faslı seçemez hale geliyordu. Etiket kısaltılınca her
+            # pozisyon görünür kalır ve prompt yine de yarıya iner.
+            label_len = max(0, settings.CHAPTER_HEADING_LABEL_CHARS)
             scope = "; ".join(
-                f"{code}: {value[:55]}"
+                f"{code}: {value[:label_len]}" if label_len else code
                 for code, value in grouped.get(chapter, [])
-            )[:900]
+            )[:max(0, settings.CHAPTER_SCOPE_CHARS)]
+            description = (
+                f"{chapter_labels[chapter]}. Pozisyon kapsamı: {scope}"
+                if scope else chapter_labels[chapter]
+            )
             nodes.append({
                 "gtip_code": chapter,
-                "description": f"{chapter_labels[chapter]}. Pozisyon kapsamı: {scope}",
+                "description": description,
                 "level": "CHAPTER",
             })
         return nodes

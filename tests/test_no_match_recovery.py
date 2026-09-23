@@ -507,3 +507,38 @@ def test_call_timeout_reaches_the_provider_config():
         import pytest as _pytest
         _pytest.skip("google.genai types yüklenemedi")
     assert cfg.http_options.timeout == 7000
+
+
+def test_chapter_heading_labels_are_tunable(monkeypatch):
+    """
+    CHAPTER promptu 900 karakterlik kapsam özetiyle ~17.500 token oluyordu ve
+    hattın 504 alan en yavaş çağrısı buydu. Uzunluk env ile ayarlanabilir ki
+    hız/doğruluk dengesi yeniden deploy etmeden değiştirilebilsin.
+    """
+    import api.modules.rag_engine as rag_module
+
+    monkeypatch.setattr(rag_module.settings, "CHAPTER_HEADING_LABEL_CHARS", 55)
+    long_nodes = RAGEngine._chapter_nodes()
+    long_size = sum(len(n["description"]) for n in long_nodes)
+
+    monkeypatch.setattr(rag_module.settings, "CHAPTER_HEADING_LABEL_CHARS", 20)
+    short_nodes = RAGEngine._chapter_nodes()
+    short_size = sum(len(n["description"]) for n in short_nodes)
+
+    assert short_size < long_size
+    # Fasıl kümesi değişmemeli: yalnız açıklama kısalır.
+    assert [n["gtip_code"] for n in short_nodes] == [n["gtip_code"] for n in long_nodes]
+    # Fasıl başlığı her durumda korunur; onsuz seçim yapılamaz.
+    assert all(n["description"].strip() for n in short_nodes)
+
+
+def test_zero_label_length_keeps_heading_codes(monkeypatch):
+    """Kapsam tamamen kapatılsa bile fasıl başlığı kalmalı."""
+    import api.modules.rag_engine as rag_module
+
+    monkeypatch.setattr(rag_module.settings, "CHAPTER_HEADING_LABEL_CHARS", 0)
+    nodes = RAGEngine._chapter_nodes()
+    assert all(n["description"].strip() for n in nodes)
+    # Etiket kapatılsa bile pozisyon KODLARI kalır: liste asla kesilmez.
+    ch61 = next(n for n in nodes if n["gtip_code"] == "61")
+    assert "6109" in ch61["description"]
