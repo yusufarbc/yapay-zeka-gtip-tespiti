@@ -53,6 +53,22 @@ $metrics = @(
         Name        = "gtip_intl_search_failures"
         Description = "Uluslararasi emsal aramasi uyari/hatalari (grounded search saglik gostergesi)"
         Filter      = "$base AND jsonPayload.logger=`"InternationalSearchEngine`" AND severity>=WARNING"
+    },
+    @{
+        # Fasil geri almasi: ilk fasil secimi hicbir pozisyonla eslesmedi.
+        # Olcumde dogrulugu +3-4 puan artirdi ama p95 gecikmeyi 23s'den 41s'ye
+        # cikardi (fazladan bir CHAPTER ~20k token + HEADING cagrisi). Bu oran
+        # yukselirse gecikme bedeli de yukselir.
+        Name        = "gtip_chapter_backtrack"
+        Description = "Yanlis fasil secimi sonrasi geri alma (gecikme maliyeti gostergesi)"
+        Filter      = "$base AND jsonPayload.message:`"backtracking`""
+    },
+    @{
+        # Kullaniciya donen yavas yanitlar. Olcumde p95 41s gorulduk; kullanici
+        # yuzeyinde bu kabul edilemez, esigi asan istek orani izlenmeli.
+        Name        = "gtip_slow_analysis"
+        Description = "20 saniyeyi asan siniflandirma analizleri"
+        Filter      = "$base AND jsonPayload.stage=`"model_closed_set`" AND jsonPayload.duration_ms>20000"
     }
 )
 
