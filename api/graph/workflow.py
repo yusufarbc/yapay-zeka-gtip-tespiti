@@ -108,6 +108,40 @@ def _record_run(
         logger.exception("classification_run kaydı yazılamadı (session=%s)", session_id)
 
 
+def collect_signals(
+    traversal: Dict[str, Any],
+    precedents: List[Any],
+    ebti_precedents: List[Any],
+) -> Dict[str, Any]:
+    """Kararın dayandığı ham kanıt sinyalleri.
+
+    Güven skoru bunlardan türetilir. Skorun tek başına doğruyu yanlıştan ayırt
+    etmediği ölçüldü (yanlışların 27/30'u 0.60, tüm kararların 57/59'u 0.60),
+    bu yüzden ham sinyaller de dışarı verilir: kalibrasyon ancak etiketli veri
+    üzerinde yapılabilir.
+    """
+    def _best(items: List[Any]) -> float:
+        return round(max(
+            (float(getattr(i, "similarity_score", 0.0) or 0.0) for i in items),
+            default=0.0,
+        ), 4)
+
+    return {
+        "selection_source": traversal.get("selection_source"),
+        "btb_best_similarity": _best(precedents),
+        "btb_count": len(precedents),
+        "ebti_best_similarity": _best(ebti_precedents),
+        "ebti_count": len(ebti_precedents),
+        "gir_key_count": len(traversal.get("applied_gir_keys") or []),
+        "cited_chapter_note_count": len(traversal.get("cited_chapter_notes") or []),
+        "used_residual_fallback": bool(traversal.get("used_residual_fallback")),
+        "used_chapter_backtrack": bool(traversal.get("used_chapter_backtrack")),
+        "hitl_answer_count": int(traversal.get("hitl_answer_count") or 0),
+        "leaf_option_count": int(traversal.get("leaf_option_count") or 0),
+        "heading_option_count": int(traversal.get("heading_option_count") or 0),
+    }
+
+
 def compute_confidence(
     traversal: Dict[str, Any],
     precedents: List[Any],
@@ -401,6 +435,7 @@ class GTIPWorkflowEngine:
                 seen_source_keys.add(s_key)
                 dedup_legal_sources.append(src)
 
+        signals = collect_signals(traversal, precedents, ebti_precedents)
         confidence = compute_confidence(traversal, precedents, ebti_precedents)
         # İnceleme işareti iki kaynaktan gelir: düşük skor VEYA skordan bağımsız
         # bir gerekçe (kalıntı dalı, fasıl geri alması, yabancı uyuşmazlık).
@@ -428,6 +463,7 @@ class GTIPWorkflowEngine:
             applied_gir_rules=applied_gir_rule_texts,
             precedent_btbs=precedents,
             precedent_ebtis=ebti_precedents,
+            decision_signals=signals,
             research_portal_links=research_portal_links,
             legal_sources=dedup_legal_sources,
             consulted_sources=consulted,

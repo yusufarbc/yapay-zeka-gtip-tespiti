@@ -758,8 +758,10 @@ class RAGEngine:
             if locked_heading:
                 break
 
+            heading_nodes = self._heading_nodes(locked_chapter)
+            traversal["heading_option_count"] = len(heading_nodes)
             node, question, g_keys, c_notes = self._select_node(
-                session_id, product_text, "HEADING", self._heading_nodes(locked_chapter),
+                session_id, product_text, "HEADING", heading_nodes,
                 traversal=traversal, precedents=precedents, deadline=deadline,
             )
             _merge_rules(g_keys, c_notes)
@@ -825,6 +827,7 @@ class RAGEngine:
                 {**leaf, "branch_context": f"{parent_context} > {_description(leaf)}"}
                 for leaf in leaves
             ]
+        traversal["leaf_option_count"] = len(leaves)
         if not locked_gtip:
             node, question, g_keys, c_notes = self._select_node(
                 session_id, product_text, "GTIP", leaves,

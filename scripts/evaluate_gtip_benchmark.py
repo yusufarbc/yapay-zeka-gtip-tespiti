@@ -257,6 +257,7 @@ def run_benchmark(
     residual_fallbacks = 0
     latencies: List[float] = []
     failures: List[Dict[str, Any]] = []
+    samples: List[Dict[str, Any]] = []
 
     logger.info("=== Benchmark başlıyor: %d numune, model=%s ===",
                 total, settings.REASONING_LLM_MODEL)
@@ -311,6 +312,19 @@ def run_benchmark(
                 expert_hits["heading"] += 1
             if expert_predicted == sample["expected_gtip"]:
                 expert_hits["leaf"] += 1
+
+        # Kalibrasyon verisi: her numune için ham sinyaller + doğruluk etiketi.
+        # Skorun doğrulukla korelasyonu ancak bu eşleşmeden ölçülebilir.
+        samples.append({
+            "reference_no": sample["reference_no"],
+            "expected_gtip": sample["expected_gtip"],
+            "predicted_gtip": predicted or None,
+            "status": decision.status,
+            "confidence": decision.confidence_score,
+            "correct_heading": matched["heading"],
+            "correct_leaf": matched["leaf"],
+            **(decision.decision_signals or {}),
+        })
 
         if not matched["heading"]:
             failures.append({
@@ -374,6 +388,9 @@ def run_benchmark(
         },
         "status_breakdown": dict(statuses),
         "failures": failures[:50],
+        # Her numunenin sinyalleri ve doğruluk etiketi: güven skorunun
+        # kalibrasyonu bu veri üzerinde yapılır.
+        "samples": samples,
     }
 
     logger.info("=== SONUÇLAR ===")

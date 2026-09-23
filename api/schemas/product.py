@@ -139,6 +139,14 @@ class GTIPDecision(BaseModel):
     applied_gir_rules: List[str] = Field(default_factory=list)
     precedent_btbs: List[PrecedentBTB] = Field(default_factory=list)
     precedent_ebtis: List[PrecedentEBTI] = Field(default_factory=list)
+    decision_signals: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Güven skorunun dayandığı ham kanıt sinyalleri. Skorun doğrulukla "
+            "korelasyonu bu alanlar üzerinden kalibre edilir; skorun kendisi "
+            "tek başına ayırt etmiyordu."
+        ),
+    )
     research_portal_links: Optional[Dict[str, str]] = Field(
         default=None,
         description=(
