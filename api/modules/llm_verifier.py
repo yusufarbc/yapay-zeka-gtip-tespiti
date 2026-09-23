@@ -40,7 +40,25 @@ class LLMFactVerifier:
     """Keeps the historical class name while exposing one focused operation."""
 
     @staticmethod
-    def _config(narrowing: bool = False) -> Optional[Any]:
+    def _call_timeout_ms(deadline: Optional[float]) -> int:
+        """Bu çağrıya ayrılan süre: kalan bütçenin bir kısmı, tavanı LLM_TIMEOUT_MS.
+
+        Sabit 15 sn'lik timeout, bütçe kavramı olmadığında tek bir yavaş çağrının
+        hattın tamamını yemesine izin veriyordu: CHAPTER seviyesinde iki kez 504
+        alınca 32 saniyenin tamamı tükeniyor ve alt seviyeler hiç denenmiyordu.
+
+        Kalan sürenin tamamı verilmez; geriye kalan seviyeler için pay bırakılır.
+        Taban 4 sn: bundan kısası hiçbir çağrının tamamlanmasına yetmez, denemek
+        bütçeyi boşa harcamak olur.
+        """
+        ceiling = settings.LLM_TIMEOUT_MS
+        if deadline is None:
+            return ceiling
+        remaining_ms = max(0.0, (deadline - time.monotonic()) * 1000.0)
+        return int(max(4000, min(ceiling, remaining_ms * 0.6)))
+
+    @staticmethod
+    def _config(narrowing: bool = False, timeout_ms: Optional[int] = None) -> Optional[Any]:
         try:
             from google.genai import types
 
@@ -54,6 +72,9 @@ class LLMFactVerifier:
                 ),
                 temperature=0.3 if narrowing else 0.0,
                 response_mime_type="application/json",
+                http_options=types.HttpOptions(
+                    timeout=timeout_ms or settings.LLM_TIMEOUT_MS
+                ),
             )
         except Exception:
             return None
@@ -260,7 +281,7 @@ class LLMFactVerifier:
                     response = get_genai_client().models.generate_content(
                         model=settings.REASONING_LLM_MODEL,
                         contents=prompt,
-                        config=self._config(narrowing),
+                        config=self._config(narrowing, self._call_timeout_ms(deadline)),
                     )
                     break
                 except Exception as exc:

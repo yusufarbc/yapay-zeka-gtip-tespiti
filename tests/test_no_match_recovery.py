@@ -476,3 +476,34 @@ def test_budget_prevents_chapter_backtracking(monkeypatch):
         deadline=_time.monotonic() - 1,      # bütçe dolmuş
     )
     assert calls["chapter"] == 1, "bütçe yokken geri alma yapıldı"
+
+
+def test_call_timeout_scales_with_remaining_budget():
+    """
+    Sabit timeout, tek bir yavaş çağrının bütçenin tamamını yemesine izin
+    veriyordu: CHAPTER'da iki kez 504 alınca alt seviyeler hiç denenmiyordu.
+    """
+    import time as _time
+
+    cfg = verifier_module.LLMFactVerifier
+    ceiling = verifier_module.settings.LLM_TIMEOUT_MS
+
+    # Bütçe bol: tavan uygulanır
+    assert cfg._call_timeout_ms(_time.monotonic() + 60) == ceiling
+    # Bütçe daralınca timeout da daralır
+    tight = cfg._call_timeout_ms(_time.monotonic() + 10)
+    assert tight < ceiling
+    # Kalan sürenin TAMAMI verilmez: sonraki seviyelere pay kalmalı
+    assert tight < 10_000
+    # Taban altına inilmez: 4 sn'den kısası hiçbir çağrıya yetmez
+    assert cfg._call_timeout_ms(_time.monotonic() + 0.1) == 4000
+    # Bütçe yoksa davranış değişmez
+    assert cfg._call_timeout_ms(None) == ceiling
+
+
+def test_call_timeout_reaches_the_provider_config():
+    cfg = verifier_module.LLMFactVerifier._config(timeout_ms=7000)
+    if cfg is None:
+        import pytest as _pytest
+        _pytest.skip("google.genai types yüklenemedi")
+    assert cfg.http_options.timeout == 7000
