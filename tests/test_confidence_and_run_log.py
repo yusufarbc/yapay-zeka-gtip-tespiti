@@ -172,25 +172,57 @@ def test_budget_clock_starts_at_traversal_not_at_request(monkeypatch):
 
 
 
-def test_threshold_flags_weak_cases_not_every_decision():
+def test_threshold_separates_precedent_backed_from_unsupported():
     """
-    Eşik 0.90 iken üretimdeki kararların %100'ü işaretleniyordu; her şey
-    işaretlenince uyarı bilgi taşımaz. Eşik, skorun gerçekten ayırt ettiği
-    zayıf kanıt durumlarını işaretlemeli.
-    """
-    normal = compute_confidence({"applied_gir_keys": ["GIR_1"]}, [], [])
-    residual = compute_confidence(
-        {"applied_gir_keys": ["GIR_1"], "used_residual_fallback": True}, [], [])
-    backtracked = compute_confidence(
-        {"applied_gir_keys": ["GIR_1"], "used_chapter_backtrack": True}, [], [])
+    Eşik 86 numunelik etiketli ölçümle seçildi. Ölçüm, emsal desteğinin
+    doğruluğu %33.9'dan %87.5'e çıkardığını gösterdi; eşik bu ayrımı
+    yansıtmalıdır.
 
-    # Sıradan karar onaya takılmamalı: kullanıcı sonucu görmeli.
-    assert normal >= settings.CONFIDENCE_THRESHOLD, (
-        f"normal karar ({normal}) eşiğin altında — her karar işaretlenir")
-    # Zayıf kanıt durumları -- skordan bağımsız olarak -- işaretlenmeli.
+    Emsalsiz karar "sıradan" değildir: ölçülen doğruluğu düşüktür ve
+    incelemeye gitmesi doğrudur.
+    """
+    supported = compute_confidence({"applied_gir_keys": ["GIR_1"]}, [_btb(0.9)], [])
+    unsupported = compute_confidence({"applied_gir_keys": ["GIR_1"]}, [], [])
+
+    assert supported >= settings.CONFIDENCE_THRESHOLD, (
+        f"emsal destekli karar ({supported}) işaretleniyor")
+    assert unsupported < settings.CONFIDENCE_THRESHOLD, (
+        f"emsalsiz karar ({unsupported}) işaretlenmiyor")
+
+
+def test_difficult_chapters_lower_the_score():
+    """Pozisyon sayısı yüksek fasıllarda doğruluk ölçülebilir biçimde düşüyor."""
+    easy = compute_confidence({"heading_option_count": 6}, [_btb(0.9)], [])
+    hard = compute_confidence({"heading_option_count": 45}, [_btb(0.9)], [])
+    assert hard < easy
+
+
+def test_evidence_summary_states_what_the_decision_rests_on():
+    """
+    "Güven skoru 0.48" bir müşavire hiçbir şey söylemez; kararın neye
+    dayandığı söylenmelidir.
+    """
+    from api.graph.workflow import evidence_summary
+
+    exact = evidence_summary({"selection_source": "BTB_EXACT"}, [])
+    assert "birebir" in exact
+
+    supported = evidence_summary({}, [_btb(0.85)])
+    assert "BTB emsaliyle destekleniyor" in supported
+    assert "%85" in supported
+
+    weak = evidence_summary({}, [_btb(0.3)])
+    assert "zayıf" in weak
+
+    none = evidence_summary({}, [])
+    assert "emsali bulunamadı" in none
+
+
+def test_review_reasons_are_independent_of_the_score():
+    """Bazı durumlar skor ne olursa olsun incelenmeli."""
     from api.graph.workflow import review_reasons
+
     assert review_reasons({"used_residual_fallback": True})
     assert review_reasons({"used_chapter_backtrack": True})
-    # Sıradan kararda hiçbir gerekçe olmamalı.
     assert review_reasons({"applied_gir_keys": ["GIR_1"]}) == []
-    assert residual < normal and backtracked < normal
+

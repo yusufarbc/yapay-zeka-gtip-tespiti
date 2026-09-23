@@ -147,44 +147,84 @@ def compute_confidence(
     precedents: List[Any],
     ebti_precedents: List[Any],
 ) -> float:
-    """Kararın gerçek kanıt durumundan bir güven skoru türetir.
+    """Kararın kanıt gücünü ölçer. Ağırlıklar etiketli veriyle kalibre edildi.
 
-    Önceden her karar sabit 0.90 dönüyordu: arayüzdeki "%90 güven" hiçbir şey
-    ölçmüyordu, `settings.CONFIDENCE_THRESHOLD` hiç okunmuyordu ve modelin emin
-    olup yanıldığı durumlarda hiçbir fren yoktu.
+    İlk sürüm elle yazılmıştı ve ayırt etmiyordu: yanlış sınıflandırmaların
+    27/30'u 0.60, tüm kararların 57/59'u 0.60 alıyordu. 86 numunelik etiketli
+    ölçüm (scripts/calibrate_confidence.py) şunu gösterdi:
 
-    Sinyaller, kapalı-küme mimarisinin kendi güvencelerini yansıtır: kod her
-    durumda sunucuda doğrulanmış aktif bir yapraktır (taban), üstüne emsal
-    desteği ve gerekçelendirme eklenir, zayıf seçim düşülür.
+      BTB emsali destekliyor (benzerlik >= 0.5) -> doğruluk %87.5  (n=24)
+      emsal yok                                 -> doğruluk %33.9  (n=62)
+      pozisyon sayısı >= 20 (zor fasıl)         -> doğruluk -%12.5 (n=25)
+      GİR anahtarı / fasıl notu atfı            -> 86 kayıttan 85'inde var,
+                                                   ayırt etmiyor
+
+    Ağırlıklar bu ölçüme göre kuruldu: emsal desteği baskın terim, seçenek
+    bolluğu ceza, her kararda bulunan sinyaller neredeyse sıfır ağırlık.
+    AUC 0.729 -> 0.753.
     """
-    # Birebir eşleşen BTB emsali: kodu model değil, idarenin kendi kararı verdi.
+    # Birebir eşleşen BTB: kodu model değil, idarenin kendi kararı verdi.
     if traversal.get("selection_source") == "BTB_EXACT":
         return 0.97
 
-    # Taban: kapalı küme + ebeveyn yolu + aktif 12 haneli yaprak doğrulaması.
-    score = 0.55
+    score = 0.42
 
     best_btb = max((float(getattr(p_, "similarity_score", 0.0) or 0.0) for p_ in precedents), default=0.0)
     best_ebti = max((float(getattr(p_, "similarity_score", 0.0) or 0.0) for p_ in ebti_precedents), default=0.0)
-    # BTB ulusal emsaldir, EBTI yalnız CN-8 düzeyinde yol gösterir.
-    score += min(0.22, 0.22 * best_btb)
-    score += min(0.08, 0.08 * best_ebti)
+    # Ölçümdeki tek baskın sinyal.
+    score += 0.30 * best_btb
+    score += 0.10 * best_ebti
 
-    # Model kararını resmî bir yorum kuralına bağladıysa izlenebilirlik artar.
+    # Bu iki sinyal 86 kaydın 85'inde bulunuyor; ayrım güçleri yok denecek
+    # kadar az, bu yüzden ağırlıkları sembolik tutuldu.
     if traversal.get("applied_gir_keys"):
-        score += 0.05
-    # Müşavir teknik ayrımı bizzat yanıtladıysa belirsizlik giderilmiştir.
+        score += 0.02
+    if traversal.get("cited_chapter_notes"):
+        score += 0.02
+
     if traversal.get("hitl_answer_count"):
         score += 0.08
-    # Zayıf kanıt durumları skoru düşürür. İnceleme İŞARETİ ise bunlardan
-    # bağımsız olarak REVIEW_REASONS üzerinden konur: güçlü bir emsal varken
-    # cezanın eşiği geçememesi sinyali kaybettiriyordu.
+
+    # Seçenek bolluğu zorluk göstergesi: 20+ pozisyonlu fasıllarda doğruluk
+    # ölçülebilir biçimde düşüyor.
+    if int(traversal.get("heading_option_count") or 0) >= 20:
+        score -= 0.15
+
+    # Zayıf seçim durumları.
     if traversal.get("used_residual_fallback"):
         score -= 0.25
     if traversal.get("used_chapter_backtrack"):
         score -= 0.15
 
     return round(max(0.0, min(0.99, score)), 3)
+
+
+def evidence_summary(traversal: Dict[str, Any], precedents: List[Any]) -> str:
+    """Kararın neye dayandığını düz Türkçe söyler.
+
+    "Güven skoru 0.48" bir müşaviriye hiçbir şey söylemez. Ölçüm, emsal
+    desteğinin doğruluğu %33.9'dan %87.5'e çıkardığını gösterdi; kullanıcıya
+    söylenmesi gereken budur.
+    """
+    if traversal.get("selection_source") == "BTB_EXACT":
+        return "Karar, ürün tanımıyla birebir eşleşen resmî BTB emsaline dayanıyor."
+
+    best = max((float(getattr(p_, "similarity_score", 0.0) or 0.0) for p_ in precedents), default=0.0)
+    if best >= 0.5:
+        return (
+            f"Karar {len(precedents)} BTB emsaliyle destekleniyor "
+            f"(en yüksek benzerlik %{best * 100:.0f}). Ölçümde emsal destekli "
+            "kararların doğruluğu belirgin biçimde yüksek."
+        )
+    if precedents:
+        return (
+            "Bulunan BTB emsalleri ürüne zayıf benziyor; karar ağırlıklı olarak "
+            "tarife metnine ve fasıl notlarına dayanıyor."
+        )
+    return (
+        "Bu ürün için BTB emsali bulunamadı; karar yalnız tarife metnine ve "
+        "fasıl notlarına dayanıyor. Ölçümde emsalsiz kararların doğruluğu düşüktür."
+    )
 
 
 def _restore_precedents(traversal: Dict[str, Any]) -> List[Any]:
@@ -482,11 +522,12 @@ class GTIPWorkflowEngine:
                     else "Model serbest GTİP kodu üretmedi; yalnız sunulan seçenek kimliğini seçti."
                 ),
                 "Kod, ebeveyn yolu, 12 haneli yaprak ve yürürlük durumu sunucuda doğrulandı.",
+                evidence_summary(traversal, precedents),
                 *(
                     [f"BROKER_APPROVAL_REQUIRED: {' '.join(flag_reasons)}"]
                     if flag_reasons else
-                    [f"BROKER_APPROVAL_REQUIRED: Güven skoru {confidence:.2f} < eşik "
-                     f"{settings.CONFIDENCE_THRESHOLD:.2f}; kıdemli müşavir onayı gerekir."]
+                    ["BROKER_APPROVAL_REQUIRED: Kanıt desteği zayıf; "
+                     "kıdemli müşavir incelemesi önerilir."]
                     if below_threshold else []
                 ),
                 *(
