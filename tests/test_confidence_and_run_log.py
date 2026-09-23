@@ -53,7 +53,8 @@ def test_residual_fallback_penalises_confidence():
         {"applied_gir_keys": ["GIR_1"], "used_residual_fallback": True}, [_btb(0.6)], []
     )
     assert residual < normal
-    assert residual < settings.CONFIDENCE_THRESHOLD
+    from api.graph.workflow import review_reasons
+    assert review_reasons({"used_residual_fallback": True})
 
 
 def test_broker_answer_raises_confidence():
@@ -72,9 +73,11 @@ def test_score_stays_in_range():
     assert compute_confidence(nothing, [], []) >= 0.0
 
 
-def test_unsupported_decision_falls_below_threshold():
-    """Emsalsiz ve gerekçesiz bir seçim otomatik onaylanmamalı."""
-    assert compute_confidence({}, [], []) < settings.CONFIDENCE_THRESHOLD
+def test_precedent_support_is_what_raises_the_score():
+    """Skor kanıt gücünü ölçer: emsalsiz karar, emsalli karardan düşük olmalı."""
+    bare = compute_confidence({}, [], [])
+    supported = compute_confidence({}, [_btb(0.9)], [])
+    assert supported > bare
 
 
 def test_manual_review_decisions_are_also_recorded(monkeypatch):
@@ -136,7 +139,9 @@ def test_chapter_backtracking_penalises_confidence():
         {"applied_gir_keys": ["GIR_1"], "used_chapter_backtrack": True}, [_btb(0.7)], []
     )
     assert backtracked < direct
-    assert backtracked < settings.CONFIDENCE_THRESHOLD
+    # İşaret skordan BAĞIMSIZ konur: güçlü emsal varken ceza eşiği geçemiyordu.
+    from api.graph.workflow import review_reasons
+    assert review_reasons({"used_chapter_backtrack": True})
 
 
 def test_international_research_does_not_starve_the_classification(monkeypatch):
@@ -210,7 +215,9 @@ def test_foreign_disagreement_lowers_confidence_below_threshold():
         [_btb(0.9)], [],
     )
     assert disputed < agreed
-    assert disputed < settings.CONFIDENCE_THRESHOLD
+    # Yabancı uyuşmazlık, emsal ne kadar güçlü olursa olsun incelemeye gider.
+    from api.graph.workflow import review_reasons
+    assert review_reasons({"international_disagreement": ["392590"]})
 
 
 def test_search_runs_without_the_hs_hint(monkeypatch):
@@ -264,3 +271,30 @@ def test_search_is_skipped_when_too_little_time_remains(monkeypatch):
     )
     assert called["n"] == 0
     assert decision.session_id
+
+
+def test_threshold_flags_weak_cases_not_every_decision():
+    """
+    Eşik 0.90 iken üretimdeki kararların %100'ü işaretleniyordu; her şey
+    işaretlenince uyarı bilgi taşımaz. Eşik, skorun gerçekten ayırt ettiği
+    zayıf kanıt durumlarını işaretlemeli.
+    """
+    normal = compute_confidence({"applied_gir_keys": ["GIR_1"]}, [], [])
+    residual = compute_confidence(
+        {"applied_gir_keys": ["GIR_1"], "used_residual_fallback": True}, [], [])
+    backtracked = compute_confidence(
+        {"applied_gir_keys": ["GIR_1"], "used_chapter_backtrack": True}, [], [])
+    disputed = compute_confidence(
+        {"applied_gir_keys": ["GIR_1"], "international_disagreement": ["3925"]}, [], [])
+
+    # Sıradan karar onaya takılmamalı: kullanıcı sonucu görmeli.
+    assert normal >= settings.CONFIDENCE_THRESHOLD, (
+        f"normal karar ({normal}) eşiğin altında — her karar işaretlenir")
+    # Zayıf kanıt durumları -- skordan bağımsız olarak -- işaretlenmeli.
+    from api.graph.workflow import review_reasons
+    assert review_reasons({"used_residual_fallback": True})
+    assert review_reasons({"used_chapter_backtrack": True})
+    assert review_reasons({"international_disagreement": ["3925"]})
+    # Sıradan kararda hiçbir gerekçe olmamalı.
+    assert review_reasons({"applied_gir_keys": ["GIR_1"]}) == []
+    assert residual < normal and backtracked < normal and disputed < normal

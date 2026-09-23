@@ -55,6 +55,29 @@ def get_customs_trade_measures(gtip_code: Optional[str]) -> Dict[str, Any]:
     }
 
 
+# Skordan BAĞIMSIZ olarak müşavir incelemesi gerektiren durumlar. Bunları
+# skora ceza yazarak ifade etmek yanlış mekanizmaydı: güçlü bir emsal varken
+# ceza eşiği geçemiyor ve sinyal kayboluyordu. Ayrıca skoru sürekli oynatmak,
+# skorun kendi anlamını da bozuyordu.
+REVIEW_REASONS = {
+    "used_residual_fallback": (
+        "Model hiçbir özel dalı eşleştiremedi; resmî kalıntı ('diğerleri') dalı seçildi."
+    ),
+    "used_chapter_backtrack": (
+        "İlk fasıl seçimi hiçbir pozisyonla eşleşmedi ve geri alındı; "
+        "varılan sonuç modelin ikinci tercihidir."
+    ),
+    "international_disagreement": (
+        "Yabancı gümrük idaresi aynı eşyayı farklı alt pozisyonda sınıflandırmış."
+    ),
+}
+
+
+def review_reasons(traversal: Dict[str, Any]) -> List[str]:
+    """Kararın müşavir incelemesine işaretlenme gerekçeleri."""
+    return [text for key, text in REVIEW_REASONS.items() if traversal.get(key)]
+
+
 def _record_run(
     session_id: str,
     raw_text: str,
@@ -126,17 +149,13 @@ def compute_confidence(
     # Müşavir teknik ayrımı bizzat yanıtladıysa belirsizlik giderilmiştir.
     if traversal.get("hitl_answer_count"):
         score += 0.08
-    # Model hiçbir özel dalı eşleştiremedi, kalan tek "diğerleri" dalına düşüldü.
+    # Zayıf kanıt durumları skoru düşürür. İnceleme İŞARETİ ise bunlardan
+    # bağımsız olarak REVIEW_REASONS üzerinden konur: güçlü bir emsal varken
+    # cezanın eşiği geçememesi sinyali kaybettiriyordu.
     if traversal.get("used_residual_fallback"):
         score -= 0.25
-    # İlk fasıl seçimi hiçbir pozisyonla eşleşmedi ve geri alındı. Varılan sonuç
-    # doğru olabilir ama modelin ilk kararı yanlıştı; bu zayıf bir kanıt durumudur
-    # ve otomatik onaydan uzak tutulmalıdır.
     if traversal.get("used_chapter_backtrack"):
         score -= 0.15
-    # Yabancı bir gümrük idaresi aynı eşyayı farklı alt pozisyona koymuş.
-    # Armonize Sistem ilk altı hanede ortak olduğu için bu gerçek bir
-    # uyuşmazlıktır ve kararın otomatik onaylanmasını engellemelidir.
     if traversal.get("international_disagreement"):
         score -= 0.20
 
@@ -471,7 +490,10 @@ class GTIPWorkflowEngine:
                 dedup_legal_sources.append(src)
 
         confidence = compute_confidence(traversal, precedents, ebti_precedents)
-        below_threshold = confidence < settings.CONFIDENCE_THRESHOLD
+        # İnceleme işareti iki kaynaktan gelir: düşük skor VEYA skordan bağımsız
+        # bir gerekçe (kalıntı dalı, fasıl geri alması, yabancı uyuşmazlık).
+        flag_reasons = review_reasons(traversal)
+        below_threshold = confidence < settings.CONFIDENCE_THRESHOLD or bool(flag_reasons)
 
         decision = GTIPDecision(
             session_id=session_id,
@@ -514,6 +536,8 @@ class GTIPWorkflowEngine:
                 ),
                 "Kod, ebeveyn yolu, 12 haneli yaprak ve yürürlük durumu sunucuda doğrulandı.",
                 *(
+                    [f"BROKER_APPROVAL_REQUIRED: {' '.join(flag_reasons)}"]
+                    if flag_reasons else
                     [f"BROKER_APPROVAL_REQUIRED: Güven skoru {confidence:.2f} < eşik "
                      f"{settings.CONFIDENCE_THRESHOLD:.2f}; kıdemli müşavir onayı gerekir."]
                     if below_threshold else []

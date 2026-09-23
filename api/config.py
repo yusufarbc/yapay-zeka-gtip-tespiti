@@ -122,7 +122,18 @@ class Settings(BaseSettings):
     # olarak katılmazlar. Yasal notlar/GYK ayrı deterministic kapıda uygulanır.
     BTB_WEIGHT: float = 0.0
     TGTC_WEIGHT: float = 1.0
-    CONFIDENCE_THRESHOLD: float = 0.90
+    # Eşik 0.90 iken üretimdeki 59 kararın 59'u (%100) altında kalıyor ve her
+    # karar "müşavir onayı" ile işaretleniyordu. Her şey işaretlenince uyarı
+    # bilgi taşımaz. Ölçüm skorun ayırt etmediğini de gösterdi: yanlış
+    # sınıflandırmaların 27/30'u 0.60, tüm kararların 57/59'u 0.60.
+    #
+    # Eşik, skorun GERÇEKTEN ayırt ettiği vakaları işaretleyecek yere çekildi:
+    # kalıntı dalına düşme (0.35) ve fasıl geri alması (0.45) — ikisi de zayıf
+    # kanıt durumu. Normal kararlar (0.60) işaretlenmez.
+    #
+    # Bu bir ara çözümdür. Skorun doğrulukla korelasyonu, classification_run
+    # kayıtları ve benchmark ground-truth'u ile kalibre edilmelidir.
+    CONFIDENCE_THRESHOLD: float = float(os.getenv("CONFIDENCE_THRESHOLD", "0.55"))
     RRF_K: int = 60
 
 settings = Settings()
