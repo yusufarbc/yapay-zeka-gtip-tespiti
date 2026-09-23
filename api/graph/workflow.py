@@ -554,16 +554,12 @@ class GTIPWorkflowEngine:
             logger.warning("EBTI emsal araması atlandı: %s", exc_ebti)
             ebti_precedents = []
 
-        # Uluslararası emsal araması (enable_international_research aktifse önceden çalıştır)
-        international_rulings = []
-        if enable_international_research:
-            try:
-                from api.modules.international_search import search_international_rulings
-                found_intl = search_international_rulings(product_text=raw_text)
-                international_rulings = [item.model_dump() for item in found_intl]
-            except Exception as exc_intl:
-                logger.warning("Uluslararası emsal ön taraması atlandı: %s", exc_intl)
-                international_rulings = []
+        # Uluslararası emsal araması burada ÇALIŞTIRILMAZ. Grounding'li arama
+        # onlarca saniye sürebiliyor ve sınıflandırmanın süre bütçesini tüketip
+        # her tarife seviyesinin atlanmasına yol açıyordu (MODEL_BINDING_FAILED).
+        # Ayrıca burada HS ipucu henüz yok; `_complete` aramayı kod kilitlendikten
+        # sonra, ilk altı haneyi ipucu vererek çok daha isabetli yapar.
+        international_rulings: List[Dict[str, Any]] = []
 
         exact_btb = rag_engine.exact_btb_candidate(btb_precedents)
         if exact_btb:
@@ -584,12 +580,15 @@ class GTIPWorkflowEngine:
         else:
             # BTB ve EBTI emsalleri artık yalnız ekranda gösterilmiyor; seçim
             # yapan modele delil olarak veriliyor.
+            # Bütçe saati TRAVERSAL başlarken kurulur. İstek başlangıcından
+            # saymak, öncesindeki emsal aramalarının bütçeyi yemesine ve
+            # traversal'ın hiç çalışmamasına yol açıyordu.
             tree_result = self._search(
                 session_id,
                 features,
                 raw_text=raw_text,
                 precedents=[*btb_precedents, *ebti_precedents],
-                deadline=started + settings.ANALYSIS_BUDGET_MS / 1000.0,
+                deadline=time.monotonic() + settings.ANALYSIS_BUDGET_MS / 1000.0,
             )
             tree_result.traversal_state["btb_precedents"] = [
                 item.model_dump() for item in btb_precedents

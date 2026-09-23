@@ -5,6 +5,8 @@ hiç okunmuyordu ve yalnız başarılı kararlar loglanıyordu. Bu testler skoru
 yeniden sabitlenmesini ve başarısızlıkların yeniden görünmez olmasını engeller.
 """
 
+import time
+
 from fastapi.testclient import TestClient
 
 from api.config import settings
@@ -135,3 +137,57 @@ def test_chapter_backtracking_penalises_confidence():
     )
     assert backtracked < direct
     assert backtracked < settings.CONFIDENCE_THRESHOLD
+
+
+def test_international_research_does_not_starve_the_classification(monkeypatch):
+    """
+    Grounding'li arama istek başında çalıştırılıyor ve onlarca saniye sürüyordu.
+    Süre bütçesi istek başlangıcından sayıldığı için traversal başladığında
+    süre bitmiş oluyor, her tarife seviyesi atlanıyor ve karar
+    MODEL_BINDING_FAILED ile manuel incelemeye düşüyordu.
+
+    Arayüzde "Uluslararası Emsalleri Canlı Araştır" kutusu işaretliyken her
+    analiz bu yüzden sonuçsuz kalıyordu.
+    """
+    called = {"n": 0}
+
+    def _slow_search(*args, **kwargs):
+        called["n"] += 1
+        return []
+
+    monkeypatch.setattr(
+        "api.modules.international_search.search_international_rulings", _slow_search
+    )
+
+    decision = workflow_engine.start_analysis(
+        "alüminyum doğrama cam balkon sistemi", enable_international_research=True
+    )
+
+    # Sınıflandırma öncesi çağrılmamalı; arama kod kilitlendikten sonra
+    # ve HS ipucuyla yapılır.
+    assert called["n"] == 0 or decision.status == "COMPLETED"
+
+
+def test_budget_clock_starts_at_traversal_not_at_request(monkeypatch):
+    """Bütçe tarife taraması içindir; öncesindeki emsal aramaları onu yememeli."""
+    import api.graph.workflow as wf
+
+    seen = {}
+
+    def _capture(session_id, features, **kwargs):
+        seen["deadline"] = kwargs.get("deadline")
+        return wf.HierarchicalSearchResult(traversal_state={})
+
+    monkeypatch.setattr(wf.GTIPWorkflowEngine, "_search", staticmethod(_capture))
+    # Emsal aramasını yavaşlat: bütçe buradan sayılsaydı traversal'a süre kalmazdı.
+    monkeypatch.setattr(wf.rag_engine, "search_btb_precedents",
+                        lambda *a, **k: (time.sleep(0.4) or []))
+
+    workflow_engine.start_analysis("ahşap sandalye")
+
+    assert seen["deadline"] is not None
+    remaining = seen["deadline"] - time.monotonic()
+    # Gecikmeye rağmen bütçenin neredeyse tamamı traversal'a kalmalı.
+    assert remaining > (settings.ANALYSIS_BUDGET_MS / 1000.0) * 0.9, (
+        f"traversal'a yalnız {remaining:.1f} sn kaldı"
+    )
