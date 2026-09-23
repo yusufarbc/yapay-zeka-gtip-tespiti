@@ -92,6 +92,7 @@ class LLMFactVerifier:
         precedents: Optional[List[Any]] = None,
         chapter_notes: Optional[str] = None,
         narrowing: bool = False,
+        rejected_codes: Optional[List[str]] = None,
     ) -> CandidateSelection:
         """Select one server-owned node without accepting a model-written code."""
         bounded_nodes = nodes[:250]
@@ -151,6 +152,18 @@ class LLMFactVerifier:
             "değil, bilgi eksikliğidir.{nl}{nl}"
         ).format(nl=chr(10)) if narrowing else ""
 
+        # Geri alma: reddedilen dal seçenek listesinden ÇIKARILMAZ. Kimlikler
+        # konumsaldır; çıkarmak tüm id'leri kaydırır ve model aynı id'yi
+        # döndürdüğünde komşu dala geçilir (üretimde 86 -> 87 böyle oluştu).
+        # Liste sabit tutulur, dışlama modele açıkça bildirilir.
+        rejection_block = (
+            "ÖNCEKİ DENEME BAŞARISIZ: {codes} kodlu dal(lar)ı seçtin, fakat o dalın "
+            "altında ürüne uyan hiçbir alt dal bulunamadı.{nl}"
+            "- Bu dal(lar)ı TEKRAR SEÇME.{nl}"
+            "- Ürünün esas niteliğini yeniden değerlendir ve FARKLI bir dal seç.{nl}"
+            "- Komşu numaraya kaymak yerine ürünün işlevine göre karar ver.{nl}{nl}"
+        ).format(codes=", ".join(rejected_codes), nl=chr(10)) if rejected_codes else ""
+
         level_rule = (
             "11. CHAPTER bir yönlendirme seviyesidir: ürünün esas niteliği, adı ve işlevine göre en uygun faslı mutlaka "
             "SELECT et. Bu seviyede malzeme gibi ayrıntıları sorma ve INSUFFICIENT_INFORMATION kullanma."
@@ -195,6 +208,7 @@ class LLMFactVerifier:
             f"RESMÎ KAPALI SEÇENEKLER: {json.dumps(payload, ensure_ascii=False)}\n\n"
             f"{notes_block}"
             f"{evidence_block}"
+            f"{rejection_block}"
             f"{narrowing_block}"
             f"<product_data>{raw_text}</product_data>\n"
             "Yalnız şu JSON biçimini döndür: "
@@ -271,6 +285,19 @@ class LLMFactVerifier:
 
             selection = CandidateSelection(**data)
             valid_ids = set(option_map)
+            if rejected_codes and selection.status == CandidateSelectionStatus.SELECT:
+                picked = option_map.get(selection.selected_candidate_id) or {}
+                picked_code = re.sub(r"\D", "", str(picked.get("gtip_code") or ""))
+                if picked_code and picked_code in set(rejected_codes):
+                    logger.warning(
+                        "Model reddedilen dalı yeniden seçti (%s); seçim geçersiz.", picked_code
+                    )
+                    return CandidateSelection(
+                        status=CandidateSelectionStatus.NO_MATCH,
+                        reasoning_points=[
+                            "Model, daha önce eşleşme vermeyen dalı yeniden önerdi."
+                        ],
+                    )
             if selection.status == CandidateSelectionStatus.SELECT:
                 if selection.selected_candidate_id not in valid_ids:
                     raise ValueError("Model kapalı seçenek kümesi dışında kimlik döndürdü.")
@@ -305,6 +332,7 @@ class LLMFactVerifier:
                     # Aynı promptu tekrar göndermek yerine modelden en yakın
                     # dalları istemek, çıkmazı sorulabilir bir soruya çevirir.
                     narrowing=True,
+                    rejected_codes=rejected_codes,
                 )
             return selection
         except Exception as exc:

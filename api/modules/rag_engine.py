@@ -568,6 +568,7 @@ class RAGEngine:
         *,
         traversal: Optional[Dict[str, Any]] = None,
         precedents: Optional[Sequence[Any]] = None,
+        rejected_codes: Optional[List[str]] = None,
     ) -> Tuple[Optional[Dict[str, Any]], Optional[DiscriminatorQuestion], List[str], List[str]]:
         if not nodes:
             return None, None, [], []
@@ -586,6 +587,7 @@ class RAGEngine:
                 cls._chapter_notes_for(level, nodes)
                 if settings.SELECTION_USE_CHAPTER_NOTES else None
             ),
+            rejected_codes=list(rejected_codes or []) or None,
         )
         applied_gir_keys = list(getattr(selection, "applied_gir_keys", []) or [])
         cited_chapter_notes = list(getattr(selection, "cited_chapter_notes", []) or [])
@@ -722,13 +724,12 @@ class RAGEngine:
 
         for attempt in range(max_chapter_attempts):
             if not locked_chapter:
-                chapter_nodes = [
-                    node for node in self._chapter_nodes()
-                    if _digits(node.get("gtip_code")).zfill(2) not in rejected_chapters
-                ]
+                # Reddedilen fasıl listeden ÇIKARILMAZ: option_id konumsaldır,
+                # çıkarmak tüm kimlikleri kaydırır. Dışlama modele bildirilir.
                 node, question, g_keys, c_notes = self._select_node(
-                    session_id, product_text, "CHAPTER", chapter_nodes,
+                    session_id, product_text, "CHAPTER", self._chapter_nodes(),
                     traversal=traversal, precedents=precedents,
+                    rejected_codes=rejected_chapters or None,
                 )
                 _merge_rules(g_keys, c_notes)
                 if question:
