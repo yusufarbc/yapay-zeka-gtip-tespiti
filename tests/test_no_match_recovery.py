@@ -7,6 +7,7 @@ seviyesinde yoğunlaşıyordu. Sebep traversal'ın tek yönlü ve NO_MATCH'in ö
 olmasıydı. Bu testler o davranışların geri gelmesini engeller.
 """
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -200,3 +201,65 @@ def test_chapter_backtracking_is_bounded(monkeypatch):
     )
     assert calls["chapter"] == 2, f"fasıl seçimi {calls['chapter']} kez çağrıldı"
     assert result.candidates == []
+
+
+def test_model_returning_too_many_alternatives_does_not_kill_the_selection(monkeypatch):
+    """
+    Şema alternative_candidate_ids'i 4 ile sınırlar. Kırpma CandidateSelection
+    kurulduktan SONRA yapıldığı için hiç çalışmıyordu: model 11 alternatif
+    döndürdüğünde ValidationError fırlıyor, seçimin tamamı düşüyor ve karar
+    sessizce MANUAL_REVIEW'a gidiyordu. Canlı testte iki vaka bu yüzden kayboldu.
+    """
+    class Models:
+        def generate_content(self, **kwargs):
+            ids = [f"N{i}" for i in range(1, 12)]   # 11 alternatif
+            return SimpleNamespace(text=json.dumps({
+                "status": "INSUFFICIENT_INFORMATION",
+                "selected_candidate_id": None,
+                "alternative_candidate_ids": ids,
+                "question_text": "Hangisi?",
+                "reasoning_points": [f"gerekçe {i}" for i in range(12)],
+                "applied_gir_keys": [f"GIR_{i}" for i in range(15)],
+                "cited_chapter_notes": [str(i) for i in range(15)],
+            }))
+
+    monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr("api.modules.vertex_client.get_genai_client",
+                        lambda: SimpleNamespace(models=Models()))
+    monkeypatch.setattr(verifier_module.time, "sleep", lambda _: None)
+
+    nodes = [{"gtip_code": f"84{i:02d}", "description": f"Pozisyon {i}"} for i in range(1, 12)]
+    result = verifier_module.llm_verifier.select_tariff_node("pompa", "HEADING", nodes)
+
+    # Fazla üretim bir sözleşme ihlali değil, sapmadır: kırpılır, düşürülmez.
+    assert result.status == CandidateSelectionStatus.INSUFFICIENT_INFORMATION
+    assert len(result.alternative_candidate_ids) <= 4
+    assert result.alternative_candidate_ids == ["N1", "N2", "N3", "N4"]
+
+
+def test_oversized_lists_are_clamped_not_rejected(monkeypatch):
+    """Diğer liste alanları da şema sınırını aşınca kararı düşürmemeli."""
+    class Models:
+        def generate_content(self, **kwargs):
+            return SimpleNamespace(text=json.dumps({
+                "status": "SELECT",
+                "selected_candidate_id": "N1",
+                "reasoning_points": [f"r{i}" for i in range(20)],
+                "applied_gir_keys": [f"GIR_{i}" for i in range(20)],
+                "cited_chapter_notes": [str(i) for i in range(20)],
+            }))
+
+    monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr("api.modules.vertex_client.get_genai_client",
+                        lambda: SimpleNamespace(models=Models()))
+
+    result = verifier_module.llm_verifier.select_tariff_node(
+        "pompa", "HEADING", [{"gtip_code": "8413", "description": "Pompalar"}])
+
+    assert result.status == CandidateSelectionStatus.SELECT
+    assert result.selected_candidate_id == "N1"
+    assert len(result.reasoning_points) <= 6
+    assert len(result.applied_gir_keys) <= 10
+    assert len(result.cited_chapter_notes) <= 10
