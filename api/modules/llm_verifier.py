@@ -229,10 +229,18 @@ class LLMFactVerifier:
                     time.sleep(0.35 * attempt)
             match = re.search(r"\{.*\}", response.text or "", re.DOTALL)
             data = json.loads(match.group(0) if match else (response.text or ""))
-            data["alternative_candidate_ids"] = data.get("alternative_candidate_ids") or []
-            data["reasoning_points"] = data.get("reasoning_points") or []
-            data["applied_gir_keys"] = data.get("applied_gir_keys") or []
-            data["cited_chapter_notes"] = [str(c).zfill(2) for c in (data.get("cited_chapter_notes") or [])]
+            # Şema sınırları BURADA uygulanmalı: CandidateSelection(**data) bunları
+            # aşan listede ValidationError fırlatır ve seçimin tamamı düşerdi.
+            # Aşağıdaki kırpma nesne kurulduktan sonra yapıldığı için hiç
+            # çalışmıyordu; model 4'ten fazla alternatif döndürdüğünde karar
+            # sessizce MANUAL_REVIEW'a gidiyordu. Modelin fazla üretmesi bir
+            # sözleşme ihlali değil, normal bir sapmadır; kırpılır.
+            data["alternative_candidate_ids"] = (data.get("alternative_candidate_ids") or [])[:4]
+            data["reasoning_points"] = (data.get("reasoning_points") or [])[:6]
+            data["applied_gir_keys"] = (data.get("applied_gir_keys") or [])[:10]
+            data["cited_chapter_notes"] = [
+                str(c).zfill(2) for c in (data.get("cited_chapter_notes") or [])
+            ][:10]
 
             # Gelişmiş deterministik fallback: Model reasoning_points içine GİR veya fasıl yazmışsa
             # ama applied_gir_keys listesine eklemeyi unutmuşsa bile kural kodlarını otomatik tamamla
@@ -249,12 +257,16 @@ class LLMFactVerifier:
                 ("GIR_5B", ["GİR 5(b)", "GYK 5(b)", "GIR 5B"]),
                 ("GIR_6", ["GİR 6", "GYK 6", "GIR 6"]),
             ]:
-                if any(al in full_reasoning_text for al in aliases) and g_code not in data["applied_gir_keys"]:
+                if (
+                    any(al in full_reasoning_text for al in aliases)
+                    and g_code not in data["applied_gir_keys"]
+                    and len(data["applied_gir_keys"]) < 10
+                ):
                     data["applied_gir_keys"].append(g_code)
 
             for ch_match in re.findall(r"fas[iı]l\s*(\d{1,2})", full_reasoning_text, re.IGNORECASE):
                 ch_z = ch_match.zfill(2)
-                if ch_z not in data["cited_chapter_notes"]:
+                if ch_z not in data["cited_chapter_notes"] and len(data["cited_chapter_notes"]) < 10:
                     data["cited_chapter_notes"].append(ch_z)
 
             selection = CandidateSelection(**data)
