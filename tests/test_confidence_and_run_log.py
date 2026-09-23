@@ -191,3 +191,76 @@ def test_budget_clock_starts_at_traversal_not_at_request(monkeypatch):
     assert remaining > (settings.ANALYSIS_BUDGET_MS / 1000.0) * 0.9, (
         f"traversal'a yalnız {remaining:.1f} sn kaldı"
     )
+
+
+# ---------------------------------------------------------------------------
+# Uluslararası emsal: gösterim değil, bağımsız çapraz kontrol
+# ---------------------------------------------------------------------------
+
+def test_foreign_disagreement_lowers_confidence_below_threshold():
+    """
+    Armonize Sistem ilk altı hanede uluslararası ortaktır. Yabancı bir idare
+    aynı eşyayı farklı alt pozisyona koyduysa bu gerçek bir uyuşmazlıktır ve
+    kararın otomatik onaylanmasını engellemelidir. Önceden bu kararlar yalnız
+    ekranda gösteriliyor, sınıflandırmaya hiç etki etmiyordu.
+    """
+    agreed = compute_confidence({"applied_gir_keys": ["GIR_1"]}, [_btb(0.9)], [])
+    disputed = compute_confidence(
+        {"applied_gir_keys": ["GIR_1"], "international_disagreement": ["392590"]},
+        [_btb(0.9)], [],
+    )
+    assert disputed < agreed
+    assert disputed < settings.CONFIDENCE_THRESHOLD
+
+
+def test_search_runs_without_the_hs_hint(monkeypatch):
+    """
+    Seçilen kodu ipucu olarak vermek, modelin o kodu DOĞRULAYAN kararlar
+    bulmasına yol açıyordu: bağımsız kontrol gibi görünen ama olmayan bir teyit.
+    """
+    import api.modules.international_search as intl
+
+    seen = {}
+
+    def _capture(product_text, hs_code_hint=None, target_countries=None,
+                 max_results=4, timeout_ms=None):
+        seen["hint"] = hs_code_hint
+        seen["timeout"] = timeout_ms
+        return []
+
+    monkeypatch.setattr(intl, "search_international_rulings", _capture)
+    workflow_engine.start_analysis(
+        "alüminyum doğrama cam balkon sistemi", enable_international_research=True
+    )
+    if "hint" in seen:
+        assert seen["hint"] is None, "arama seçilen kodla beslenmiş"
+
+
+def test_search_is_skipped_when_too_little_time_remains(monkeypatch):
+    """
+    Grounding'li arama ~20 sn sürüyor. Birkaç saniye kalmışken denemek yalnız
+    kullanıcıyı bekletir ve istemci zaman aşımı riskini artırır.
+    """
+    import api.graph.workflow as wf
+
+    called = {"n": 0}
+
+    def _never(*args, **kwargs):
+        called["n"] += 1
+        return []
+
+    monkeypatch.setattr(
+        "api.modules.international_search.search_international_rulings", _never
+    )
+    decision = wf.GTIPWorkflowEngine._complete(
+        wf.workflow_engine,
+        "s1", "ürün", None,
+        __import__("api.schemas.product", fromlist=["ProductFeatures"]).ProductFeatures(
+            product_name="x", primary_material="y", intended_use="z"),
+        wf.HierarchicalSearchResult(traversal_state={
+            "enable_international_research": True,
+            "intl_deadline": time.monotonic() - 5,   # süre bitmiş
+        }),
+    )
+    assert called["n"] == 0
+    assert decision.session_id

@@ -27,6 +27,10 @@ from api.schemas.product import GTIPCandidate, GTIPDecision, HITLOption, HITLQue
 
 logger = logging.getLogger("GTIPWorkflowEngine")
 
+# Bundan kısa bir süreyle grounding'li arama tamamlanamaz; denemek yalnız
+# kullanıcıyı bekletir ve istemci zaman aşımı riskini artırır.
+MIN_INTERNATIONAL_SEARCH_MS = 8000
+
 
 def _format_gtip_code(value: str) -> str:
     digits = re.sub(r"\D", "", str(value or ""))
@@ -130,6 +134,11 @@ def compute_confidence(
     # ve otomatik onaydan uzak tutulmalıdır.
     if traversal.get("used_chapter_backtrack"):
         score -= 0.15
+    # Yabancı bir gümrük idaresi aynı eşyayı farklı alt pozisyona koymuş.
+    # Armonize Sistem ilk altı hanede ortak olduğu için bu gerçek bir
+    # uyuşmazlıktır ve kararın otomatik onaylanmasını engellemelidir.
+    if traversal.get("international_disagreement"):
+        score -= 0.20
 
     return round(max(0.0, min(0.99, score)), 3)
 
@@ -340,16 +349,34 @@ class GTIPWorkflowEngine:
         # yokluğunda örtük tetiklemek her belirsiz üründe sıcak yola on saniyeler
         # ekliyordu; yalnız kullanıcı açıkça istediğinde çalıştırılır.
         if not raw_intl and traversal.get("enable_international_research"):
-            try:
-                from api.modules.international_search import search_international_rulings
-                found_intl = search_international_rulings(
-                    product_text=raw_text,
-                    hs_code_hint=locked_digits[:6] if locked_digits else None,
+            # Kalan süre kadar pay verilir; çok az kaldıysa hiç denenmez.
+            remaining_ms = 0
+            intl_deadline = traversal.get("intl_deadline")
+            if intl_deadline:
+                remaining_ms = int(max(0.0, (intl_deadline - time.monotonic()) * 1000))
+            if remaining_ms >= MIN_INTERNATIONAL_SEARCH_MS:
+                try:
+                    from api.modules.international_search import search_international_rulings
+                    # HS İPUCU VERİLMEZ. Seçilen kodu ipucu olarak vermek, modelin
+                    # o kodu DOĞRULAYAN kararlar bulmasına yol açıyordu: bağımsız
+                    # bir kontrol gibi görünen ama olmayan bir teyit. İpucusuz
+                    # arama, yabancı idarenin aynı eşyaya ne dediğini bağımsız
+                    # olarak söyler; WCO uyumu 6 hanede olduğu için bu karşılaştırma
+                    # anlamlıdır.
+                    found_intl = search_international_rulings(
+                        product_text=raw_text,
+                        hs_code_hint=None,
+                        timeout_ms=remaining_ms,
+                    )
+                    raw_intl = [item.model_dump() for item in found_intl]
+                except Exception as exc_intl:
+                    logger.warning("Uluslararası emsal arama atlandı: %s", exc_intl)
+                    raw_intl = []
+            else:
+                logger.info(
+                    "Uluslararası arama atlandı: kalan süre %d ms < %d ms",
+                    remaining_ms, MIN_INTERNATIONAL_SEARCH_MS,
                 )
-                raw_intl = [item.model_dump() for item in found_intl]
-            except Exception as exc_intl:
-                logger.warning("Uluslararası emsal arama atlandı: %s", exc_intl)
-                raw_intl = []
 
         international_rulings: List[InternationalRuling] = []
         for item in raw_intl:
@@ -361,6 +388,25 @@ class GTIPWorkflowEngine:
         has_intl = len(international_rulings) > 0
         if has_intl:
             consulted = list(dict.fromkeys(consulted + ["US_CBP_CROSS", "CN_GACC"]))
+
+        # ÇAPRAZ KONTROL. Armonize Sistem ilk altı hanede uluslararası ortaktır:
+        # yabancı bir idare aynı eşyayı farklı bir alt pozisyona koyduysa bu,
+        # bilinmesi gereken gerçek bir uyuşmazlık sinyalidir. Daha önce bu
+        # kararlar yalnız ekranda gösteriliyor, sınıflandırmaya hiç etki
+        # etmiyordu.
+        our_hs6 = locked_digits[:6]
+        disagreeing = sorted({
+            re.sub(r"\D", "", str(ruling.hs_code))[:6]
+            for ruling in international_rulings
+            if len(re.sub(r"\D", "", str(ruling.hs_code))) >= 6
+            and re.sub(r"\D", "", str(ruling.hs_code))[:6] != our_hs6
+        })
+        if disagreeing:
+            traversal["international_disagreement"] = disagreeing
+            logger.warning(
+                "Uluslararası emsal uyuşmazlığı: seçilen=%s yabancı=%s",
+                our_hs6, disagreeing,
+            )
 
         # Uluslararası emsal bulunamadıysa kullanıcıya uydurma karar değil, resmi
         # portallarda elle araması için doğrudan arama bağlantıları sunulur.
@@ -485,6 +531,13 @@ class GTIPWorkflowEngine:
                     [f"Uluslararası emsal bulundu: {len(international_rulings)} karar (ABD CBP / Çin GACC / AB EBTI)."]
                     if has_intl else []
                 ),
+                *(
+                    ["INTERNATIONAL_DISAGREEMENT: Yabancı gümrük idareleri aynı eşyayı "
+                     f"{', '.join(disagreeing)} alt pozisyon(lar)ında sınıflandırmış; "
+                     f"sistem {our_hs6} seçti. Armonize Sistem ilk altı hanede ortak "
+                     "olduğundan bu fark incelenmelidir."]
+                    if disagreeing else []
+                ),
             ],
         )
         _record_run(session_id, raw_text, features, traversal, decision)
@@ -598,6 +651,12 @@ class GTIPWorkflowEngine:
             ]
             tree_result.traversal_state["international_rulings"] = international_rulings
             tree_result.traversal_state["enable_international_research"] = enable_international_research
+            # Uluslararası aramanın payı: istemci zaman aşımından (45 sn) geriye
+            # kalan, güvenlik payı düşülmüş süre. Sınıflandırma ne kadar sürerse
+            # aramaya o kadar az kalır ve gerekirse hiç yapılmaz.
+            tree_result.traversal_state["intl_deadline"] = (
+                started + settings.CLIENT_REQUEST_BUDGET_MS / 1000.0
+            )
         duration_ms = (time.perf_counter() - started) * 1000
         if tree_result.discriminator_question:
             decision = self._pause(session_id, raw_text, image_uri, features, tree_result)

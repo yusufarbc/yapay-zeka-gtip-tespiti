@@ -57,6 +57,7 @@ def search_international_rulings(
     hs_code_hint: Optional[str] = None,
     target_countries: Optional[List[str]] = None,
     max_results: int = 4,
+    timeout_ms: Optional[int] = None,
 ) -> List[InternationalRuling]:
     """
     ABD CBP CROSS (CustomsMobile), Çin GACC ve AB EBTI kararlarında
@@ -79,6 +80,7 @@ def search_international_rulings(
         from google.genai import types
 
         client = get_grounded_search_client()
+        budget_ms = timeout_ms or settings.GROUNDED_SEARCH_TIMEOUT_MS
         hs_context = f"Tahmini veya aday WCO HS Kodu: {hs_code_hint}" if hs_code_hint else ""
 
         prompt = f"""
@@ -117,6 +119,10 @@ YALNIZCA geçerli bir JSON listesi döndür. Açıklama veya markdown formatı e
         config = types.GenerateContentConfig(
             tools=[types.Tool(google_search=types.GoogleSearch())],
             temperature=0.1,
+            # Arama sınıflandırmadan SONRA çalışır; ona kalan süre kadar pay
+            # verilir. Sabit bir süre, yavaş bir sınıflandırmadan sonra
+            # istemcinin zaman aşımına düşmesine yol açıyordu.
+            http_options=types.HttpOptions(timeout=budget_ms),
         )
 
         response = client.models.generate_content(

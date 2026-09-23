@@ -81,6 +81,9 @@ class Settings(BaseSettings):
     # Bütçe dolduğunda hat zarifçe durur ve elindeki en iyi sonucu döndürür;
     # cevapsız bir timeout yerine cevaplanabilir bir soru daha değerlidir.
     ANALYSIS_BUDGET_MS: int = int(os.getenv("ANALYSIS_BUDGET_MS", "32000"))
+    # Arayüzün istek timeout'u 45 sn; güvenlik payı düşülmüş toplam sınır.
+    # Uluslararası arama bu bütçeden ARTAN süreyi kullanır.
+    CLIENT_REQUEST_BUDGET_MS: int = int(os.getenv("CLIENT_REQUEST_BUDGET_MS", "38000"))
     # CHAPTER seçenek listesi hattın en yavaş ve 504 alan çağrısıydı (~21.000
     # token). Kapsam LİSTESİNİ kesmek yanlış çözümdü: Fasıl 61'de 6109 (tişört)
     # gibi yaygın pozisyonlar listeden düşüyordu. Bunun yerine pozisyon
