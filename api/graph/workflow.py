@@ -21,8 +21,22 @@ from api.db.database import SessionLocal, validate_leaf_gtip
 from api.db.gcp_emulator import local_state_store
 from api.modules.discriminator_engine import DiscriminatorQuestion
 from api.modules.feature_extractor import feature_extractor
-from api.modules.rag_engine import HierarchicalSearchResult, rag_engine, route_headings_from_precedents
-from api.schemas.product import GTIPCandidate, GTIPDecision, HITLOption, HITLQuestion, LegalSource, PrecedentBTB, ProductFeatures
+from api.modules.rag_engine import (
+    HierarchicalSearchResult,
+    rag_engine,
+    record_selection_step,
+    route_headings_from_precedents,
+)
+from api.schemas.product import (
+    GTIPCandidate,
+    GTIPDecision,
+    HITLOption,
+    HITLQuestion,
+    LegalSource,
+    PrecedentBTB,
+    ProductFeatures,
+    SelectionStep,
+)
 
 
 logger = logging.getLogger("GTIPWorkflowEngine")
@@ -228,6 +242,48 @@ def evidence_summary(traversal: Dict[str, Any], precedents: List[Any]) -> str:
         "Bu ürün için BTB emsali bulunamadı; karar yalnız tarife metnine ve "
         "fasıl notlarına dayanıyor. Ölçümde emsalsiz kararların doğruluğu düşüktür."
     )
+
+
+LEVEL_LABELS = {"CHAPTER": "Fasıl", "HEADING": "Pozisyon", "SUBHEADING": "Alt pozisyon", "GTIP": "GTİP"}
+SOURCE_NOTES = {
+    "SINGLE_OPTION": "Bu dalda tek resmî seçenek vardı.",
+    "RESIDUAL": "Model özel bir dal eşleştiremedi; resmî 'diğerleri' dalı seçildi.",
+    "BROKER": "Müşavir seçti.",
+}
+
+
+def selection_rationale(traversal: Dict[str, Any], precedents: List[Any]) -> List[SelectionStep]:
+    """Kararın seviye seviye gerekçesi: hangi resmî dal, neden seçildi."""
+    if traversal.get("selection_source") == "BTB_EXACT":
+        exact = [p_ for p_ in precedents if float(getattr(p_, "similarity_score", 0.0) or 0.0) >= 0.999]
+        refs = ", ".join(str(getattr(p_, "btb_no", "")) for p_ in exact[:3]) or "BTB"
+        return [SelectionStep(
+            level="GTIP",
+            code=re.sub(r"\D", "", str(traversal.get("locked_gtip") or "")),
+            source="BTB_EXACT",
+            reasoning_points=[
+                f"Ürün tanımı {refs} sayılı BTB kararındaki eşya tanımıyla birebir aynı; "
+                "kod idarenin bu kararından alındı ve yürürlükteki tarifede doğrulandı."
+            ],
+        )]
+    steps: List[SelectionStep] = []
+    for raw in traversal.get("selection_trail") or []:
+        try:
+            steps.append(SelectionStep(**raw))
+        except Exception:
+            continue
+    return steps
+
+
+def rationale_commentary(steps: List[SelectionStep]) -> Optional[str]:
+    """PDF ve eski istemciler için gerekçe izinin düz metni."""
+    lines = []
+    for step in steps:
+        points = step.reasoning_points or [SOURCE_NOTES.get(step.source, "")]
+        text = " ".join(point for point in points if point)
+        if text:
+            lines.append(f"{LEVEL_LABELS.get(step.level, step.level)} {step.code}: {text}")
+    return "\n".join(lines) or None
 
 
 def _restore_precedents(traversal: Dict[str, Any]) -> List[Any]:
@@ -464,6 +520,7 @@ class GTIPWorkflowEngine:
                 seen_source_keys.add(s_key)
                 dedup_legal_sources.append(src)
 
+        rationale = selection_rationale(traversal, precedents)
         signals = collect_signals(traversal, precedents, ebti_precedents)
         confidence = compute_confidence(traversal, precedents, ebti_precedents)
         # İnceleme işareti iki kaynaktan gelir: düşük skor VEYA skordan bağımsız
@@ -477,13 +534,9 @@ class GTIPWorkflowEngine:
             gtip_code=formatted_code,
             confidence_score=confidence,
             official_statute_text=f"2026 TGTC {formatted_code}: {description}",
-            llm_reasoning_commentary=(
-                "Ürün açıklaması gerçek BTB havuzundaki emsal kararla tam eşleşti; BTB kodu "
-                "yürürlükteki TGTC veritabanında aktif 12 haneli yaprak olarak doğrulandı."
-                if is_exact_btb
-                else "Gemini resmi TGTC ağacındaki seçenek kimliklerini seçti; kod sunucu tarafından "
-                "kapalı kümeye ve yürürlükteki veritabanı yaprağına bağlandı."
-            ),
+            llm_reasoning_commentary=rationale_commentary(rationale),
+            selection_rationale=rationale,
+            evidence_summary=evidence_summary(traversal, precedents),
             legal_justification=(
                 f"Tam ürün eşleşmeli emsal BTB ve güncel TGTC yaprak doğrulaması: {formatted_code}."
                 if is_exact_btb
@@ -801,6 +854,20 @@ class GTIPWorkflowEngine:
         ):
             if carried_key in traversal:
                 tree_result.traversal_state.setdefault(carried_key, traversal[carried_key])
+
+        # Gerekçe izi: sorudan önceki seviyeler + müşavirin seçimi + devamdaki
+        # seviyeler. Önceki seviyeler kilitli olduğu için yeniden seçilmezler.
+        combined: Dict[str, Any] = {"selection_trail": list(traversal.get("selection_trail") or [])}
+        option_text = str(option.get("text") or "")
+        record_selection_step(
+            combined,
+            pending_level,
+            {"gtip_code": selected_digits, "description": option_text.split(" — ", 1)[-1]},
+            "BROKER",
+        )
+        for step in tree_result.traversal_state.get("selection_trail") or []:
+            combined["selection_trail"].append(step)
+        tree_result.traversal_state["selection_trail"] = combined["selection_trail"]
 
         # Müşavir kaç teknik ayrımı yanıtladı: güven skoruna girer.
         tree_result.traversal_state["hitl_answer_count"] = (

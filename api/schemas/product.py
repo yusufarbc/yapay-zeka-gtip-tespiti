@@ -128,6 +128,24 @@ class HITLResponse(BaseModel):
     selected_option_id: str = Field(min_length=1, max_length=50)
     custom_note: Optional[str] = Field(default=None, max_length=2000)
 
+class SelectionStep(BaseModel):
+    """Tarife ağacının bir seviyesinde hangi resmî dalın neden seçildiği."""
+    level: str = Field(description="CHAPTER | HEADING | SUBHEADING | GTIP", max_length=20)
+    code: str = Field(max_length=20)
+    description: str = Field(default="", description="Seçilen resmî dalın tarife metni")
+    source: str = Field(
+        description=(
+            "MODEL: model seçti ve gerekçe yazdı | SINGLE_OPTION: dalda tek resmî seçenek vardı | "
+            "RESIDUAL: model eşleştiremedi, resmî 'diğerleri' dalı seçildi | "
+            "BROKER: müşavir seçti | BTB_EXACT: birebir BTB emsali"
+        ),
+        max_length=20,
+    )
+    reasoning_points: List[str] = Field(default_factory=list)
+    applied_gir_keys: List[str] = Field(default_factory=list)
+    cited_chapter_notes: List[str] = Field(default_factory=list)
+
+
 class GTIPDecision(BaseModel):
     session_id: str
     status: str = Field(description="COMPLETED | WAITING_FOR_USER | MANUAL_REVIEW_REQUIRED")
@@ -146,6 +164,14 @@ class GTIPDecision(BaseModel):
             "korelasyonu bu alanlar üzerinden kalibre edilir; skorun kendisi "
             "tek başına ayırt etmiyordu."
         ),
+    )
+    evidence_summary: Optional[str] = Field(
+        default=None,
+        description="Kararın neye dayandığının düz Türkçe özeti (emsal desteği vb.).",
+    )
+    selection_rationale: List[SelectionStep] = Field(
+        default_factory=list,
+        description="Fasıldan yaprağa her seviyede seçilen resmî dal ve seçim gerekçesi.",
     )
     legal_sources: List[LegalSource] = Field(default_factory=list)
     consulted_sources: List[str] = Field(default_factory=list)

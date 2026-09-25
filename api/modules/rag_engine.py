@@ -133,6 +133,59 @@ def route_headings_from_precedents(
     return [heading for heading, _ in aggregate_precedents_by_heading(btb)[:max(1, max_headings)]]
 
 
+_LEVEL_ORDER = {"CHAPTER": 0, "HEADING": 1, "SUBHEADING": 2, "GTIP": 3}
+
+
+def _display_description(text: str) -> str:
+    """Seçenek metnini kullanıcıya gösterilecek biçime getirir.
+
+    Fasıl seçeneği yalnız model için pozisyon kapsamı özeti taşır; ekranda
+    faslın adı yeterlidir. Katalogdaki girinti tireleri ("- - Diğerleri")
+    hiyerarşiyi gösterir, okunan metinde gürültüdür.
+    """
+    text = re.sub(r"\.?\s*Pozisyon kapsamı:.*$", "", str(text or ""), flags=re.DOTALL)
+    # Tire dizisi segment başında veya türetilmiş özetlerde "— " / "; " sonrasında olabilir.
+    segments = [
+        re.sub(r"(^|— |; )[\s\-–]+", r"\1", part).strip(" -–—")
+        for part in text.split(" > ")
+    ]
+    return " > ".join(segment for segment in segments if segment)
+
+
+def record_selection_step(
+    traversal: Optional[Dict[str, Any]],
+    level: str,
+    node: Dict[str, Any],
+    source: str,
+    reasoning_points: Optional[Sequence[str]] = None,
+    applied_gir_keys: Optional[Sequence[str]] = None,
+    cited_chapter_notes: Optional[Sequence[str]] = None,
+) -> None:
+    """Seçilen resmî dalı ve gerekçesini karar izine yazar.
+
+    Kullanıcıya "neden bu kod" sorusunun cevabı bu izdir. Bir seviye yeniden
+    seçilirse (fasıl geri alması) o seviyenin ve altındaki eski adımlar silinir;
+    iz yalnız sonuca giden yolu gösterir.
+    """
+    if traversal is None:
+        return
+    rank = _LEVEL_ORDER.get(level, 99)
+    trail = [
+        step for step in traversal.get("selection_trail") or []
+        if _LEVEL_ORDER.get(step.get("level"), 99) < rank
+    ]
+    trail.append({
+        "level": level,
+        "code": _digits(node.get("gtip_code")),
+        "description": _display_description(_description(node))[:400],
+        "source": source,
+        "reasoning_points": [str(point) for point in (reasoning_points or []) if str(point).strip()],
+        "applied_gir_keys": list(applied_gir_keys or []),
+        "cited_chapter_notes": list(cited_chapter_notes or []),
+    })
+    traversal["selection_trail"] = trail
+
+
 def _formatted_code(value: Any) -> str:
     code = _digits(value)
     if len(code) == 12:
@@ -660,6 +713,7 @@ class RAGEngine:
         if not nodes:
             return None, None, [], []
         if len(nodes) == 1 and not always_ask_model:
+            record_selection_step(traversal, level, nodes[0], "SINGLE_OPTION")
             return nodes[0], None, ["GIR_1", "GIR_6"], []
 
         # Ortak önek hem prompta hem soruya gürültü olarak giriyordu.
@@ -692,6 +746,10 @@ class RAGEngine:
                     _digits(nodes[index].get("gtip_code")),
                     len(nodes),
                 )
+                record_selection_step(
+                    traversal, level, nodes[index], "MODEL",
+                    selection.reasoning_points, applied_gir_keys, cited_chapter_notes,
+                )
                 return nodes[index], None, applied_gir_keys, cited_chapter_notes
             logger.error("Selector returned an option id outside the server-owned set")
             return None, None, applied_gir_keys, cited_chapter_notes
@@ -719,6 +777,10 @@ class RAGEngine:
                 # düşüldü. Bu zayıf bir seçimdir ve güven skorunu düşürmelidir.
                 if traversal is not None:
                     traversal["used_residual_fallback"] = True
+                record_selection_step(
+                    traversal, level, residuals[0], "RESIDUAL",
+                    selection.reasoning_points, applied_gir_keys, cited_chapter_notes,
+                )
                 return residuals[0], None, applied_gir_keys, cited_chapter_notes
 
         # Resmî kalıntı dalı da çözemediyse: NO_MATCH eskiden bir çıkmazdı.

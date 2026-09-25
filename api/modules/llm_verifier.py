@@ -268,7 +268,8 @@ class LLMFactVerifier:
             "\"selected_candidate_id\":\"A veya null\","
             "\"alternative_candidate_ids\":[\"A\",\"B\"],"
             "\"question_text\":\"Türkçe soru veya null\","
-            "\"reasoning_points\":[\"kısa Türkçe gerekçe\"],"
+            "\"reasoning_points\":[\"1-3 kısa Türkçe cümle: seçimi belirleyen ürün özelliği ve "
+            "dayandığın GİR kuralı veya fasıl notu\"],"
             "\"applied_gir_keys\":[\"GIR_1\",\"GIR_3A\",\"GIR_3B\",\"GIR_6\"],"
             "\"cited_chapter_notes\":[\"70\",\"76\"]}"
         )
