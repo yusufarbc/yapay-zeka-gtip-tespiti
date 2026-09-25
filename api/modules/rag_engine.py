@@ -186,6 +186,16 @@ def record_selection_step(
     traversal["selection_trail"] = trail
 
 
+def min_precedent_overlap(query_tokens: Set[str]) -> int:
+    """Emsal sayılmak için sorguyla paylaşılması gereken en az kelime sayısı.
+
+    "ahşap sandalye" sorgusunda yalnız "ahşap" kelimesini paylaşan kararlar
+    kapsama 0.5 ile eşiği geçiyor ve modeli ahşap eşya faslına itiyordu. Tek
+    ortak kelime (çoğu zaman malzeme) aynı eşyanın kanıtı değildir.
+    """
+    return min(2, len(query_tokens))
+
+
 def _formatted_code(value: Any) -> str:
     code = _digits(value)
     if len(code) == 12:
@@ -283,6 +293,8 @@ class RAGEngine:
             seen.add(key)
             description_tokens = set(desc_normalized.split())
             overlap = len(query_tokens & description_tokens)
+            if overlap < min_precedent_overlap(query_tokens) and normalized_query != desc_normalized:
+                continue
             coverage = overlap / max(1, len(query_tokens))
             precision = overlap / max(1, len(description_tokens))
             if normalized_query == desc_normalized:
@@ -367,7 +379,7 @@ class RAGEngine:
             desc_tokens = set(combined_text.split())
 
             overlap = len(query_tokens & desc_tokens)
-            if overlap == 0:
+            if overlap == 0 or overlap < min_precedent_overlap(query_tokens):
                 continue
 
             coverage = overlap / max(1, len(query_tokens))

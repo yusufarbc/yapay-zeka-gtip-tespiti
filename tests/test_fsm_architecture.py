@@ -118,6 +118,31 @@ def test_real_btb_exact_text_search_returns_the_precedent():
             session.commit()
 
 
+def test_a_single_shared_word_is_not_a_precedent():
+    """Canlıda "ahşap sandalye" için yalnız "ahşap" kelimesini paylaşan 5 karar
+    emsal sayıldı ve modeli ahşap eşya faslına itti. İki kelime paylaşan kalmalı."""
+    rows = {
+        "TEST-BTB-ONLY-MATERIAL": ("441899500000", "AHŞAP PARKE PANELİ"),
+        "TEST-BTB-SAME-THING": ("940161000000", "AHŞAP İSKELETLİ DÖŞEMELİ SANDALYE"),
+    }
+    with SessionLocal() as session:
+        session.query(GumrukEmsalKararModel).filter(GumrukEmsalKararModel.referans_no.in_(list(rows))).delete()
+        for ref, (code, desc) in rows.items():
+            session.add(GumrukEmsalKararModel(
+                karar_tipi="BTB", referans_no=ref, gtip_kodu=code, yayin_tarihi="2026-09-09",
+                esya_tanimi=desc, hukuki_gerekce="Test", valid_until="9999-12-31",
+            ))
+        session.commit()
+    try:
+        refs = [m.btb_no for m in rag_engine.search_btb_precedents("ahşap sandalye")]
+        assert "TEST-BTB-ONLY-MATERIAL" not in refs
+        assert "TEST-BTB-SAME-THING" in refs
+    finally:
+        with SessionLocal() as session:
+            session.query(GumrukEmsalKararModel).filter(GumrukEmsalKararModel.referans_no.in_(list(rows))).delete()
+            session.commit()
+
+
 def test_exact_btb_candidate_requires_one_agreed_active_leaf(monkeypatch):
     precedent = PrecedentBTB(
         btb_no="TR-EXACT",
