@@ -233,13 +233,13 @@ class LLMFactVerifier:
         ).format(codes=", ".join(rejected_labels), nl=chr(10)) if rejected_codes else ""
 
         level_rule = (
-            "11. CHAPTER bir yönlendirme seviyesidir: ürünün esas niteliği, adı ve işlevine göre en uygun faslı mutlaka "
+            "- CHAPTER bir yönlendirme seviyesidir: ürünün esas niteliği, adı ve işlevine göre en uygun faslı mutlaka "
             "SELECT et. Bu seviyede malzeme gibi ayrıntıları sorma ve INSUFFICIENT_INFORMATION kullanma.\n"
             # Genel ilke (GYK 3(a) ve malzeme fasıllarının dışlama notları);
             # belirli ürün veya kod içermez. Ölçümde model bunu tutarlı
             # uygulamıyordu: aynı prompt ahşap sandalyeyi malzeme faslına,
             # metal masayı mobilyaya gönderebiliyordu.
-            "12. İŞLEV MALZEMEDEN ÖNCE GELİR: Önce eşyanın NE OLDUĞUNU belirle (ne işe yarayan hangi tür eşya). Eşyayı bu "
+            "- İŞLEV MALZEMEDEN ÖNCE GELİR (GYK 1 ve GYK 3(a) gereği): Önce eşyanın NE OLDUĞUNU belirle (ne işe yarayan hangi tür eşya). Eşyayı bu "
             "türüyle tanımlayan bir fasıl varsa onu seç; yalnız yapıldığı malzemeyi kapsayan fasıl (ahşap, plastik, metal, "
             "cam, kağıt vb. eşya fasılları) ikinci plandadır. Malzeme faslını yalnız eşya türüyle başka bir fasılda "
             "tanımlanmıyorsa seç. Malzeme fasıllarının notları, başka fasıllarda türüyle tanımlanan eşyayı genellikle "
@@ -250,31 +250,34 @@ class LLMFactVerifier:
         prompt = (
             "Sen Türk Gümrük Tarife Cetveli ve WCO Armonize Sistem sınıflandırma uzmanısın. "
             "Ürünü, aşağıdaki SUNUCU TARAFINDAN SAĞLANAN resmî seçeneklerden birine bağla.\n\n"
-            "KATI HUKUKİ SINIFLANDIRMA VE YORUM KURALLARI (GYK / GİR):\n"
-            "1. YENİ KOD UYDURMA: Yeni GTİP/fasıl/pozisyon kodu yazma veya düzeltme; yalnız option_id döndür.\n"
+            # Talimatlar numarasızdır: numaralı listede model "12. madde"yi
+            # "GYK 12" diye gerekçeye yazıyordu; GYK yalnız 1-6 arasıdır.
+            "SEÇİM TALİMATLARI (gerekçede bu talimatlara değil; yalnız GYK 1-6'ya, resmî seçenek metnine "
+            "veya fasıl notuna atıf yap):\n"
+            "- YENİ KOD UYDURMA: Yeni GTİP/fasıl/pozisyon kodu yazma veya düzeltme; yalnız option_id döndür.\n"
             "   option_id HARF kimliğidir (A, B, ... AA, AB). Tarife koduyla İLGİSİZDİR; "
             "seçmek istediğin seçeneğin option_id alanını birebir kopyala.\n"
-            "2. KAPALI KÜME: Seçenekler dışında bilgi uydurma. Ürün açıkça bir seçeneğe uyuyorsa SELECT kullan.\n"
+            "- KAPALI KÜME: Seçenekler dışında bilgi uydurma. Ürün açıkça bir seçeneğe uyuyorsa SELECT kullan.\n"
             # Bu kurallar genel yorum kurallarıdır; belirli ürün veya kod için kural
             # YAZILMAZ. Ürüne özel kural (ör. "cam balkon -> 76.10") modele resmî
             # notta bulunmayan bir hükmü "fasıl notları uyarınca" diye aktarttı.
             # Ayrım resmî metinden, fasıl notlarından ve emsallerden gelmelidir.
-            "3. GYK 1: Sınıflandırma öncelikle tarife pozisyonu metinlerine ve bölüm/fasıl notlarına göre yapılır. "
+            "- GYK 1: Sınıflandırma öncelikle tarife pozisyonu metinlerine ve bölüm/fasıl notlarına göre yapılır. "
             "Aşağıda verilen fasıl notlarındaki dışlama hükümlerine uy.\n"
-            "4. ATIF DÜRÜSTLÜĞÜ: Yalnız bu promptta sana verilen resmî seçenek metnine, fasıl notuna veya emsale atıf yap. "
+            "- ATIF DÜRÜSTLÜĞÜ: Yalnız bu promptta sana verilen resmî seçenek metnine, fasıl notuna veya emsale atıf yap. "
             "Sana verilmeyen bir not hükmünü 'fasıl notları uyarınca' diye yazma; notta açıkça geçmeyen bir kuralı notun "
             "hükmüymüş gibi sunma.\n"
-            "5. GYK 2(a): Eksik, bitmemiş, demonte veya sökülmüş halde sunulan eşya, tamamlanmış eşyanın esas niteliğini "
+            "- GYK 2(a): Eksik, bitmemiş, demonte veya sökülmüş halde sunulan eşya, tamamlanmış eşyanın esas niteliğini "
             "taşıyorsa tamamlanmış eşyanın pozisyonunda sınıflandırılır.\n"
-            "6. GYK 3(a): Eşyayı en özel şekilde tanımlayan pozisyon, daha genel tanımlayan pozisyona tercih edilir.\n"
-            "7. GYK 3(b): Karışımlar ve farklı maddelerden oluşan eşyalar, esas niteliğini veren madde veya parçaya göre "
+            "- GYK 3(a): Eşyayı en özel şekilde tanımlayan pozisyon, daha genel tanımlayan pozisyona tercih edilir.\n"
+            "- GYK 3(b): Karışımlar ve farklı maddelerden oluşan eşyalar, esas niteliğini veren madde veya parçaya göre "
             "sınıflandırılır.\n"
-            "8. DAR/İSTİSNAİ DALLAR: Tohumluk, sivil hava taşıtı, soğuk hava deposu, çocuklar için, tıbbi kullanım gibi dar dalları "
+            "- DAR/İSTİSNAİ DALLAR: Tohumluk, sivil hava taşıtı, soğuk hava deposu, çocuklar için, tıbbi kullanım gibi dar dalları "
             "yalnız ürün metninde bunu destekleyen olumlu kanıt varsa seç. Böyle kanıt yoksa mevcut genel/kalıntı 'diğerleri' dalını SELECT et.\n"
-            "9. SORU SINIRI (INSUFFICIENT_INFORMATION): Ancak seçenekler arasındaki ayrım için gerçekten gerekli, kullanıcıca "
+            "- SORU SINIRI (INSUFFICIENT_INFORMATION): Ancak seçenekler arasındaki ayrım için gerçekten gerekli, kullanıcıca "
             "gözlenebilir bir teknik özellik eksikse INSUFFICIENT_INFORMATION kullan, iki ila dört alternative_candidate_ids ve tek "
             "somut Türkçe question_text döndür. Soru yalnız malzeme, işlev, ölçü veya fiziksel nitelik hakkında olabilir; tarife kodu seçtiremez.\n"
-            "10. EŞLEŞME YOKSA: Hiçbir seçenek eşleşmiyorsa NO_MATCH kullan.\n"
+            "- EŞLEŞME YOKSA: Hiçbir seçenek eşleşmiyorsa NO_MATCH kullan.\n"
             f"{level_rule}\n\n"
             f"SEVİYE: {level}\n"
             # Seçenek listesi bu seviye için SABİTTİR (yalnız fasıl listesi

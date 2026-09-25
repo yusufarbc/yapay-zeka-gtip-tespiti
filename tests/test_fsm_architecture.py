@@ -631,3 +631,26 @@ def test_function_over_material_rule_is_generic_and_chapter_only(monkeypatch):
     assert "İŞLEV MALZEMEDEN ÖNCE GELİR" in prompts["last"]
     verifier_module.llm_verifier.select_tariff_node("x", "HEADING", nodes)
     assert "İŞLEV MALZEMEDEN ÖNCE GELİR" not in prompts["last"]
+
+
+def test_prompt_instructions_are_unnumbered(monkeypatch):
+    """Numaralı talimat listesinde model "12. madde"yi "GYK 12" diye gerekçeye
+    yazıyordu. Atıf yapılabilecek tek numara GYK 1-6 olmalı."""
+    import re
+    from api.modules import llm_verifier as verifier_module
+
+    captured = {}
+
+    class Models:
+        def generate_content(self, **kwargs):
+            captured["prompt"] = kwargs["contents"]
+            return SimpleNamespace(text='{"status":"SELECT","selected_candidate_id":"A"}')
+
+    monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr("api.modules.vertex_client.get_genai_client", lambda: SimpleNamespace(models=Models()))
+    verifier_module.llm_verifier.select_tariff_node(
+        "x", "CHAPTER", [{"gtip_code": "44", "description": "a"}, {"gtip_code": "94", "description": "b"}],
+    )
+    rules = captured["prompt"][: captured["prompt"].index("SEVİYE:")]
+    assert not re.search(r"^\d+\. ", rules, flags=re.M), "talimatlar numaralı"
