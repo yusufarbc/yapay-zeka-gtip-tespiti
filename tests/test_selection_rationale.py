@@ -126,3 +126,35 @@ def test_displayed_branch_text_drops_model_only_scope_and_indent_dashes():
 
     assert _display_description("Fasıl 76: Alüminyum. Pozisyon kapsamı: 7601: ham") == "Fasıl 76: Alüminyum"
     assert _display_description("- Diğer pompalar: > - - Diğerleri") == "Diğer pompalar: > Diğerleri"
+
+
+def test_resume_keeps_rule_citations_from_levels_before_the_question(monkeypatch):
+    """Canlıda fasıl gerekçesi GYK 3(a) diyordu ama "Dayanılan kurallar" yalnız
+    GYK 1 ve 6'yı gösteriyordu: HITL devamı önceki atıfların üzerine yazıyordu."""
+    import api.graph.workflow as wf
+    from api.db.gcp_emulator import local_state_store
+
+    local_state_store.save_state("rationale-gir", {
+        "session_id": "rationale-gir",
+        "raw_text": "ahşap sandalye",
+        "product_features": {"product_name": "ahşap sandalye", "primary_material": "ahşap", "intended_use": "oturma"},
+        "status": "WAITING_FOR_USER",
+        "hitl_question": {"question_id": "q1", "options": [
+            {"option_id": "DISC_0", "text": "940169 — Döşemesiz", "impact_data": {"selected_branch": "940169"}}]},
+        "discriminator_traversal": {
+            "pending_level": "SUBHEADING", "locked_chapter": "94", "locked_heading": "9401",
+            "applied_gir_keys": ["GIR_1", "GIR_3A"], "cited_chapter_notes": ["44", "94"],
+        },
+    })
+    monkeypatch.setattr(wf.GTIPWorkflowEngine, "_search", staticmethod(
+        lambda *a, **k: wf.HierarchicalSearchResult(traversal_state={
+            "applied_gir_keys": ["GIR_1", "GIR_6"], "cited_chapter_notes": ["94"]})
+    ))
+    captured = {}
+    monkeypatch.setattr(wf.GTIPWorkflowEngine, "_complete",
+                        lambda self, sid, raw, img, feats, tree: captured.setdefault("state", tree.traversal_state))
+
+    wf.workflow_engine.resume_analysis("rationale-gir", "DISC_0", "q1")
+
+    assert captured["state"]["applied_gir_keys"] == ["GIR_1", "GIR_3A", "GIR_6"]
+    assert captured["state"]["cited_chapter_notes"] == ["44", "94"]

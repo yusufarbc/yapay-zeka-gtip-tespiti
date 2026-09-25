@@ -841,11 +841,20 @@ class GTIPWorkflowEngine:
         # Yalnız btb_precedents'i geri yüklemek, HITL'den geçen kararların
         # doğrudan tamamlananlardan farklı hukuki dayanakla sonuçlanmasına yol
         # açıyordu.
+        # Atıf listeleri BİRLEŞTİRİLİR: setdefault, devamdaki seviyeler kendi
+        # atıflarını üretince sorudan önceki seviyelerinkini (ör. fasıl
+        # seçimindeki GYK 3(a)) sessizce düşürüyordu.
+        for list_key in ("applied_gir_keys", "cited_chapter_notes"):
+            merged = list(traversal.get(list_key) or [])
+            for item in tree_result.traversal_state.get(list_key) or []:
+                if item not in merged:
+                    merged.append(item)
+            if merged:
+                tree_result.traversal_state[list_key] = merged
+
         for carried_key in (
             "btb_precedents",
             "ebti_precedents",
-            "applied_gir_keys",
-            "cited_chapter_notes",
             "used_residual_fallback",
             "routing",
             "routed_headings",
