@@ -724,7 +724,25 @@ BTB kapısı taraması:
 * Füzyonun ilk 3 pozisyonunda alt pozisyon sayısı medyanda 17, en fazla 44. Alt pozisyon seviyesini atlamak seçenek
   listesini büyüteceği için korunmuştur.
 
-### 10.5. Benchmark yorumu
+### 10.5. Hibrit yönlendirmenin uçtan uca ölçümü (2026-09-25)
+Aynı imaj ve aynı 120 numuneyle `HEADING_ROUTING_ENABLED` açık ve kapalı iki koşu
+(`benchmark-full-20260925T105959Z`, `benchmark-full-20260925T113059Z`):
+
+| Metrik | Açık | Kapalı |
+| :--- | ---: | ---: |
+| `leaf_acc` (%) | 43.33 | 36.67 |
+| `heading_acc` (%) | 55.00 | 51.67 |
+| `coverage` (%) | 80.00 | 76.67 |
+| p50 / p95 gecikme (sn) | 10.5 / 29.9 | 11.6 / 31.9 |
+
+Farkın ne kadarının yönlendirmeden geldiği numune bazında ayrıştırıldı. Yönlendirilen 24 numunede (%20) pozisyon
+24/24, yaprak 22/24 doğru. Kapalı koşuya göre 3 numune kazanıldı, hiçbiri kaybedilmedi; tam dolaşıma dönüş hiç
+gerekmedi. Yönlendirilmeyen 96 numunede kod yolu iki koşuda aynıdır. Oradaki net +5 fark model yanıtlarındaki
+dalgalanmadır ve yönlendirmeye atfedilmemelidir. Yönlendirmenin gerçek katkısı yaklaşık +2.5 puan yaprak doğruluğu
+ve trafiğin beşte birinde fasıl çağrısının atlanmasıdır. Bu, çevrimdışı deneyin öngörüsüyle (en fazla ~3 numune)
+uyumludur.
+
+### 10.6. Benchmark yorumu
 * Kanıt zinciri (ham beyan, emsaller, fasıl notları) yaprak doğruluğunu %5'ten %22.5'e çıkardı. Kurtarma mekanizmaları,
   katalog yeniden çıkarımı ve harf kimlikleri %35'e taşıdı. Ölü uç oranı %35.8'den %1.7–10 aralığına indi.
 * Sistem bu doğruluk seviyesinde **müşavirin yerini alamaz**. Karar destek aracıdır. Tamamlanan kararların yaklaşık yarısı
@@ -751,7 +769,6 @@ BTB kapısı taraması:
 | **SSE akışı** | Yalnız başlangıç ve sonuç olayı gönderilir; seviye bazında ara ilerleme yok. | Canlı ilerleme için seviye olayları eklenebilir. |
 | **Gecikme** | p95 35.5 sn. Fasıl geri alması ek bir CHAPTER çağrısı (~11k token) ekler. | `gtip_slow_analysis` ve `gtip_chapter_backtrack` metrikleriyle izlenmeli. |
 | **Eski log metriği** | `gtip_intl_search_failures` kurulum betiğinden çıkarıldı; ancak GCP'de daha önce oluşturulmuşsa orada durur. | Cloud Logging'den elle silinebilir. |
-| **Yönlendirmenin uçtan uca etkisi** | Hibrit giriş, çevrimdışı yönlendirme deneyine göre kuruldu; LLM'li benchmark ile önce/sonra ölçümü ayrıca yapılmalıdır. | `gtip-benchmark` job'u `HEADING_ROUTING_ENABLED` açık ve kapalıyken çalıştırılıp `leaf_acc` ve p95 karşılaştırılmalı. |
 | **Rate limit** | Süreç içi bellekte tutulur. Cloud Run'da örnek başına ayrı sayılır. | Çok örnekli dağıtımda sınır gevşer. Gerekirse paylaşılan bir depo (Redis/Memorystore) kullanılmalı. |
 
 ---
