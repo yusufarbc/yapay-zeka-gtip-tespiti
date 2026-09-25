@@ -1,486 +1,534 @@
 # TÜRK GÜMRÜK TARİFE CETVELİ (TGTC) GTİP TESPİT VE KARAR DESTEK SİSTEMİ
-## Kapsamlı Mimari, Algoritmik Çalışma ve Hibrit Yapay Zeka Raporu
 
-**Belge Sürümü:** 1.1.0  
-**Tarih:** 2026-09-11  
-**Hedef Kitle:** Yazılım Mimarları, Gümrük Müşavirleri, Veri Bilimciler ve Sistem Mühendisleri  
-**İlgili Depo:** [yapay-zeka-gtip-tespiti](https://github.com/yusufarbc/yapay-zeka-gtip-tespiti)  
+## Mimari ve Algoritmik Çalışma Raporu
+
+**Belge Sürümü:** 2.1.0
+**Tarih:** 2026-09-25
+**Kapsanan kod durumu:** `chore/remove-portal-links` dalı: portal bağlantılarının kaldırılması ve emsal güdümlü pozisyon yönlendirmesi (hibrit dolaşım)
+**Hedef Kitle:** Yazılım mimarları, gümrük müşavirleri, veri bilimciler ve sistem mühendisleri
+**İlgili Depo:** [yapay-zeka-gtip-tespiti](https://github.com/yusufarbc/yapay-zeka-gtip-tespiti)
+
+> [!NOTE]
+> **Sürüm 1.1.0'dan bu yana değişenler.** Önceki rapor, artık kodda bulunmayan bileşenleri anlatıyordu:
+> `rule_engine.py` (HARD_RULES_MATRIX), `predicate_registry.py` (Boolean yüklemler), `deterministic_engine.py`
+> (%5 eşik kuralı), pgvector + BM25 + RRF ile aday puanlama, LLM tabanlı dışlama doğrulaması, sürekli öğrenme
+> döngüsü ve canlı uluslararası arama. Bunların hiçbiri bugün karar yolunda değildir. Sistem artık
+> **kapalı küme ağaç dolaşımı** yapıyor: model her seviyede yalnız sunucunun verdiği seçenek kimliklerinden birini
+> seçiyor. Bu belge bu mimariyi, gerçek ölçüm sonuçlarını ve bilinen sınırları anlatır.
 
 ---
 
 ## İÇİNDEKİLER
-1. [Yönetici Özeti ve Sistemin Tasarım Felsefesi](#1-yönetici-özeti-ve-sistemin-tasarım-felsefesi)
-2. [Sistem Mimarisi ve Teknoloji Yığını (High-Level Architecture)](#2-sistem-mimarisi-ve-teknoloji-yığını-high-level-architecture)
-3. [5 Aşamalı Hibrit Karar ve Doğrulama Boru Hattı](#3-5-aşamalı-hibrit-karar-ve-doğrulama-boru-hattı)
-   - [Aşama 1: Multimodal ve Dinamik Özellik Çıkarımı](#aşama-1-multimodal-ve-dinamik-özellik-çıkarımı-feature-extraction)
-   - [Aşama 2: Deterministik Kural Motoru (GİR 1-6 & Hard Rules)](#aşama-2-deterministik-kural-motoru-gir-1-6--hard-rules-matrix)
-   - [Aşama 3: Hiyerarşik Hibrit RAG ve Ağaç Taraması](#aşama-3-hiyerarşik-hibrit-rag-ve-tarife-ağacı-taraması)
-   - [Aşama 4: Yasal Yüklem Doğrulama ve Derin Akıl Yürütme](#aşama-4-yasal-yüklem-doğrulama-ve-derin-akıl-yürütme-deep-reasoning)
-   - [Aşama 5: Deterministik Sembolik Karar ve No-AI Binding](#aşama-5-deterministik-sembolik-karar-ve-no-ai-output-binding)
-4. [Kural Tabanlı Mantık ile Yapay Zekanın Hibrit İşbirliği](#4-kural-tabanlı-mantık-ile-yapay-zekanın-hibrit-işbirliği)
-5. [İnsan Döngüde (HITL - Human-In-The-Loop) ve Durum Makinesi](#5-i̇nsan-döngüde-hitl---human-in-the-loop-ve-durum-makinesi)
-6. [Veritabanı Şeması, Vektör İndeksleri ve Veri Katmanı](#6-veritabanı-şeması-vektör-i̇ndeksleri-ve-veri-katmanı)
-7. [Veri Entegrasyonu ve Canlı ETL Boru Hatları](#7-veri-entegrasyonu-ve-canlı-etl-boru-hatları)
-8. [Geri Beslemeli Sürekli Öğrenme (Continuous Learning Pipeline)](#8-geri-beslemeli-sürekli-öğrenme-continuous-learning-pipeline)
-9. [Güvenlik, Denetim İzi (Audit Trail) ve Kurumsal Raporlama](#9-güvenlik-denetim-i̇zi-audit-trail-ve-kurumsal-raporlama)
-10. [Benchmark Değerlendirme ve Kalite Metrikleri](#10-benchmark-değerlendirme-ve-kalite-metrikleri)
+
+1. [Yönetici Özeti ve Tasarım İlkeleri](#bolum-1)
+2. [Sistem Mimarisi ve Teknoloji Yığını](#bolum-2)
+3. [Karar Hattı: Uçtan Uca Akış](#bolum-3)
+4. [Yapay Zeka ile Deterministik Katmanın İş Bölümü](#bolum-4)
+5. [İnsan Döngüde (HITL) ve Durum Makinesi](#bolum-5)
+6. [Veri Katmanı](#bolum-6)
+7. [Veri Entegrasyonu ve ETL İşleri](#bolum-7)
+8. [Geri Bildirim ve Karar Kaydı](#bolum-8)
+9. [Güvenlik, Denetim İzi, Raporlama ve İzleme](#bolum-9)
+10. [Benchmark ve Ölçülen Başarım](#bolum-10)
+11. [Bilinen Sınırlar ve Teknik Borç](#bolum-11)
+12. [Özet](#bolum-12)
 
 ---
 
-## 1. YÖNETİCİ ÖZETİ VE SİSTEMİN TASARIM FELSEFESİ
+<a id="bolum-1"></a>
 
-### 1.1. Problemin Boyutu ve Hukuki Riskler
-Gümrük Tarife İstatistik Pozisyonu (**GTİP** - *Harmonized Tariff Schedule / Combined Nomenclature*), uluslararası ticarete konu olan her türlü fiziki eşyanın 12 haneli rakamlarla kodlandığı küresel ve milli bir sınıflandırma sistemidir. 
+## 1. YÖNETİCİ ÖZETİ VE TASARIM İLKELERİ
 
-Yanlış GTİP beyanı:
-* **Maddi Ceza:** 4458 sayılı Gümrük Kanunu'nun 234. maddesi uyarınca doğacak vergi farkının 3 katına kadar idari para cezası,
-* **Hukuki Yaptırım:** Kaçakçılıkla Mücadele Kanunu (5607 sayılı Kanun) kapsamında ceza davaları,
-* **Ticaret Politikası Engelleri:** İthalatta Haksız Rekabetin Önlenmesi (Anti-Damping), İlave Gümrük Vergisi (İGV), Gözetim Belgesi, TAREKS/TSE ve CE denetimlerinin baypas edilmesi riskini doğurur.
+### 1.1. Problem ve Hukuki Risk
+Gümrük Tarife İstatistik Pozisyonu (**GTİP**), eşyanın 12 haneli kodla sınıflandırıldığı milli nomenklatürdür.
+İlk 6 hane Armonize Sistem (HS), ilk 8 hane AB Kombine Nomenklatürü (CN) ile ortaktır.
 
-### 1.2. Çözüm Yaklaşımı: Geleneksel LLM'lerin Ötesinde "Deterministik Hibrit Zeka"
-Standart üretici yapay zeka (Generative AI) sistemleri tek başlarına gümrük sınıflandırmasında kullanılamazlar; çünkü:
-1. **Halüsinasyon Eğilimi:** Yürürlükte olmayan 12 haneli kodlar uydurabilirler.
-2. **Yasal Bağlayıcılık Eksikliği:** Modelin ürettiği metin bir kanun metni değildir.
-3. **Mevzuat Değişkenliği:** Her yıl 1 Ocak'ta Resmî Gazete'de yayımlanan İthalat Rejimi Kararı ve TGTC Tebliğleri geçmiş ağırlıkları geçersiz kılabilir.
+Yanlış GTİP beyanının sonuçları:
+* **Maddi ceza:** 4458 sayılı Gümrük Kanunu'nun 234. maddesi uyarınca vergi farkına bağlı idari para cezası.
+* **Cezai yaptırım:** 5607 sayılı Kaçakçılıkla Mücadele Kanunu kapsamında dava riski.
+* **Ticaret politikası tedbirlerinin atlanması:** İlave gümrük vergisi (İGV), anti-damping, gözetim, TAREKS/TSE denetimleri.
 
-Bu projede geliştirilen sistem, **üretici yapay zekayı bir nihai karar merci olarak değil; yapılandırılmış semantik bir özellik çıkarıcı ve kural hakemi olarak** konumlandırır. Karar verme yetkisi, Türk Gümrük Mevzuatı'nın **GİR 1-6** (*Genel Yorum Kuralları*) hükümlerini harfi harfine işleten **Python Deterministik Sembolik Karar Motoru**'na devredilmiştir.
+### 1.2. Yaklaşım: Kodu Model Değil Sunucu Üretir
+Üretici bir dil modeli (LLM) tek başına GTİP tespitinde kullanılamaz. Yürürlükte olmayan kodlar uydurabilir,
+ürettiği metin hukuki dayanak değildir ve tarife her yıl değişir.
+
+Bu sistemde model **hiçbir zaman GTİP kodu yazmaz**. Sunucu, resmî 2026 TGTC ağacının her seviyesinde (fasıl →
+pozisyon → alt pozisyon → 12 haneli yaprak) kardeş düğümleri harf kimlikleriyle (`A`, `B`, … `AA`) modele sunar.
+Model yalnız bir harf döndürür. Sunucu bu harfi kendi düğümüne çözer, ebeveyn–çocuk yolunu korur ve sonucu ancak
+kod, veritabanında **yürürlükteki aktif bir 12 haneli yaprak** ise kabul eder.
 
 > [!IMPORTANT]
-> **TEMEL İLKELERİMİZ**
-> 1. **SIFIR HALÜSİNASYON (Zero-Hallucination):** Kapalı aday kümesi dışına asla çıkılamaz; model asla serbest 12-haneli GTİP üretemez.
-> 2. **STATİK MEVZUAT BAĞLAMA (No-AI Output Binding):** Hukuki gerekçe metni AI üretimi değil, doğrudan Cloud SQL'deki kanun ve izahnameden JOIN edilir.
-> 3. **%5 EŞİK KURALI VE HITL:** İlk 2 aday arasındaki skor farkı <%5 ise otomatik onay yasaktır; Gümrük Müşavirine ayırt edici soru yöneltilir.
-> 4. **FAIL-CLOSED PRENSİBİ:** AI servislerinde gecikme, hata veya uyumsuzluk varsa sistem "tahmin" etmez; doğrudan "MANUAL_REVIEW_REQUIRED" der.
+> **TEMEL İLKELER (kodda uygulanan hâliyle)**
+> 1. **Kapalı küme:** Model yalnız sunucunun verdiği `option_id` değerini döndürebilir. Küme dışı kimlik gelirse seçim geçersizdir ([llm_verifier.py](api/modules/llm_verifier.py)).
+> 2. **Yaprak doğrulama kapısı:** Seçilen kod `validate_leaf_gtip` ile 12 hane, `is_leaf`/`GTIP` seviyesi ve yürürlük tarihi açısından doğrulanır. Doğrulanamazsa karar `MANUAL_REVIEW_REQUIRED` olur ([database.py](api/db/database.py)).
+> 3. **Model mevzuat metni yazmaz:** GİR metinleri, fasıl/pozisyon/alt pozisyon/yaprak metinleri ve fasıl notları kayıtlı resmî kaynaktan okunur (`get_official_statute_records`).
+> 4. **Emsal delildir, bağlayıcı değildir:** BTB ve AB EBTI kararları modele delil olarak verilir. Skora doğrudan ağırlık olarak girmez (`BTB_WEIGHT = 0.0`). Tek istisna, tüm birebir eşleşmelerin aynı aktif yaprağı gösterdiği BTB kısa yoludur.
+> 5. **Fail-closed:** Model hatası, zaman aşımı, sözleşme ihlali veya doğrulama hatası tahmine değil `NO_MATCH`, soruya ya da manuel incelemeye dönüşür.
+> 6. **Ölçülmemiş iddia yok:** Güven skoru etiketli veriyle kalibre edilir. Doğruluk, gerçek BTB kararlarından oluşan bir holdout üzerinde ölçülür (bkz. Bölüm 10).
 
 ---
 
-## 2. SİSTEM MİMARİSİ VE TEKNOLOJİ YIĞINI (HIGH-LEVEL ARCHITECTURE)
+<a id="bolum-2"></a>
 
-Sistem; mikroservis tabanlı, bulut yerel (*cloud-native*), sunucusuz (*serverless*) ve olay güdümlü (*event-driven*) bir mimari üzerinde inşa edilmiştir.
+## 2. SİSTEM MİMARİSİ VE TEKNOLOJİ YIĞINI
 
-### 2.1. Yüksek Düzey Mimari Şeması
+Sistem GCP üzerinde sunucusuz çalışır. Backend ve web ayrı Cloud Run servisleridir. Veri toplama ve ölçüm işleri
+Cloud Run Job olarak aynı imajla çalışır.
+
+### 2.1. Yüksek Düzey Mimari
 
 ```mermaid
 flowchart TD
-    subgraph ClientLayer ["KULLANICI VE İSTEMCİ KATMANI"]
-        UI["React 18 + Vite Web Paneli\n(Glassmorphism Dashboard)"]
-        SSE["Canlı Karar Akışı\n(Server-Sent Events)"]
-        HITL_UI["Müşavir Teyit Modalı\n(HITL Disambiguation)"]
+    subgraph Client ["İSTEMCİ (web/ — React 18 + Vite)"]
+        UI["Analiz Paneli\n(FileUploader, PipelineStatus)"]
+        HITL_UI["HITLQuestionModal\n(resmî kardeş dallar + 'Bilinmiyor')"]
+        Result["GTIPResultCard / ManualReviewCard"]
+        Explorer["CustomsKnowledgeExplorer\n(Tarife ağacı, BTB, Kurallar, ETL durumu)"]
     end
 
-    subgraph APILayer ["API VE ORKESTRASYON KATMANI (Cloud Run)"]
-        FastAPI["FastAPI 1.1.0 Gateway"]
-        AuthMiddleware["JWT + Google OAuth 2.0 / IAP"]
-        RateLimiter["IP / User Rate Limiter"]
-        WorkflowEngine["LangGraph Tabanlı Durum Makinesi\n(GTIPWorkflowEngine)"]
+    subgraph Edge ["WEB CONTAINER"]
+        Nginx["Nginx\n/api/v1 → BACKEND_ORIGIN proxy"]
     end
 
-    subgraph AIEngine ["YAPAY ZEKA VE ÇIKARIM KATMANI (Vertex AI - us-central1)"]
-        FastModel["Gemini 2.5 Flash / Flash-Lite\n(Feature Extraction - Budget: 0)"]
-        EmbeddingModel["text-embedding-005\n(768-dim Semantik Vektörleme)"]
-        ReasoningModel["Gemini 2.5 Pro / 3.7 Flash\n(Deep Reasoning - Budget: 2048)"]
-        ContextCache["Vertex AI Context Caching\n(99 Fasıl İzahnamesi & GİR Kuralları)"]
+    subgraph API ["BACKEND (Cloud Run — FastAPI, api/main.py)"]
+        Auth["Kimlik: Bearer JWT / Google IAP / demo"]
+        Armor["model_armor: regex tabanlı\nprompt-injection filtresi"]
+        Rate["Kayan pencere rate limit\n(yalnız production demo)"]
+        WF["GTIPWorkflowEngine\n(api/graph/workflow.py)"]
+        FE["FeatureExtractor"]
+        Sel["RAGEngine (kapalı küme ağaç dolaşımı)\n+ LLMFactVerifier.select_tariff_node"]
+        Gate["validate_leaf_gtip\n+ get_official_statute_records"]
+        Conf["compute_confidence\n+ review_reasons"]
     end
 
-    subgraph DeterministicEngine ["DETERMİNİSTİK KURAL VE KARAR MOTORU"]
-        RuleEngine["GİR 1-6 & HARD_RULES_MATRIX"]
-        Discriminator["DiscriminatorEngine\n(Regex / Eşik / Malzeme Ayrımı)"]
-        PredicateRegistry["Dinamik Yüklem Kaydı\n(Boolean Legal Predicates)"]
-        SymbolicEvaluator["Deterministik Karar Verici\n(%5 Eşik & No-AI Binding)"]
+    subgraph AI ["VERTEX AI (us-central1)"]
+        Lite["gemini-2.5-flash-lite\n(özellik çıkarımı)"]
+        Flash["gemini-2.5-flash\n(düğüm seçimi)"]
     end
 
-    subgraph DataLayer ["VERİ VE DEPOLAMA KATMANI (Cloud SQL & Storage)"]
-        CloudSQL[("GCP Cloud SQL PostgreSQL\n+ pgvector HNSW")]
-        TGTC_Tree["2026 TGTC Tarife Ağacı\n(Fasıl, Pozisyon, GTİP)"]
-        BTB_DB["6 Yıllık Resmî Gazete\n& BTB Emsal Havuzu"]
-        GCS["Cloud Storage Bucket\n(Ham JSONL, İmzalı Dosyalar, PDF)"]
-        AuditDB[("Firestore / BigQuery\n(Değiştirilemez Denetim İzi)")]
+    subgraph Data ["VERİ"]
+        SQL[("Cloud SQL PostgreSQL\npgvector + ltree")]
+        JSON["İmaja gömülü katalog\n2026 TGTC/*.json\napi/data/*.json"]
+        GCS["Cloud Storage\n(yüklemeler, ham ETL arşivi)"]
     end
 
-    UI -->|Ürün Tanımı / Fatura| FastAPI
-    FastAPI --> AuthMiddleware --> RateLimiter --> WorkflowEngine
-    WorkflowEngine -->|1. Aşama: Özellik Çıkarımı| FastModel
-    WorkflowEngine -->|2. Aşama: GİR Kuralları| RuleEngine
-    WorkflowEngine -->|3. Aşama: Vektörleştirme| EmbeddingModel
-    WorkflowEngine -->|3. Aşama: Hibrit Arama & RRF| CloudSQL
-    CloudSQL --> TGTC_Tree
-    CloudSQL --> BTB_DB
-    WorkflowEngine -->|Dallanma Eşiği Tetiklendiğinde| Discriminator
-    Discriminator -->|Ayırt Edici Soru| HITL_UI
-    WorkflowEngine -->|4. Aşama: Yasal Doğrulama| ReasoningModel
-    ReasoningModel -.-> ContextCache
-    WorkflowEngine -->|5. Aşama: Sembolik Değerlendirme| SymbolicEvaluator
-    SymbolicEvaluator -->|Statik Kanun Metni JOIN| CloudSQL
-    SymbolicEvaluator -->|Denetim Günlüğü| AuditDB
-    SymbolicEvaluator -->|Karar Yanıtı & PDF| UI
-    WorkflowEngine -.->|Canlı Durum Bilgisi| SSE
+    UI --> Nginx --> Auth --> Rate --> Armor --> WF
+    WF --> FE --> Lite
+    WF -->|BTB / EBTI emsal araması| SQL
+    WF --> Sel --> Flash
+    Sel -->|pozisyon listesi, fasıl notları| JSON
+    Sel -->|alt pozisyon ve yaprak düğümleri| SQL
+    WF --> Gate --> SQL
+    WF --> Conf
+    WF -->|session_state, classification_run, audit_logs| SQL
+    WF -->|WAITING_FOR_USER| HITL_UI
+    WF -->|COMPLETED / MANUAL_REVIEW_REQUIRED| Result
 ```
 
-### 2.2. Teknoloji Yığını (Tech Stack)
+### 2.2. Teknoloji Yığını
 
-| Katman | Teknoloji / Kütüphane | Açıklama ve Rolü |
+| Katman | Teknoloji | Rolü |
 | :--- | :--- | :--- |
-| **Frontend** | React 18, Vite, Lucide React, CSS Variables | Glassmorphic UI, anlık durum göstergeleri, tema desteği, PDF indirme. |
-| **API Framework** | FastAPI, Uvicorn, Pydantic v2 | Yüksek performanslı asenkron REST API, SSE generator, tip güvenliği. |
-| **İş Akışı / Ajan** | LangGraph, Python Typing | Durum makinesi (State Machine), oturum yönetimi, duraklatma-devam ettirme (*pause-resume*). |
-| **Yapay Zeka (LLM)** | Google GenAI SDK (Vertex AI) | `gemini-2.5-flash-lite`, `gemini-2.5-flash`, `gemini-2.5-pro`, `text-embedding-005`. |
-| **Context Caching** | Vertex AI Context Caching API | TGTC mevzuatının model bağlamında 24 saat önbelleklenmesi (0 ms gecikme, %80 tasarruf). |
-| **İlişkisel & Vektör DB** | Cloud SQL (PostgreSQL 15+), pgvector | HNSW indeksleme, hibrit arama (Dense + Sparse BM25), RRF puanlama. |
-| **Dosya & Arşivleme** | Google Cloud Storage (GCS) | Resmî Gazete PDF'leri, ham JSONL taramaları, V4 Signed URL yüklemeleri. |
-| **Denetim ve Loglama** | Cloud Firestore / BigQuery | Tam denetim izi (*audit trail*), Müşavir onay kayıtları, BI raporlama. |
-| **Raporlama** | ReportLab 4.x | Türkçe karakter (UTF-8) destekli, font ailesi kayıtlı resmî gümrük PDF raporlayıcı. |
-| **Kurumsal Bildirim** | Google Workspace (Chat & Gmail) | Card v2 formatında interaktif Google Chat bildirimleri ve SMTP e-posta servisi. |
+| **Frontend** | React 18, Vite 8, axios, lucide-react | Analiz paneli, HITL modalı, sonuç kartı, bilgi gezgini. İstek zaman aşımı 45 sn. |
+| **Web sunumu** | Nginx (`web/nginx.conf.template`) | Statik dosyalar ve `/api/v1` → `BACKEND_ORIGIN` proxy. İmaja ortam URL'si gömülmez. |
+| **API** | FastAPI (sürüm `1.1.0`), Uvicorn, Pydantic v2 | REST uç noktaları, SSE, toplu analiz, PDF. |
+| **Orkestrasyon** | Düz Python sınıfı `GTIPWorkflowEngine` | Analizi başlatma, duraklatma, devam ettirme. (LangGraph kullanılmaz; senkron akış `asyncio.to_thread` ile çalışır.) |
+| **LLM** | Google GenAI SDK, Vertex AI (ADC) | `REASONING_LLM_MODEL = gemini-2.5-flash` (seçim), `EXTRACTOR_LLM_MODEL = gemini-2.5-flash-lite` (çıkarım). |
+| **Veritabanı** | Cloud SQL PostgreSQL, SQLAlchemy 2, `vector`, `ltree`, `uuid-ossp` uzantıları | Tarife yaprakları, emsaller, oturum durumu, karar kayıtları. |
+| **Dosya deposu** | Cloud Storage | Görsel yüklemeleri (`uploads/YYYY/MM/DD/`), ETL ham JSONL arşivi. |
+| **Denetim** | Cloud SQL `audit_logs` (varsayılan) veya Firestore `gtip_audit_logs` | `AUDIT_BACKEND` ile seçilir. |
+| **Raporlama** | ReportLab | Türkçe fontlu (Arial/DejaVu) A4 PDF, tekil ve toplu. |
+| **Loglama** | `api/logging_config.py` | Cloud Logging uyumlu yapılandırılmış JSON, `severity` alanı dolu. |
+| **Bildirim** | Google Chat webhook (Card v2), SMTP | Yalnız ETL senkron sonuç kartı için kullanılır. |
+| **CI** | GitHub Actions (`.github/workflows/test.yml`) | Çevrimdışı `pytest` (SQLite + stub seçici) ve web derlemesi. |
 
 ---
 
-## 3. 5 AŞAMALI HİBRİT KARAR VE DOĞRULAMA BORU HATTI
+<a id="bolum-3"></a>
 
-Sistem, ürün metnini doğrudan bir LLM'e verip "Bunun GTİP'i nedir?" diye **kesinlikle sormaz**. Bunun yerine, Türk Gümrük Mevzuatı'nın mantıksal omurgasını temsil eden **5 ardışık aşamalı (staged pipeline)** bir filtreleme işletir:
+## 3. KARAR HATTI: UÇTAN UCA AKIŞ
+
+Sistem ürün metnini LLM'e verip "GTİP nedir?" diye sormaz. Akış aşağıdaki gibidir:
 
 ```
-[Ham Ürün Metni / Görsel]
-           │
-           ▼
-┌────────────────────────────────────────┐
-│ Aşama 1: Multimodal Özellik Çıkarımı   │ ➔ Ticari Ad, Malzeme, İşlev, Voltaj, Gramaj
-└────────────────────────────────────────┘
-           │
-           ▼
-┌────────────────────────────────────────┐
-│ Aşama 2: Deterministik Kural Motoru    │ ➔ GİR 1 [HARD LOCK] Fasılları, GİR 2a, GİR 3b
-└────────────────────────────────────────┘
-           │
-           ▼
-┌────────────────────────────────────────┐
-│ Aşama 3: Hiyerarşik Hibrit RAG Arama   │ ➔ 2-Hane Routing ➔ Dışlama Notu Süzgeci
-│          (4 -> 6 -> 12 Hane Ağaç)      │ ➔ [Discriminator] ➔ pgvector + BM25 RRF
-└────────────────────────────────────────┘
-           │
-           ▼
-┌────────────────────────────────────────┐
-│ Aşama 4: Yasal Doğrulama & Yüklemler   │ ➔ Kapalı Aday Kümesi (C1-C5) ➔ Boolean Predicates
-└────────────────────────────────────────┘
-           │
-           ▼
-┌────────────────────────────────────────┐
-│ Aşama 5: Deterministik Sembolik Karar  │ ➔ %5 Eşik HITL Kapısı ➔ No-AI Output Binding
-└────────────────────────────────────────┘
-           │
-           ▼
-[Nihai 12-Haneli GTİP + Statik Kanun Metni + Müşavir Onay İzi]
+[Ürün tanımı (+ isteğe bağlı görsel)]
+        │
+        ▼
+ Aşama 0  Giriş kapısı ─────────── kimlik, rate limit, model_armor temizliği
+        │
+        ▼
+ Aşama 1  Özellik çıkarımı ──────── deterministik kısa yol  |  flash-lite JSON
+        │
+        ▼
+ Aşama 2  Emsal toplama ─────────── BTB (Cloud SQL) + AB EBTI (Cloud SQL)
+        │
+        ├── Tüm birebir BTB eşleşmeleri aynı aktif yaprağı mı gösteriyor? ── Evet ──┐
+        │                                                                          │
+        ▼ Hayır                                                                    │
+ Aşama 3  Kapalı küme ağaç dolaşımı (32 sn bütçe)                                  │
+          En iyi BTB ≥ 0.80 ise: emsallerin ilk 3 pozisyonu → HEADING'den başla   │
+            (bağlanamazsa tam dolaşıma dön)                                        │
+          Aksi halde: CHAPTER → HEADING → SUBHEADING → GTIP                        │
+          (her seviyede: SELECT | INSUFFICIENT_INFORMATION | NO_MATCH)             │
+        │                                                                          │
+        ├── Soru üretildi ──► WAITING_FOR_USER (oturum saklanır)                    │
+        ▼                                                                          │
+ Aşama 4  Sunucu doğrulaması ve mevzuat bağlama ◄─────────────────────────────────┘
+          validate_leaf_gtip + get_official_statute_records
+        │
+        ▼
+ Aşama 5  Güven skoru ve inceleme işareti
+        │
+        ▼
+[COMPLETED (PASSED | MANUAL_REVIEW işareti)  |  MANUAL_REVIEW_REQUIRED]
 ```
 
 ---
 
-### Aşama 1: Multimodal ve Dinamik Özellik Çıkarımı (Feature Extraction)
-* **Bileşen:** [feature_extractor.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/modules/feature_extractor.py) (`FeatureExtractor`)
-* **Kullanılan Model:** `gemini-2.5-flash-lite` veya `gemini-2.5-flash` (`THINKING_BUDGET_EXTRACTOR: 0`).
-* **Amaç:** Serbest metin, ticari fatura veya görselden hammadde, kullanım amacı, elektrik motoru varlığı, şarj/batarya durumu, karışım yüzdeleri gibi teknik parametreleri ayrıştırmak.
-* **Algoritmik Çalışma:**
-  1. *Deterministik Ön Kontrol:* Metin küçük harfe çevrilerek `"motor"`, `"şarj"`, `"batarya"`, `"pamuk"`, `"polyester"` gibi kritik terimler regex ile taranır. Örneğin `"%60 pamuk %40 polyester"` ifadesi anında `{"cotton": 0.6, "polyester": 0.4}` bileşim sözlüğüne dönüştürülür.
-  2. *Hızlı Yapılandırılmış LLM Çağrısı:* Model, sıcak yol gecikmesini önlemek adına `thinking_budget: 0` ve `response_mime_type: "application/json"` yapılandırmasıyla çalışır. Çıktı doğrudan `ProductFeatures` Pydantic şemasına parse edilir:
-     ```json
-     {
-       "product_name": "Şarjlı Döner Başlıklı Diş Fırçası",
-       "primary_material": "Plastik",
-       "intended_use": "Ağız ve Diş Sağlığı",
-       "is_set_or_kit": false,
-       "is_disassembled": false,
-       "technical_specifications": {
-         "has_electric_motor": "true",
-         "power_source": "Bataryalı / Şarjlı"
-       }
-     }
-     ```
-  3. *Çevrimdışı/Hata Güvencesi (Fallback):* LLM yanıt veremezse, Türkçe stop-words (`TURKISH_STOP_WORDS`) süzgeci ve NLP tokenizasyonu devreye girerek ürün adı ve olası malzeme dinamik olarak belirlenir.
+### Aşama 0: Giriş Kapısı
+* **Bileşenler:** [main.py](api/main.py), [auth.py](api/security/auth.py), [rate_limit.py](api/security/rate_limit.py), [model_armor.py](api/security/model_armor.py)
+* Kimlik sırası: `Authorization: Bearer` JWT, ardından `x-goog-iap-jwt-assertion` (yalnız `IAP_AUDIENCE` tanımlıysa).
+  Geliştirmede `X-User-Email` ve `X-User-Role` başlıkları kabul edilir. Production'da kimlik yoksa istek `401` alır.
+  Tek istisna `ALLOW_PUBLIC_DEMO_ACCESS=true` durumudur; o zaman oturum `demo_` önekli bir demo kullanıcısıdır.
+* **Rate limit:** Yalnız production'daki demo kullanıcılarına uygulanır. İstemci IP'si başına dakikalık kayan pencere
+  kullanılır (`PUBLIC_DEMO_RATE_LIMIT_PER_MINUTE=10`, toplu analizde bunun yarısı).
+* **model_armor:** Adı Vertex AI Model Armor'ı çağrıştırsa da yerel bir **regex filtresidir**. "override gtip to …",
+  "force classification as …" gibi talimat enjeksiyonu kalıplarını reddeder ve kontrol karakterlerini temizler.
 
----
+### Aşama 1: Özellik Çıkarımı
+* **Bileşen:** [feature_extractor.py](api/modules/feature_extractor.py) (`FeatureExtractor.extract_features`)
+* **Çıktı:** `ProductFeatures` (ürün adı, ticari ad, baskın malzeme, işlev, aksesuar/ambalaj, kompozisyon, kullanım amacı,
+  set/demonte bayrakları, teknik özellikler).
+* **Algoritma:**
+  1. *Regex ön çıkarımı:* Voltaj (`220V`), güç (`1500W`), ağırlık (`kg/gr`) ve pamuk/polyester yüzdesi ayrıştırılır.
+  2. *Deterministik kısa yol:* Metin kısa ve tek ürünlükse model çağrılmaz. Koşullar: en fazla 240 karakter ve 24 kelime,
+     fatura işaretleri yok, en fazla 1 satır sonu ve 2 iki nokta. Görsel yüklendiyse kısa yol kullanılmaz. Özellikler
+     açık malzeme sözlüğünden (`_EXPLICIT_MATERIALS`) kurulur. Cam balkon, duşakabin gibi mimari sistem terimlerinde
+     çerçeve malzemesi öne alınır ve set/demonte bayrakları açılır.
+  3. *LLM çıkarımı:* Uzun veya belge benzeri girdide `gemini-2.5-flash-lite` çağrılır. Ayarlar `thinking_budget=0`,
+     `temperature=0.0`, `response_mime_type=application/json`. Regex bulguları modelin teknik özelliklerinin üzerine yazılır.
+  4. *Yedek yol:* Model başarısız olursa ilk satır ürün adı olur, malzeme Türkçe stop-word süzgeciyle token'lardan türetilir.
+* **Önemli:** Çıkarılan özellikler seçim adımına **ham beyanla birlikte** verilir (`ORİJİNAL BEYAN: …`,
+  `SELECTION_USE_RAW_TEXT`). Önceki sürümde ölçü ve kullanım koşulu gibi ayrımlar damıtma sırasında kayboluyordu.
 
-### Aşama 2: Deterministik Kural Motoru (GİR 1-6 & HARD_RULES_MATRIX)
-* **Bileşen:** [rule_engine.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/modules/rule_engine.py) (`RuleEngine`)
-* **Amaç:** Dünya Gümrük Örgütü ve Türk Gümrük Tarife Cetveli'nin temelini oluşturan **Genel Yorum Kurallarını (GİR 1 ila 6)** sırasıyla çalıştırmak ve halüsinasyonu engellemek için fasıl kilidi (*chapter lock*) uygulamak.
-* **Algoritmik Mekanizma:**
-  1. **GİR 1 [HARD RULES MATRIX] - Katı Fasıl Kilidi:**
-     Belirli ürün kategorileri gümrük nomenklatüründe tartışmasız olarak belirli fasıllara aittir. `HARD_RULES_MATRIX` bu kuralı kod düzeyinde kilitler:
-     * *Elektrikli su ısıtıcı / kettle* ➔ **Fasıl 85** (Elektrotermik ev cihazları)
-     * *Ayakkabı, bot, çizme, terlik* ➔ **Fasıl 64** (Ayak giyecekleri)
-     * *Entegre devre, PMIC, yarı iletken, transistör, çip* ➔ **Fasıl 85** (Elektronik bileşenler)
-     * *Kazan, mekanik cihaz, pompa, bilgisayar aksamı* ➔ **Fasıl 84** (Mekanik aletler)
-     * *Oyuncak, spor malzemesi, oyun konsolu* ➔ **Fasıl 95**
-     * *Mobilya, aydınlatma, yatak takımları* ➔ **Fasıl 94**
-     
-     > [!IMPORTANT]
-     > Katı Fasıl Kilidi (`is_hard_locked = True`) devreye girdiğinde, sistem RAG ve yapay zeka aramasını **yalnızca bu fasılla sınırlandırır**. Modelin ayakkabıyı Fasıl 42'ye (deri eşya) veya kettle'ı Fasıl 73'e (çelik eşya) atması matematiksel olarak imkânsız kılınır.
+### Aşama 2: Emsal Toplama
+* **Bileşen:** [rag_engine.py](api/modules/rag_engine.py) (`search_btb_precedents`, `search_ebti_precedents`, `exact_btb_candidate`)
+* Emsal araması **ham ürün metni** üzerinden, vektör değil metin eşleşmesiyle yapılır:
 
-  2. **GİR 2a - Demonte / Sökülmüş Eşya Kuralı:**
-     Eğer `features.is_disassembled` doğruysa veya metinde `"demonte"`, `"parça halinde"` gibi terimler varsa, eşyanın monte haldeki tam fonksiyonel faslı esas alınır.
-  3. **GİR 2b & GİR 3b - Karışımlar ve Esas Niteliği Veren Madde (Essential Character):**
-     Ürün bir karışım veya kompozit eşya ise hammadde oranları taranır. Ağırlıkça `%50+` olan baskın malzeme (`ratio >= 0.50`) tespit edilirse ilgili fasıl önceliklendirilir (Örn: %70 pamuk ➔ Fasıl 52).
-  4. **GİR 4 - Benzerlik Kuralı (Fallback):**
-     Doğrudan mevzuatta eşleşmeyen inovatif ürünler için en yakın benzerlik tespiti amacıyla açık vektör uzayına izin verilir.
-  5. **GİR 6 - Alt Pozisyon Kuralları:**
-     Fasıl kısıtlaması tamamlandıktan sonra alt açılımların (4, 6 ve 12 hane) karşılaştırılması ilkesi yürürlüğe konur.
+| | Türkiye BTB (`gumruk_emsal_kararlar`, `karar_tipi='BTB'`) | AB EBTI (`ebti_kararlari`) |
+| :--- | :--- | :--- |
+| Ön filtre | En uzun 6 terim (≥3 harf) için `ILIKE`, en yeni 200 satır | En uzun 6 terim için `ILIKE`, durum `VALID/VALID_EXPIRED/UNKNOWN`, en yeni 150 satır |
+| Normalizasyon | Türkçe karakter ve aksan katlama, küçük harf, alfanümerik token | Aynı. Ürün tanımına karar gerekçesi de eklenir |
+| Skor | Tam eşitlik 1.0, içerme 0.96, aksi halde `0.7·kapsama + 0.3·kesinlik` | Tam eşitlik 1.0, içerme 0.95, aksi halde `0.65·kapsama + 0.35·kesinlik`. `VALID` ise ×1.05 |
+| Eşik / adet | ≥ 0.30, en iyi 5 | ≥ 0.20, en iyi 3 |
+| Geçerlilik | `valid_until` geçmişse atlanır | `VALID` olup süresi dolmuşsa atlanır |
 
----
+  Burada `kapsama = ortak token / sorgu token'ı`, `kesinlik = ortak token / emsal token'ı` olarak hesaplanır.
 
-### Aşama 3: Hiyerarşik Hibrit RAG ve Tarife Ağacı Taraması
-* **Bileşenler:** [rag_engine.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/modules/rag_engine.py) (`RAGEngine`), [discriminator_engine.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/modules/discriminator_engine.py) (`DiscriminatorExtractor`), [database.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/db/database.py) (`hybrid_search_headings_and_gtip`)
-* **Amaç:** 216.000'den fazla satırdan oluşan 2026 TGTC ağacında körleme düz arama (*flat semantic search*) yapmak yerine, **Yukarıdan Aşağıya (4 ➔ 6 ➔ 12 Hane)** hiyerarşik tarama gerçekleştirmek.
+* **Birebir BTB kısa yolu:** Skoru ≥ 0.999 olan tüm BTB'ler **tek bir** koda işaret ediyorsa ve bu kod aktif bir yaprak
+  olarak doğrulanıyorsa ağaç dolaşımı atlanır. `selection_source = "BTB_EXACT"` olur. Kodu model değil idarenin kendi
+  kararı vermiş olur.
+* Benchmark sırasında numunenin kendi BTB kaydı `exclude_btb_refs` ile havuzdan çıkarılır, böylece sızıntı olmaz.
+* BTB araması 20 sonuç döndürür. İlk 5'i delil olarak modele ve karara gider. 20'lik kümenin tamamı yalnız pozisyon
+  yönlendirmesinin oylamasında kullanılır (Aşama 3.0).
+
+### Aşama 3: Kapalı Küme Ağaç Dolaşımı
+* **Bileşenler:** [rag_engine.py](api/modules/rag_engine.py) (`search_candidates_hierarchical`, `_select_node`), [llm_verifier.py](api/modules/llm_verifier.py) (`select_tariff_node`), [predicate.py](api/schemas/predicate.py) (`CandidateSelection`)
 
 ```mermaid
 flowchart TD
-    Q["Kullanıcı Sorgusu + Vektör (text-embedding-005)"] --> Step1["Adım 3.1: 2-Hane Fasıl Routing (İzinli Fasıllar)"]
-    Step1 --> Step2["Adım 3.2: Dışlama Notu Süzgeci (Chapter Exclusion Check)"]
-    Step2 --> Step3["Adım 3.3: 4-Haneli Tarife Pozisyonu Taraması (Heading Search)"]
-    Step3 --> Disc1{"Puan Farkı < 0.08 mi?\n(Competing Headings?)"}
-    Disc1 -- Evet --> HITL1["Discriminator Sorusu Sor\n(Oturumu Askıya Al)"]
-    Disc1 -- Hayır --> LockHead["Pozisyonu Kilitle (Locked Heading)"]
-    LockHead --> Step4["Adım 3.4: 6-Haneli Alt Pozisyon Taraması (Subheading Search)"]
-    Step4 --> Disc2{"Puan Farkı < 0.08 mi?\n(Competing Subheadings?)"}
-    Disc2 -- Evet --> HITL2["Discriminator Sorusu Sor\n(Oturumu Askıya Al)"]
-    Disc2 -- Hayır --> LockSub["Alt Pozisyonu Kilitle (Locked Subheading)"]
-    LockSub --> Step5["Adım 3.5: 12-Haneli Nihai Yaprak Taraması (Leaf Search)"]
-    Step5 --> RRF["pgvector Dense + BM25 Sparse RRF Birleştirme"]
-    RRF --> Top5["En İyi 5 Aday (Top-5 Closed Candidate Set)"]
+    Start["Ürün metni + emsaller + bütçe saati (32 sn)"] --> C["CHAPTER: 97 fasıl\n(etiket + kısaltılmış pozisyon kapsamı)"]
+    C -->|SELECT| H["HEADING: seçilen faslın 4 haneli pozisyonları"]
+    H -->|SELECT| S["SUBHEADING: 6 haneli alt pozisyonlar\n(+ alt pozisyon bağlamı)"]
+    H -->|hiçbir pozisyon uymadı| BT["Fasıl geri alması (1 kez)\nreddedilen fasıl modele bildirilir"]
+    BT --> C
+    S -->|SELECT| L["GTIP: aktif 12 haneli yapraklar"]
+    L -->|SELECT| Done["locked_gtip → Aşama 4"]
+    L -->|NO_MATCH ve tek 'Diğerleri' yaprağı| Res["Kalıntı dalı seçilir\nused_residual_fallback = true"]
+    Res --> Done
+    H -->|INSUFFICIENT_INFORMATION| Q["Sınırlı soru → WAITING_FOR_USER"]
+    S -->|INSUFFICIENT_INFORMATION| Q
+    L -->|INSUFFICIENT_INFORMATION| Q
+    H -->|NO_MATCH ve 2–4 kardeş| Q
+    S -->|NO_MATCH ve 2–4 kardeş| Q
+    L -->|NO_MATCH ve 2–4 kardeş| Q
 ```
 
-#### Adım 3.1: Fasıl Seviyesi Yönlendirme (Chapter Routing)
-Sorgu metni ve vektörü üzerinden ilk 2-3 olası fasıl (`allowed_chapters`) belirlenir. Katı kural varsa bu liste dışına asla çıkılmaz.
+#### 3.0. Emsal güdümlü pozisyon yönlendirmesi (hibrit giriş)
+* **Bileşenler:** `route_headings_from_precedents`, `aggregate_precedents_by_heading`, `_routed_heading_nodes` ([rag_engine.py](api/modules/rag_engine.py)); tam dolaşıma dönüş [workflow.py](api/graph/workflow.py) içindedir.
+* **Kapı:** En iyi TR BTB benzerliği `HEADING_ROUTING_MIN_BTB = 0.80` veya üstündeyse CHAPTER seçimi atlanır. EBTI kapıyı açmaz.
+* **Adaylar:** Emsaller pozisyonlarına göre oylanır (`skor = en iyi benzerlik + 0.05 × ek emsal`). İlk
+  `HEADING_ROUTING_MAX_HEADINGS = 3` pozisyon, katalogda varsa HEADING seçenekleri olur. Adaylar birden çok fasla
+  yayılabilir; her adayın fasıl notu kendi başlığıyla ve eşit payla prompta girer.
+* **Model onayı zorunlu:** Tek aday olsa bile model çağrılır (`always_ask_model`), çünkü aday resmî ağaçtan değil
+  emsalden gelir.
+* **Dönüş:** Model adaylar arasında `NO_MATCH` derse bu soruya çevrilmez (`recover_no_match=False`). Müşavir muhtemelen
+  yanlış adaylar arasında seçime zorlanmaz; aynı süre bütçesiyle tam dolaşım başlatılır. İzde
+  `routing = BTB_HEADINGS_FALLBACK` ve `used_routing_fallback = true` görünür. Alt seviyelerde bağlanamama da aynı dönüşü tetikler.
+* **Bayrak:** `HEADING_ROUTING_ENABLED` (varsayılan açık). Yeniden deploy gerekmeden ortam değişkeniyle kapatılabilir.
+* **Neden tam geçiş değil:** Fasıl seçimini tamamen aramaya bırakmak ölçümde reddedildi (bkz. Bölüm 10.4).
 
-#### Adım 3.2: Dışlama Notu Süzgeci (Exclusion Check)
-* `search_chapter_notes_and_exclusions`: Veritabanındaki Resmî Fasıl İzahnamelerinden `"kapsamaz"`, `"dahil değildir"`, `"bu fasla girmez"`, `"hariçtir"` hükümleri çekilir.
-* `llm_verifier.verify_chapter_exclusions`: Model derin muhakeme modunda (`thinking_budget: 2048`) ürünün bu fasıldan dışlanıp dışlanmadığını denetler:
-  * *Örnek:* Kullanıcı "Deri Ayakkabı" sorguladığında sistem Fasıl 42'yi (Deri Eşya) inceler. İzahnamedeki *"Bu fasıl 64. Fasıldaki ayakkabıları kapsamaz"* hükmünü gören model `is_excluded: true` ve `recommended_alternative_chapter: "64"` yanıtı verir. Fasıl 42 derhal elenir.
+#### 3.1. Seviye başına seçenek kümeleri
+| Seviye | Kaynak | Not |
+| :--- | :--- | :--- |
+| `CHAPTER` | `load_tgtc_chapters()` + `get_local_tgtc_headings()` | Her fasıl için başlık ve pozisyon kapsamı verilir. Pozisyon **listesi kesilmez**, yalnız etiketler kısaltılır (`CHAPTER_HEADING_LABEL_CHARS=20`, fasıl başına ≤ `CHAPTER_SCOPE_CHARS=2600`). Prompt ~21.000 token'dan ~11.300 token'a indi ve Fasıl 61'de 6109 gibi pozisyonlar görünür kaldı. |
+| `HEADING` | `2026 TGTC/tgtc_2026_full_database.json` içindeki 4 haneli kayıtlar | 964 pozisyon. |
+| `SUBHEADING` | `tgtc_gtip` (`level='SUBHEADING'`), `tariff_hierarchy` (`level=6`), eksikse yapraklardan türetme | [tgtc_subheading_context.json](api/data/tgtc_subheading_context.json) bağlamı `branch_context` olarak eklenir. |
+| `GTIP` | `tgtc_gtip` (`level='GTIP'`, `is_active`) + `tariff_hierarchy` (`is_leaf`) | Açıklamalar kökten yaprağa tam yolu taşır (`scripts/rebuild_tgtc_catalog.py`). |
 
-#### Adım 3.3: Ağaç Taraması ve Erken Dal Ayrımı (Discriminator Engine)
-Sistem 4 haneli pozisyonları, ardından 6 haneli alt pozisyonları ve en son 12 haneli yaprakları sırayla kilitler.
-* **Çatallanma Tespiti (`SCORE_DELTA_THRESHOLD = 0.08`):**
-  Aynı üst dal altındaki en yüksek iki adayın benzerlik puan farkı `%8`'den küçükse, sistem yaprak araması yapıp belirsizliği büyütmek yerine **anında durur**.
-* **Deterministik Ayırt Edici Soru Üretimi:**
-  `DiscriminatorExtractor`, LLM kullanmadan iki dal arasındaki yasal farkı regex ve kural analiziyle çıkarır:
-  1. *Ölçü ve Eşik Farkı:* `THRESHOLD` regex'i ile metin taranır. Örneğin biri `"< 10 kg"`, diğeri `">= 10 kg"` ise `agirlik_kg` parametresi için *"Ürünün ilgili teknik değeri 10 kg eşiğinin hangi tarafındadır?"* sorusu türetilir.
-  2. *Döşemeli Olma Durumu:* Mobilyada `"döşemeli"` vs `"döşemesiz"` ayrımı tespit edilirse `"Sandalye/koltuğun oturma veya sırt bölümü kumaş/deri ile döşenmiş midir?"* sorulur.
-  3. *Yaş Grubu:* `"çocuk"` ibaresi kontrol edilir.
-  4. *Malzeme Baskınlığı:* Belirtilen metaller veya lifler kıyaslanır.
-* Bu mekanizma sayesinde oturum `WAITING_FOR_USER` durumuna geçer ve yapay zeka kör tahmin yapmaktan alıkonur.
+Tek seçenekli seviyede model çağrılmaz; düğüm doğrudan seçilir (`GIR_1`, `GIR_6`).
 
-#### Adım 3.4: Hibrit Arama ve Reciprocal Rank Fusion (RRF)
-Adayların puanlanmasında Dense (vektör) ve Sparse (metin) güçleri birleştirilir:
-1. **Dense Retrieval (pgvector):** `text-embedding-005` tarafından üretilen 768 boyutlu vektörün kosinüs benzerliği ($CosineSim$).
-2. **Sparse Retrieval (BM25 / Token Overlap & Specificity):**
-   Gümrük tarife tanımlarında nadir geçen sözcükler (örneğin `"kettle"`) genel sözcüklerden (örneğin `"elektrikli"`) çok daha ayırt edicidir. Doküman frekansı ($DF$) üzerinden ters doküman frekansı ($IDF$) ağırlığı hesaplanır:
-   $$W(t) = 1.0 + \ln\left(\frac{N + 1}{DF(t) + 1}\right)$$
-3. **RRF (Reciprocal Rank Fusion):**
-   Her iki sıralama listesi standart RRF formülüyle harmanlanır ($k = 60$):
-   $$RRF\_Score(d) = \sum_{m \in \{Dense, Sparse\}} \frac{1}{k + rank_m(d)}$$
-4. **Dinamik BTB Desteği:**
-   Son 6 yıla ait Resmî Gazete ve Ticaret Bakanlığı BTB emsalleri taranır. Doğrulanmış emsal varsa nihai skor:
-   $$Score = (TGTC\_Sim \times 0.40) + (BTB\_Support \times 0.60)$$
-   Emsal bulunamazsa kanıt kalitesi seyreltilmez; doğrudan $\%100$ TGTC benzerliği korunur.
+#### 3.2. Seçenek kimlikleri ve kardeş kısaltma
+* **Harf kimlikleri:** `option_id(i)` sırayı `A, B, … Z, AA, AB` biçimine çevirir. Önceki `N1, N2…` kimlikleri fasıl
+  numaralarıyla hizalıydı. Fasıl 77 boş olduğu için model "Fasıl 85" demek isteyip `N85` yazdığında Fasıl 86 çözülüyordu.
+  Harf kimlikleri tarife koduyla karıştırılamaz.
+* **Konumsal sabitlik:** Reddedilen dal listeden **çıkarılmaz**, çünkü çıkarmak tüm kimlikleri kaydırır. Dışlama modele
+  metinle bildirilir. Model reddedilen kodu yeniden seçerse sonuç `NO_MATCH` sayılır.
+* **Ortak önek atma (`_shorten_siblings`):** Kardeşlerin açıklamalarındaki tamamen ortak yol seviyeleri (`A > B > …`)
+  atılır. Böylece prompt ve kullanıcı sorusunda yalnız ayırt edici kısım kalır.
 
----
+#### 3.3. Seçim promptu
+`select_tariff_node` tek bir prompt kurar. Prompt önbelleklemesine uygun olsun diye sabit bloklar değişken bloklardan önce gelir:
+1. **Kurallar:** Yeni kod yazmama, kapalı küme, GİR 1 dışlama notları, GİR 2(a), 3(a), 3(b). Dar/istisnai dallar ancak olumlu
+   kanıtla seçilir, aksi halde "diğerleri" dalı seçilir. Soru yalnız kullanıcının gözlemleyebileceği bir fiziksel/teknik
+   özellik için sorulur. `CHAPTER` seviyesinde `INSUFFICIENT_INFORMATION` yasaktır.
+2. **Resmî kapalı seçenekler:** `option_id`, `official_code`, `official_description` (≤1800 karakter, en fazla 250 düğüm).
+3. **Fasıl notları** (`SELECTION_USE_CHAPTER_NOTES`): Seçeneklerin tamamı tek bir fasla aitse o faslın resmî notu
+   eklenir (≤6000 karakter). `CHAPTER` seviyesinde eklenmez.
+4. **Emsaller** (`SELECTION_USE_PRECEDENTS`): Kod öneki bu seviyedeki seçeneklerle eşleşen en fazla 4 BTB/EBTI emsali
+   eklenir (önek genişliği CHAPTER 2, HEADING 4, SUBHEADING 6, GTIP 8). Model emsale uyarsa referans numarasını yazmalı,
+   ayrılırsa farkı belirtmelidir. Emsal metin ve notla çelişirse metin ve not üstündür.
+5. **Ürün verisi** `<product_data>` etiketi içinde verilir.
 
-### Aşama 4: Yasal Yüklem Doğrulama ve Derin Akıl Yürütme (Deep Reasoning)
-* **Bileşenler:** [llm_verifier.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/modules/llm_verifier.py) (`LLMFactVerifier`), [predicate_registry.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/modules/predicate_registry.py) (`PredicateRegistryEngine`)
-* **Kullanılan Model:** `gemini-2.5-flash` / `gemini-2.5-pro` (`THINKING_BUDGET_VERIFIER: 2048`).
-* **Amaç:** Aday pozisyonun yasal şartlarının (teknik nitelikler, hammadde bileşenleri, işlev) ürün ile örtüşüp örtüşmediğini denetlemek.
-
-#### 1. Kapalı Aday Kümesi Seçimi (Closed Candidate Selection)
-Model serbestçe GTİP kodu üretemez. RAG aşamasından gelen ilk 5 aday `C1`, `C2`, `C3`, `C4`, `C5` olarak etiketlenip modele sunulur. Model yalnızca şu katı JSON çıktısını üretebilir:
+Beklenen çıktı `CandidateSelection` şemasıdır:
 ```json
 {
-  "status": "SELECT",
-  "selected_candidate_id": "C1",
-  "reasoning_points": ["Ürünün çalışma prensibi 8509 pozisyonundaki motorlu ev aletleri tanımıyla tam uyumludur."],
-  "missing_information": [],
-  "evidence_source_refs": ["TGTC_2026", "FASIL_85_NOTLARI"]
+  "status": "SELECT | INSUFFICIENT_INFORMATION | NO_MATCH",
+  "selected_candidate_id": "C",
+  "alternative_candidate_ids": ["C", "D"],
+  "question_text": "Türkçe soru veya null",
+  "reasoning_points": ["kısa Türkçe gerekçe"],
+  "applied_gir_keys": ["GIR_1", "GIR_3B", "GIR_6"],
+  "cited_chapter_notes": ["76"]
 }
 ```
-Eğer hiçbir aday uymuyorsa model `NO_MATCH` veya `INSUFFICIENT_INFORMATION` döndürmek zorundadır.
+Liste alanları şema doğrulamasından **önce** kırpılır (alternatifler ≤4, gerekçeler ≤6). Gerekçede geçen "GİR 3(b)" veya
+"Fasıl 76" gibi atıflar `applied_gir_keys` ve `cited_chapter_notes` alanlarına otomatik tamamlanır.
 
-#### 2. Dinamik Yasal Yüklemler (Boolean Legal Predicates)
-`predicate_registry`, seçilen GTİP koduna ait tarife metni ve izahnamelerden Boolean yasal yüklemler türetir:
-* **P_8509_1 (Pozisyon Uyumu):** *"Eşya, dahili bir elektrik motoruna sahip ev tipi cihaz tanımına uygun mudur?"* (Beklenen: `TRUE`)
-* **P_8509_EXCLUSION (Dışlama Denetimi):** *"Eşya, ağırlığı 20 kg'ı aşan sanayi tipi cihazlar kapsamında mıdır?"* (Beklenen: `FALSE`)
+#### 3.4. Hata toleransı ve süre bütçesi
+| Mekanizma | Değer | Amaç |
+| :--- | :--- | :--- |
+| Toplam bütçe | `ANALYSIS_BUDGET_MS = 32000`, ağaç dolaşımı başlarken kurulur | Arayüz 45 sn'de vazgeçer. Bütçe dolunca hat eldeki en iyi sonucu döndürür. |
+| Çağrı başına timeout | `max(4 sn, min(LLM_TIMEOUT_MS=15 sn, kalan × 0.6))` | Tek yavaş çağrı tüm bütçeyi yemesin. |
+| Sağlayıcı hatası (429/504) | 3 deneme, üstel bekleme `1.2 sn · 2^(n-1)` | Bütçe yetmiyorsa beklemeden vazgeçer. |
+| İlk deneme | `thinking_budget=0`, `temperature=0.0` | Hızlı ve deterministik. |
+| Daraltma denemesi | `NO_MATCH`'te (CHAPTER'da SELECT dışı her yanıtta) en fazla 2 kez; `thinking_budget=384`, `temperature=0.3` | Modelden en yakın 2–4 dal istenir. Çıkmaz, sorulabilir bir soruya dönüşür. |
+| Fasıl geri alması | Pozisyon seçilemezse 1 kez (`used_chapter_backtrack`) | Yanlış fasıl seçimini kurtarır. |
+| Kalıntı dalı | GTIP seviyesinde `NO_MATCH` ve tek "Diğerleri" yaprağı varsa (`used_residual_fallback`) | Ölü uç yerine resmî kalıntı dalı seçilir; skor düşürülür. |
+| Sınırlı soru kurtarması | CHAPTER dışında `NO_MATCH` ve 2–4 kardeş varsa | Sessizce pes etmek yerine müşavire resmî dallar sorulur. |
+| Test/emülatör modu | `USE_GCP_EMULATOR` veya `ENVIRONMENT=testing` | Model çağrılmaz, ilk seçenek (`A`) döner. Yalnız CI içindir. |
 
-`llm_verifier.verify_predicates` fonksiyonu bu yüklemleri denetlerken modele şu katı talimatı verir:
-> *"Cevabın SADECE 'TRUE', 'FALSE' veya 'UNKNOWN' olabilir. EĞER METİNDE BİLGİ AÇIKÇA GEÇMİYORSA SAKIN TAHMİN ETMENİN; 'UNKNOWN' DE VE METİNDEN ALINTI YAP."*
+### Aşama 4: Sunucu Doğrulaması ve Mevzuat Bağlama
+* **Bileşenler:** [workflow.py](api/graph/workflow.py) (`_complete`), [database.py](api/db/database.py) (`validate_leaf_gtip`), [tgtc_knowledge_base.py](api/db/tgtc_knowledge_base.py) (`get_official_statute_records`)
+1. `locked_gtip` aday listesindeki bir düğüme bağlanamazsa sonuç `MANUAL_REVIEW_REQUIRED` / `MODEL_BINDING_FAILED` olur.
+2. `validate_leaf_gtip`, kodun 12 haneli olduğunu ve bugün itibarıyla geçerli bir yaprak olduğunu doğrular. Önce
+   `tariff_hierarchy` (`is_leaf`, `valid_from ≤ tarih ≤ valid_to`), sonra `tgtc_gtip` kontrol edilir. Başarısızlık
+   `DATABASE_LEAF_REJECTED` (`guardrail_status = REJECTED_NON_LEAF`) veya `DATABASE_VALIDATION_ERROR` üretir.
+3. **Mevzuat bağlama:** `legal_sources` alanı model metni içermez. Şu kayıtlardan kurulur:
+   * `GIR`: `OFFICIAL_GIR_FULL_STATUTES` içindeki tam metin. Modelin bildirdiği anahtarlara her zaman `GIR_1` ve `GIR_6` eklenir.
+   * `TGTC_CHAPTER`, `TGTC_HEADING`, `TGTC_SUBHEADING`, `TGTC_LEAF`: Katalog ve veritabanındaki resmî açıklamalar.
+   * `FASIL_NOTU`: Modelin atıf yaptığı fasılların ve seçilen faslın resmî notu (≤1800 karakter).
+   * `BTB` / `EU_EBTI`: `INDIVIDUAL_PRECEDENT`, `is_binding = false`. EBTI kararları yalnız CN-8 kodu yaprağın ilk 8 hanesiyle eşleşiyorsa eklenir (en fazla 3).
+4. `official_statute_text = "2026 TGTC <kod>: <veritabanı açıklaması>"`. Modelin katkısı yalnız sabit bir açıklama
+   cümlesiyle `llm_reasoning_commentary` alanında belirtilir.
+5. `trade_measures` alanı KDV, İGV, TAREKS ve gözetim bilgisini içerir. Bu alan **faslı esas alan statik bir özettir**,
+   resmî tedbir verisi değildir (bkz. Bölüm 11).
 
----
+### Aşama 5: Güven Skoru ve İnceleme İşareti
+* **Bileşen:** [workflow.py](api/graph/workflow.py) (`collect_signals`, `compute_confidence`, `review_reasons`, `evidence_summary`)
 
-### Aşama 5: Deterministik Sembolik Karar ve No-AI Output Binding
-* **Bileşen:** [deterministic_engine.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/modules/deterministic_engine.py) (`DeterministicDecisionEngine`)
-* **Amaç:** Karar verme, güven skoru hesaplama ve yasal gerekçe sunma yetkisini yapay zekadan tamamen alıp Python sembolik mantığına bağlamak.
+Skor elle yazılmış ilk sürümde ayırt edici değildi (yanlış kararların 27/30'u, tüm kararların 57/59'u 0.60 alıyordu).
+Mevcut ağırlıklar 86 etiketli numuneyle kalibre edildi ([calibrate_confidence.py](scripts/calibrate_confidence.py)):
 
-#### 1. %5 Benzerlik Skoru HITL Kuralı
-RAG sorgusunda en iyi iki adayın skorları birbirine çok yakınsa ($|Score_1 - Score_2| < 0.05$), model ne kadar emin görünürse görünsün **otomatik onay engellenir**. Gümrük müşavirine çoktan seçmeli `[A]` veya `[B]` sorusu sunulur:
-```python
-if score_diff < 0.05 and cand1.gtip_code != cand2.gtip_code:
-    return GTIPDecision(
-        status="WAITING_FOR_USER",
-        hitl_question=HITLQuestion(...),
-        confidence_score=min(cand1.score, 0.79),
-        audit_notes=["İlk 2 aday skor farkı < %5 olduğu için HITL tetiklendi."]
-    )
+```
+BTB_EXACT ise                    → 0.97
+aksi halde  skor = 0.42
+          + 0.30 × en iyi BTB benzerliği
+          + 0.10 × en iyi EBTI benzerliği
+          + 0.02 (GİR anahtarı var)        + 0.02 (fasıl notu atfı var)
+          + 0.08 (müşavir en az bir soruyu yanıtladı)
+          − 0.15 (fasılda ≥ 20 pozisyon)
+          − 0.25 (kalıntı dalına düşüldü)  − 0.15 (fasıl geri alındı)
+          → [0.00, 0.99] aralığına kırpılır
 ```
 
-#### 2. Yüklem (Predicate) Mantıksal Değerlendirmesi
-* **Tüm Şartlar Sağlandı (`calc_ratio == 1.0`):** Karar `COMPLETED` olarak onaylanır, güven skoru `%90+` seviyesine yükseltilir.
-* **Terslenen Koşul Varlığı (`contradicted_predicates`):** Tek bir zorunlu şart bile `FALSE` çıkmışsa aday derhal reddedilir, karar `MANUAL_REVIEW_REQUIRED` durumuna geçirilir.
-* **Eksik Bilgi (`UNKNOWN`):** Yüklemlerden biri belgede bulunamamışsa, Müşavire anında *"Eksik Teknik Bilgi Teyidi"* başlıklı EVET/HAYIR seçenekli HITL sorusu üretilir.
+| Ölçülen sinyal (n = 86) | Doğruluk etkisi |
+| :--- | :--- |
+| BTB emsali destekliyor (benzerlik ≥ 0.5), n = 24 | %87.5 doğruluk |
+| Emsal yok, n = 62 | %33.9 doğruluk |
+| Fasılda ≥ 20 pozisyon, n = 25 | −12.5 puan |
+| GİR / fasıl notu atfı | 86 kaydın 85'inde var; ayırt edici değil |
 
-#### 3. Statik Mevzuat Eşleştirme (No-AI Output Binding)
-Rapor çıktısındaki `official_statute_text` ve `legal_justification` alanlarına **asla LLM'in ürettiği metin yazılmaz**. 
-Doğrudan Cloud SQL `tgtc_gtip` ve `tgtc_notes` tablolarından pozisyonun harfi harfine kanun metni çekilir:
-```python
-official_statute = (
-    f"Türk Gümrük Tarife Cetveli (TGTC) 2026 Resmi Mevzuatı - Pozisyon {head_code}: {head_title}.\n"
-    f"Bağlı Olduğu Fasıl {chap_code}: {chap_title}. (Statik Mevzuat Kütüphanesi Kaydı)"
-)
-```
-Yapay zekanın yorumu ise ayrı bir alanda (`llm_reasoning_commentary`) şeffafça sunulur. Böylece mahkemede veya gümrük denetiminde dayanak gösterilecek metnin %100 resmî mevzuat olması garanti edilir.
+Kalibrasyonla AUC 0.729'dan **0.753**'e çıktı.
 
----
+**İnceleme işareti** skordan bağımsız iki kaynaktan gelir:
+* `confidence < CONFIDENCE_THRESHOLD (0.50)`. Bu eşikte yanlış kararların %93'ü (41/44) yakalanır; bedeli 20 doğru kararın da işaretlenmesidir.
+* `review_reasons`: kalıntı dalı veya fasıl geri alması.
 
-## 4. KURAL TABANLI MANTIK İLE YAPAY ZEKANIN HİBRİT İŞBİRLİĞİ
-
-Sistemin en güçlü yönü, "Kural Tabanlı Mantık" ile "Yapay Zeka" arasındaki kesin iş bölümüdür. Karar matrisi aşağıdaki prensiplere göre çalışır:
-
-| Süreç / Görev | Sorumlu Katman | Yapay Zeka (AI) Rolü | Kural Tabanlı Mantık Rolü |
-| :--- | :--- | :--- | :--- |
-| **Fatura / Metin Analizi** | Hibrit | Serbest metinden teknik parametreleri ve özellikleri çıkarır. | Regex ile hammadde, voltaj, motor gibi anahtar terimleri doğrular. |
-| **Fasıl Sınırlandırması** | Kural Tabanlı | Rolü yoktur (Yetkisi elinden alınmıştır). | `HARD_RULES_MATRIX` ve GİR 1 ile faslı kilitler (Örn: Ayakkabı ➔ Fasıl 64). |
-| **Fasıl Dışlama Notları** | Yapay Zeka Destekli | İzahnamedeki dışlama maddelerini derin muhakeme ile okur. | İlgili faslın tüm dışlama notlarını SQL'den eksiksiz çeker ve filtreler. |
-| **Tarife Ağacı Dolaşımı** | Kural Tabanlı | Rolü yoktur. | 4 ➔ 6 ➔ 12 hane ağacını sırayla indirir; %8 eşikte Discriminator'ı tetikler. |
-| **Dal Ayrımı (Discriminator)** | Kural Tabanlı | Rolü yoktur (LLM kullanılmaz). | İki dal arasındaki volt, watt, gramaj, kumaş farkını regex ile soruya çevirir. |
-| **Aday GTİP Seçimi** | Yapay Zeka Destekli | Kapalı aday kümesinden (C1-C5) en uygun adayı gerekçelendirir. | Modelin kapalı küme dışına çıkmasını engeller; serbest kod üretimini reddeder. |
-| **Yüklem Doğrulama** | Yapay Zeka Destekli | Her yasal şartı `TRUE`/`FALSE`/`UNKNOWN` olarak işaretler. | Şartları dinamik üretir; tek bir `FALSE` durumunda adayı derhal iptal eder. |
-| **Nihai Karar ve Güven Skoru** | Kural Tabanlı | Rolü yoktur. | Skor farkını, yüklem doğrulama oranını hesaplar; %5 eşik kuralını uygular. |
-| **Resmî Gerekçe Metni** | Kural Tabanlı | Rolü yoktur. | Resmî Gazete ve Bakanlık İzahnamesinden harfi harfine metin JOIN eder. |
+İşaretli kararlar `status = COMPLETED` olarak kalır. İşaret `legal_validation_status = "MANUAL_REVIEW"` ve
+`BROKER_APPROVAL_REQUIRED: …` denetim notuyla verilir. İşaret engelleyici değildir, kod ve dayanak yine gösterilir.
+`evidence_summary`, kararın hangi kanıta dayandığını düz Türkçe yazar ("Karar 2 BTB emsaliyle destekleniyor (en yüksek
+benzerlik %83)…"). Ham sinyaller kalibrasyon için `decision_signals` alanında dışarı verilir.
 
 ---
 
-## 5. İNSAN DÖNGÜDE (HITL - HUMAN-IN-THE-LOOP) VE DURUM MAKİNESİ
+<a id="bolum-4"></a>
 
-Gümrük müşavirini sistemin efendisi (*human-in-the-loop*) olarak konumlandıran LangGraph tabanlı durum makinesi, belirsizlik durumunda analizi dondurur.
+## 4. YAPAY ZEKA İLE DETERMİNİSTİK KATMANIN İŞ BÖLÜMÜ
 
-### 5.1. Durum Makinesi Geçiş Diyagramı
+| Görev | Yapay zeka | Deterministik katman (sunucu) |
+| :--- | :--- | :--- |
+| Kısa açık ürün tanımı | Kullanılmaz | Regex ve malzeme sözlüğüyle `ProductFeatures` kurar. |
+| Uzun metin / fatura çıkarımı | flash-lite yapılandırılmış JSON üretir | Regex ölçülerini modelin üzerine yazar; hata olursa yedek yola geçer. |
+| Emsal bulma | Kullanılmaz | Token örtüşmesiyle BTB/EBTI arar, süresi dolanları eler. |
+| Birebir BTB eşleşmesi | Kullanılmaz | Tek koda işaret eden birebir eşleşmeyi aktif yaprak olarak doğrular. |
+| Seçenek kümesini kurma | Kullanılmaz | Fasıl, pozisyon, alt pozisyon ve yaprak listelerini resmî katalogdan üretir, kimlik atar. |
+| Dal seçimi | flash harf kimliği döndürür | Kimliği çözer, küme dışını reddeder, reddedilen dalın yeniden seçilmesini engeller. |
+| Soru üretimi | Soru metni ve 2–4 alternatif önerir | 2–4 kardeşte tüm dalları kendisi koyar, "Bilinmiyor" seçeneği ekler, her seçeneği resmî koda bağlar. |
+| Çıkmaz yönetimi | Daraltma denemesinde en yakın dalları verir | Fasıl geri alması, kalıntı dalı, sınırlı soru. |
+| Kod geçerliliği | Rolü yok | `validate_leaf_gtip`: 12 hane, yaprak, yürürlük tarihi. |
+| Hukuki dayanak metni | Rolü yok (yalnız GİR/fasıl atfı önerir) | GİR, tarife ve fasıl notu metinlerini kayıtlı kaynaktan okur. |
+| Güven skoru ve işaret | Rolü yok | Kalibre edilmiş formül, eşik ve skordan bağımsız gerekçeler. |
+
+---
+
+<a id="bolum-5"></a>
+
+## 5. İNSAN DÖNGÜDE (HITL) VE DURUM MAKİNESİ
+
+### 5.1. Durumlar
 
 ```mermaid
 stateDiagram-v2
-    [*] --> IN_PROGRESS: Analiz Başlatıldı (start_analysis)
-    
-    IN_PROGRESS --> WAITING_FOR_USER: Çatallanma Belirlendi (Discriminator Question)
-    IN_PROGRESS --> WAITING_FOR_USER: İki Aday Arası Skor Farkı < %5
-    IN_PROGRESS --> WAITING_FOR_USER: Yasal Yüklem Eksik (UNKNOWN Predicate)
-    IN_PROGRESS --> WAITING_FOR_USER: Dinamik Kural Parametresi Eksik (gtip_rules)
-    
-    WAITING_FOR_USER --> IN_PROGRESS: Müşavir Seçeneği Yanıtladı (resume_analysis)
-    
-    IN_PROGRESS --> COMPLETED: Tüm Şartlar Sağlandı (%100 Uyumluluk)
-    IN_PROGRESS --> MANUAL_REVIEW_REQUIRED: Zorunlu Yüklem Reddedildi (FALSE)
-    IN_PROGRESS --> MANUAL_REVIEW_REQUIRED: Dışlama Notu İhlal Edildi
-    IN_PROGRESS --> MANUAL_REVIEW_REQUIRED: Emsal Karar Bulunamadı / LLM Fail-Closed
-    
+    [*] --> ANALIZ: start_analysis
+    ANALIZ --> WAITING_FOR_USER: INSUFFICIENT_INFORMATION\nveya NO_MATCH + 2–4 kardeş
+    WAITING_FOR_USER --> ANALIZ: resume_analysis (resmî dal seçildi)
+    WAITING_FOR_USER --> MANUAL_REVIEW_REQUIRED: "Bilinmiyor"\n(USER_INFORMATION_MISSING)
+    ANALIZ --> COMPLETED: aktif yaprak doğrulandı
+    ANALIZ --> MANUAL_REVIEW_REQUIRED: bağlanamadı / yaprak reddedildi / DB hatası
     COMPLETED --> [*]
     MANUAL_REVIEW_REQUIRED --> [*]
 ```
 
-### 5.2. Oturumu Askıya Alma (Pause) ve Devam Ettirme (Resume) Mekanizması
-1. **Askıya Alma (`_pause_for_discriminator`):**
-   Discriminator veya dinamik kural motoru bir eksiklik bulduğunda, o ana kadar çıkarılan tüm özellikler, kilitlenen tarife dalları (`discriminator_traversal`), aday listesi ve oluşturulan `HITLQuestion` nesnesi Cloud SQL `session_state` tablosuna JSON formatında mühürlenir. Kullanıcıya HTTP 200 ile `WAITING_FOR_USER` statüsü dönülür.
-2. **Kullanıcı Etkileşimi (UI):**
-   Kullanıcı ekranında analiz kilitlenir ve netleştirici soru açılır (Örn: *"[A] Motor gücü 1500W veya altı"*, *"[B] Motor gücü 1500W üstü"*, *"[C] Bilinmiyor"*).
-3. **Devam Ettirme (`resume_analysis`):**
-   Kullanıcı seçeneği tıkladığında `/api/v1/hitl/respond` uç noktası çağrılır. Sistem:
-   * Müşavirin yanıtını `technical_specifications` içine yazar.
-   * Kilitlenen dalı (`locked_heading` veya `locked_subheading`) sabitler.
-   * Daha önce hesaplanan embedding vektörünü yeniden kullanarak maliyetli API çağrılarını atlar.
-   * Karar motorunu kaldığı ağaç seviyesinden aşağıya doğru çalıştırarak tamamlar.
+| `status` | `state_machine_stage` | Anlamı |
+| :--- | :--- | :--- |
+| `WAITING_FOR_USER` | `MODEL_{CHAPTER\|HEADING\|SUBHEADING\|GTIP}_QUESTION` | İlgili seviyede müşavire soru soruldu. |
+| `COMPLETED` | `MODEL_CLOSED_SET_COMPLETED` | Aktif yaprak doğrulandı. `legal_validation_status` değeri `PASSED` veya `MANUAL_REVIEW` olur. |
+| `MANUAL_REVIEW_REQUIRED` | `MODEL_BINDING_FAILED` | Ağaç dolaşımı bir yaprağa ulaşamadı (bütçe, `NO_MATCH`, sözleşme ihlali). |
+| `MANUAL_REVIEW_REQUIRED` | `DATABASE_LEAF_REJECTED` / `DATABASE_VALIDATION_ERROR` | Kod yaprak değil veya doğrulama yapılamadı. |
+| `MANUAL_REVIEW_REQUIRED` | `USER_INFORMATION_MISSING` | Müşavir ayrımı bilmediğini belirtti. |
+
+### 5.2. Soru üretimi
+`RAGEngine._question` bir `DiscriminatorQuestion` kurar ([discriminator_engine.py](api/modules/discriminator_engine.py)):
+* Kardeş sayısı 2–4 ise **tüm** kardeşler seçenek olur. Kapsamı model değil sunucu garanti eder. Daha büyük kümelerde
+  modelin önerdiği alternatifler (en fazla 4) kullanılır.
+* Her seçenek `"<resmî kod> — <resmî açıklama>"` biçimindedir. Son seçenek her zaman `"Bilinmiyor"` olur ve boş dala bağlanır.
+* Şema doğrulaması her seçeneğin tam olarak bir resmî dala bağlı olmasını zorunlu kılar (3–5 seçenek).
+* Arayüze `HITLQuestion` olarak `DISC_0 … DISC_n` kimlikleriyle gider. Seçilen dal `impact_data.selected_branch` alanında taşınır.
+
+### 5.3. Duraklatma ve devam ettirme
+1. **Duraklatma (`_pause`):** Ham metin, özellikler, ağaç durumu (kilitli seviyeler, `pending_level`, emsaller, GİR/fasıl
+   atıfları) ve soru `session_state` tablosuna JSON olarak yazılır (`CloudSQLStateStore`).
+2. **Yanıt (`POST /api/v1/hitl/respond`):** Oturum `WAITING_FOR_USER` durumunda değilse, `question_id` güncel değilse veya
+   seçenek soruya ait değilse `409` döner. Oturum yoksa `404` döner.
+3. **Devam (`resume_analysis`):** `pending_level` değerine göre seçilen dal kilitlenir. Örneğin HEADING'de fasıl ve pozisyon
+   kilitlenir, alt seviyeler sıfırlanır. Ağaç dolaşımı kalan seviyelerden, yeni bir 32 sn bütçeyle sürer.
+   * Emsaller **yeniden aranmaz**, oturumdan geri yüklenir. Böylece HITL'li ve HITL'siz yol aynı kanıtla karar verir.
+   * `applied_gir_keys`, `cited_chapter_notes`, `used_residual_fallback` taşınır. `hitl_answer_count` bir artırılır ve güven skoruna +0.08 olarak girer.
+   * Yeni bir soru çıkarsa oturum tekrar duraklatılır. Birden fazla seviyede soru sorulabilir.
 
 ---
 
-## 6. VERİTABANI ŞEMASI, VEKTÖR İNDEKSLERİ VE VERİ KATMANI
+<a id="bolum-6"></a>
 
-Veri katmanı, GCP Cloud SQL (PostgreSQL + pgvector) üzerinde ilişkisel bütünlük ve yüksek hızlı vektör benzerliği sağlayacak şekilde tasarlanmıştır.
+## 6. VERİ KATMANI
 
-### 6.1. Temel Veritabanı Tabloları
+### 6.1. Katalog kaynakları
+| Kaynak | İçerik | Kullanım |
+| :--- | :--- | :--- |
+| `2026 TGTC/tgtc_2026_full_database.json` (imaja gömülü) | 19.704 kayıt: 964 pozisyon (4 hane), 3.008 alt pozisyon (6 hane), 15.717 yaprak (12 hane) | Fasıl ve pozisyon seçenek listeleri (`get_local_tgtc_headings`). |
+| `2026 TGTC/tgtc_2026_rules_and_notes.json` (imaja gömülü) | 48 yorum kuralı maddesi, 36 ölçü birimi, 96 fasıl notu | Seçim promptundaki fasıl notları ve `FASIL_NOTU` kaynakları. |
+| [api/data/tgtc_subheading_context.json](api/data/tgtc_subheading_context.json) | Alt pozisyon bağlam metinleri | SUBHEADING düğümlerine `branch_context`. |
+| `2026 TGTC/2026 TGTC/*.xls`, `2026 FASIL NOTLARI/*.xls` | Ham resmî cetvel ve fasıl notları | `scripts/rebuild_tgtc_catalog.py` ile hiyerarşisi korunarak yeniden çıkarım. |
+
+**Katalog yeniden çıkarımı:** Önceki katalog, ham cetveldeki ara grup başlıklarını ve satır devamlarını atmıştı.
+15.718 yaprağın 3.645'i (%23.2) kardeşiyle aynı metne sahipti; örneğin `841370` altındaki 22 yaprağın tamamı
+"Diğerleri" yazıyordu. Yeniden çıkarımda her yaprağın açıklaması kökten yaprağa tam yolu taşır
+(`Diğer santrifüj pompalar > Dalgıç pompaları > Tek kademeli olanlar > Diğerleri`). Betik varsayılan olarak dry-run
+çalışır ve kaybolan kod oranı %1'i aşarsa durur.
+
+### 6.2. Karar yolunda kullanılan tablolar
 
 ```mermaid
 erDiagram
-    tgtc_gtip ||--o{ tgtc_gtip_versions : "tarihsel sürüm"
-    tgtc_gtip ||--o{ gtip_rules : "alt kurallar"
-    tgtc_notes }o--|| tgtc_gtip : "fasıl notu"
-    gumruk_emsal_kararlar ||--o{ tgtc_gtip : "emsal bağı"
-    audit_logs ||--|| session_state : "oturum kaydı"
-
     tgtc_gtip {
-        varchar gtip_code PK
+        varchar gtip_code PK "2/4/6/12 hane"
         varchar level "CHAPTER | HEADING | SUBHEADING | GTIP"
         varchar chapter_code
         varchar parent_code
         text description
-        varchar tax_rate
-        varchar unit
         boolean is_active
         varchar gecerlilik_baslangic
         varchar gecerlilik_bitis
-        vector embedding "768d text-embedding-005"
     }
-
-    tgtc_gtip_versions {
-        bigserial id PK
-        varchar gtip_code
-        varchar level
-        text description
-        varchar gecerlilik_baslangic
-        varchar gecerlilik_bitis
-        varchar kaynak_resmi_gazete_no
+    tariff_hierarchy {
+        varchar gtip_code PK
+        varchar parent_gtip
+        ltree path
+        int level "2 | 4 | 6 | 8 | 12"
+        text description_tr
+        boolean is_leaf
+        varchar valid_from
+        varchar valid_to
     }
-
-    tgtc_rules {
-        int id PK
-        varchar rule_type "GIR | MEASUREMENT | EXPLANATION"
-        varchar rule_number
-        varchar title
-        text text
-    }
-
-    tgtc_notes {
-        int id PK
-        varchar chapter_code
-        varchar note_type "GENERAL | EXCLUSION | DEFINITIONS"
-        varchar title
-        text text
-        vector embedding "768d text-embedding-005"
-    }
-
     gumruk_emsal_kararlar {
         int id PK
         varchar karar_tipi "BTB | SINIFLANDIRMA_KARARI"
         varchar referans_no
         varchar yayin_tarihi
         varchar gtip_kodu
-        varchar chapter_code
         text esya_tanimi
         text hukuki_gerekce
         text kaynak_url
         varchar valid_until
-        vector embedding "768d text-embedding-005"
     }
-
-    gtip_rules {
-        uuid id PK
-        varchar parent_heading
-        varchar target_gtip
-        varchar parametre_adi
-        varchar kosul_operatoru
-        varchar esik_deger
-        text soru_metni
-        text secenekler
-        int oncelik
+    ebti_kararlari {
+        int id PK
+        varchar referans_no
+        varchar kaynak_ulke
+        varchar cn_kodu_8hane
+        text urun_tanimi
+        text karar_gerekcesi
+        varchar karar_tarihi
+        varchar gecerlilik_bitis
+        varchar durum "VALID | VALID_EXPIRED | UNKNOWN"
     }
-
+    session_state {
+        varchar session_id PK
+        text state_data "JSON"
+        timestamp updated_at
+    }
+    classification_run {
+        varchar id PK
+        varchar session_id
+        text query_text "tam metin"
+        text extracted_facts
+        text candidate_codes "ağaç durumu JSON"
+        varchar selected_gtip
+        varchar status "başarısızlıklar dahil"
+        float confidence_score
+        varchar model_version
+    }
     audit_logs {
         varchar session_id PK
         varchar user_email
@@ -492,134 +540,233 @@ erDiagram
         boolean is_hitl_triggered
         text user_feedback
         float execution_time_ms
-        timestamp created_at
     }
-
-    session_state {
-        varchar session_id PK
-        text state_data
-        timestamp updated_at
-    }
+    session_state ||--o{ classification_run : "session_id"
+    classification_run ||--o| audit_logs : "session_id"
 ```
 
-### 6.2. pgvector ve HNSW İndeks Mimarisi
-Tüm metin ve izahnameler 768 boyutlu `text-embedding-005` vektörleriyle temsil edilir. PostgreSQL üzerinde kosinüs mesafesi için **HNSW (Hierarchical Navigable Small World)** indeksleri tanımlanmıştır:
-```sql
-CREATE INDEX IF NOT EXISTS idx_tgtc_gtip_embedding_hnsw 
-ON tgtc_gtip USING hnsw (embedding vector_cosine_ops);
+| Tablo | Karar yolundaki rolü |
+| :--- | :--- |
+| `tgtc_gtip` | Alt pozisyon ve yaprak seçenekleri, yaprak doğrulaması (ikincil), mevzuat metni. |
+| `tariff_hierarchy` | Yaprak doğrulamasının birincil kaynağı (bi-temporal `valid_from`/`valid_to`). Eski kurulumlarda seçenek yedeği. |
+| `gumruk_emsal_kararlar` | BTB emsal havuzu ve benchmark ground truth'u. |
+| `ebti_kararlari` | AB BTI emsal havuzu. |
+| `session_state` | HITL oturum durumu. |
+| `classification_run` | Başarısız olanlar dahil her kararın değişmez kaydı. |
+| `audit_logs` | Kullanıcı ve rol bazlı denetim izi (yalnız `COMPLETED` kararlar ve düzeltmeler). |
 
-CREATE INDEX IF NOT EXISTS idx_gumruk_emsal_embedding_hnsw 
-ON gumruk_emsal_kararlar USING hnsw (embedding vector_cosine_ops);
+### 6.3. Tanımlı olup karar yolunda kullanılmayan yapılar
+`init_orm_tables` şu tabloları da oluşturur: `tgtc_rules`, `tgtc_notes`, `tgtc_gtip_versions`, `gtip_rules`,
+`gumruk_siniflandirma_kararlari`, `gumruk_mevzuat_maddeleri`, `emsal_btb_kararlari`, `chapter_section_notes`,
+`legislation_and_btb`, `legal_source`, `document_chunk`, `evidence_link`. Bunların bir kısmı bilgi gezgini uç noktalarını
+(`/api/v1/customs-data/*`) ve ETL işlerini besler. **Hiçbiri seçim algoritmasında kullanılmaz.**
 
-CREATE INDEX IF NOT EXISTS idx_tgtc_notes_embedding_hnsw 
-ON tgtc_notes USING hnsw (embedding vector_cosine_ops);
-```
+Aynı durum şu yapılar için de geçerlidir: `embedding` sütunları ve HNSW indeksleri (`tgtc_gtip`, `gumruk_emsal_kararlar`,
+`tgtc_notes`, `gumruk_mevzuat_maddeleri`, `emsal_btb_kararlari`, `ebti_kararlari`), `hybrid_search_headings_and_gtip` ve
+`compute_rrf_score` (RRF, `k=60`). Bunlar kodda duruyor, ancak güncel akış vektör araması yapmaz.
 
-### 6.3. Zamansal Versiyonlama (Temporal Versioning)
-Her yıl 1 Ocak'ta yayımlanan tarife değişikliklerinde eski GTİP kodları silinmez. `upsert_tgtc_temporal_version` fonksiyonu ile:
-* Eski kaydın `gecerlilik_bitis` tarihine yeni tarifenin başlangıcından bir gün öncesi yazılır (`2025-12-31`).
-* Yeni tarife satırı `gecerlilik_baslangic: "2026-01-01"` ve `gecerlilik_bitis: NULL` ile eklenir.
-* Böylece geriye dönük gümrük beyannameleri taranırken `as_of_date` parametresi ile o tarihteki yürürlükteki mevzuat sorgulanabilir.
+### 6.4. Zamansal geçerlilik
+* Yaprak doğrulaması `as_of_date` (varsayılan bugün) ile `tariff_hierarchy.valid_from ≤ tarih ≤ valid_to` koşulunu arar.
+* `upsert_tgtc_temporal_version` yeni tarife yılında eski kaydı kapatıp yenisini açmak için kullanılır. Tarihçe `tgtc_gtip_versions` tablosunda tutulur.
+* BTB emsallerinde `valid_until`, EBTI emsallerinde `gecerlilik_bitis` ve `durum` süresi dolan kararları eler.
 
 ---
 
-## 7. VERİ ENTEGRASYONU VE CANLI ETL BORU HATLARI
+<a id="bolum-7"></a>
 
-Sistem, mevzuat güncelliğini korumak için 4 bağımsız kaynaktan beslenen otomatik ETL mimarisine sahiptir:
+## 7. VERİ ENTEGRASYONU VE ETL İŞLERİ
 
-```
-                               CANLI ETL KAYNAKLARI
-                                        │
-     ┌──────────────────┬───────────────┴───────────────┬──────────────────┐
-     ▼                  ▼                               ▼                  ▼
-[AB EBTI-3 Portalı] [T.C. Resmî Gazete]            [GGM Portalı]    [WCO Nomenklatür]
-(HS6/CN8 Kararları) (Günlük Tebliğler & Kararlar)   (Türkiye BTB)    (99 Fasıl Başlığı)
-     │                  │                               │                  │
-     └──────────────────┴───────────────┬───────────────┴──────────────────┘
-                                        │
-                                        ▼
-                         [scripts/sync_customs_data.py]
-                                        │
-                  ┌─────────────────────┼─────────────────────┐
-                  ▼                     ▼                     ▼
-         [Cloud Storage (GCS)]  [Cloud SQL Upsert]   [Vertex AI Embedding]
-          (Ham JSONL Arşivi)   (Soft-Delete / Tarih)  (text-embedding-005)
-```
+Tüm işler backend imajının **aynı immutable digest**'i ile Cloud Run Job olarak dağıtılır ([deploy_etl_jobs.ps1](scripts/deploy_etl_jobs.ps1), [deploy_tgtc_seed_job.ps1](scripts/deploy_tgtc_seed_job.ps1)).
 
-1. **EU EBTI-3 Consultation Portal:** Avrupa Birliği Komisyonu'nun yayımladığı bağlayıcı tarife kararlarını çeker. İlk 6 hanesi (HS6) Türkiye ile ortaktır.
-2. **T.C. Resmî Gazete Arşiv ve Günlük Tarayıcı:** 2020-2026 yılları arasındaki tüm mükerrer ve normal sayıları tarar; gümrük sınıflandırma kararları tablosunu ayrıştırır (`scrape_rg_siniflandirma_2020_2026.py`).
-3. **Ticaret Bakanlığı GGM Portalı:** Yerli BTB kararlarını çeker.
-4. **WCO HS 2022 Nomenclature:** 99 faslın resmî Türkçe başlıklarını ve izahnamelerini eşitler.
+| İş | Komut | Zamanlama | Hedef |
+| :--- | :--- | :--- | :--- |
+| Resmî Gazete arşiv taraması | `scripts.spider_resmi_gazete_archive --mode archive` | Elle | 2020–2026 sınıflandırma kararları ve tebliğler |
+| Resmî Gazete günlük | `scripts.spider_resmi_gazete_archive --mode daily --days-back 3` | `resmi-gazete-daily-sync`, 02:00 | Yeni yayınlar |
+| Resmî BTB | `scripts.scrape_official_btb` | `official-btb-daily-sync`, 03:00 | `gumruk_emsal_kararlar` (BTB) |
+| AB EBTI | `scripts.fetch_ebti_data --limit 2000` | `ebti-daily-sync`, 04:00 | `ebti_kararlari` (EC TAXUD açık verisi; Türkçe özet flash-lite ile) |
+| TGTC tohumlama | `scripts.seed_tgtc_2026` | Elle | `tgtc_gtip` / `tariff_hierarchy` |
+| Benchmark | `scripts.evaluate_gtip_benchmark --sample 300` | Elle (`max-retries 0`) | Doğruluk raporu (Bölüm 10) |
+
+Dağıtım betiği scheduler'ları güvenlik için `PAUSED` bırakır. İşler elle başarıyla çalıştırıldıktan sonra açılır.
+[sync_customs_data.py](scripts/sync_customs_data.py) (EBTI, Resmî Gazete RSS, GGM, WCO kanalları; GCS arşivi,
+sürümlü upsert, Google Chat sonuç kartı) yönetim uç noktalarından tetiklenebilen birleşik bir senkron betiğidir.
+Katalog kalitesi için [diagnose_catalog_quality.py](scripts/diagnose_catalog_quality.py) ve
+[apply_catalog_descriptions.py](scripts/apply_catalog_descriptions.py) araçları bulunur.
 
 ---
 
-## 8. GERİ BESLEMELİ SÜREKLİ ÖĞRENME (CONTINUOUS LEARNING PIPELINE)
+<a id="bolum-8"></a>
 
-Sistem statik kalmaz; gümrük müşavirlerinin uzmanlık kararlarından beslenerek kendini sürekli geliştirir:
+## 8. GERİ BİLDİRİM VE KARAR KAYDI
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Broker as Gümrük Müşaviri
-    participant UI as Web Paneli
-    participant Engine as WorkflowEngine
-    participant Storage as GCS & JSON Emsal Deposu
-    participant VectorStore as LocalVectorStore / CloudSQL
+Eski rapordaki "sürekli öğrenme" döngüsü (onaylanan kararın otomatik olarak emsal havuzuna eklenmesi) **kodda yoktur**.
+Güncel geri bildirim altyapısı şudur:
 
-    Broker->>UI: HITL Sorusunu Yanıtlar / Kararı Onaylar
-    UI->>Engine: POST /api/v1/hitl/respond
-    Engine->>Engine: Kararı Kesinleştirir (COMPLETED)
-    Engine->>Storage: append_continuous_learning_record()
-    Note over Storage: Yeni emsal kaydı oluşturulur:<br/>KURUMSAL-EMSAL-XXXX
-    Storage->>VectorStore: local_vector_store.invalidate_cache()
-    Note over VectorStore: Bellek önbelleği temizlenir.<br/>Yeni karar RAG uzayına katılır.
-    Engine-->>UI: GTIPDecision (Güven Skoru & Rapor)
-```
-
-Bu döngü sayesinde, firmanın veya müşavirin onayladığı özel ürünler bir sonraki sorguda **%70 ağırlıklı emsal BTB** olarak en üst sıraya çıkar.
+1. **`classification_run`:** Her karar yazılır: tam ürün metni, çıkarılan özellikler, ağaç durumu, seçilen kod, durum,
+   skor ve model sürümü. Manuel inceleme ve bağlanamama durumları da kaydedilir. Yazma hatası kararı engellemez.
+2. **Müşavir düzeltmesi (`POST /api/v1/decisions/{session_id}/correct`):** Yalnız `admin` ve `senior_broker` kullanabilir.
+   Düzeltilen kod da modelin kodu gibi `validate_leaf_gtip` kapısından geçer. Kayıt `CORRECTED_BY_BROKER` olarak işaretlenir,
+   denetim izine önceki ve yeni kodla yazılır.
+3. **Kullanım:** Düzeltmeler regresyon seti ve kalibrasyon için veri kaynağıdır. Emsal havuzuna veya prompta otomatik geri
+   besleme yoktur. Bu adım insan kararıyla, ölçüm yapılarak eklenmelidir.
 
 ---
 
-## 9. GÜVENLİK, DENETİM İZİ (AUDIT TRAIL) VE KURUMSAL RAPORLAMA
+<a id="bolum-9"></a>
 
-### 9.1. Kimlik Doğrulama ve Yetkilendirme (Auth & RBAC)
-* **JWT & Google OAuth 2.0:** Uygulama, Google Workspace domain kısıtlamalı OAuth 2.0 ve HS256 JWT jetonları ile korunur (`api/security/auth.py`).
-* **Rol Dağılımı (RBAC):**
-  * `customs_broker`: Analiz yapabilir, HITL yanıtlayabilir, PDF indirebilir.
-  * `senior_broker`: Manuel inceleme gerektiren şüpheli kararları onaylayabilir.
-  * `admin`: Resmî Gazete ETL taramalarını tetikleyebilir, denetim loglarını görüntüleyebilir.
-* **Google IAP (Identity-Aware Proxy):** Kurumsal dağıtımda Cloud Run önüne IAP yerleştirilerek kriptografik header doğrulaması yapılır (`x-goog-iap-jwt-assertion`).
+## 9. GÜVENLİK, DENETİM İZİ, RAPORLAMA VE İZLEME
 
-### 9.2. Değiştirilemez Denetim İzi (Audit Trail)
-Her karar işlemi (`session_id`, kullanıcı e-postası, rolü, önerilen ilk GTİP, onaylanan nihai GTİP, güven skoru, HITL tetiklenme durumu ve milisaniye cinsinden çalışma süresi) GCP Cloud SQL ve Firestore/BigQuery'ye eşzamanlı kaydedilir. Bu kayıtlar Looker Studio iş zekası (BI) panellerinde müşavir performans ve risk analitiği için kullanılır.
+### 9.1. Kimlik ve yetki
+* **Roller (`VALID_ROLES`):** `customs_broker`, `broker_assistant`, `senior_broker`, `admin`.
+* **Google token'ları** yalnız `GOOGLE_OAUTH_CLIENT_ID` audience'ı ile kabul edilir. İsteğe bağlı olarak
+  `GOOGLE_WORKSPACE_DOMAINS` ile domain sınırlanır. `ADMIN_EMAILS` ve `SENIOR_BROKER_EMAILS` allowlist'leri rol verir.
+* **Dahili JWT:** HS256, 24 saat. Production'da `JWT_SECRET_KEY` zorunludur ve `CORS_ALLOWED_ORIGINS='*'` yasaktır.
+  Her iki kural da başlangıçta kontrol edilir.
+* **Yetkili uç noktalar** (`require_admin_user`, yani `admin` veya `senior_broker`): denetim logları, karar düzeltmesi,
+  ETL tetikleyicileri, veritabanı istatistikleri ve bakım işlemleri.
+* **Yükleme güvenliği:** Görseller doğrulanır ve adları temizlenir, ardından GCS'e yazılır. `image_uri` şema düzeyinde doğrulanır.
 
-### 9.3. UTF-8 Resmî PDF Raporlama Motoru
-[exporter.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/api/exporter.py), ReportLab kütüphanesini kullanarak resmî gümrük formatında A4 PDF raporları üretir.
-* **Font Ailesi Kaydı:** Windows (`arial.ttf`) ve Linux (`DejaVuSans.ttf`) sistem fontlarını otomatik tespit eder; `registerFontFamily` çağrısı ile HTML `<b>` ve `<i>` etiketlerinin Helvetica'ya düşerek Türkçe karakter bozması (*mojibake*) engellenir.
-* **Rapor İçeriği:** Oturum kimliği, 12 haneli GTİP, 6 aşamalı hiyerarşik açılım, uygulanan GİR kuralları, statik mevzuat maddesi, yapay zeka yorumu ve emsal BTB tablosu eksiksiz yer alır.
+### 9.2. Denetim izi
+* `audit_logs` kayıtları analiz, JSON analizi, toplu analiz ve HITL yanıtında **yalnız `COMPLETED`** kararlar için
+  arka plan görevi olarak yazılır. Düzeltmeler ayrıca kaydedilir.
+* Başarısız kararların tam izi `classification_run` tablosundadır (Bölüm 8).
+
+### 9.3. PDF raporu
+[exporter.py](api/exporter.py) Türkçe karakter destekli A4 raporu üretir. Font olarak Windows'ta Arial, Linux'ta DejaVu
+kullanılır; `fonts-dejavu-core` imaja kurulur. İçerik: oturum, GTİP, güven skoru, durum, uygulanan GİR kuralları, resmî
+mevzuat metni, model yorumu ve BTB emsal tablosu. Toplu rapor en fazla 50 oturum içerir.
+
+### 9.4. API yüzeyi (özet)
+| Uç nokta | Açıklama |
+| :--- | :--- |
+| `POST /api/v1/analyze` | Multipart ürün tanımı ve isteğe bağlı görsel |
+| `POST /api/v1/analyze-json` | JSON ürün tanımı |
+| `GET /api/v1/analyze/stream` | SSE: iki olay (`IN_PROGRESS`, ardından karar) |
+| `POST /api/v1/analyze/batch` | En fazla `MAX_BATCH_ITEMS=10` kalem, `BATCH_CONCURRENCY=4` paralel |
+| `POST /api/v1/hitl/respond` | Soru yanıtı ve analizin devamı |
+| `GET /api/v1/report/pdf/{id}`, `POST /api/v1/report/pdf/bulk` | PDF raporları |
+| `POST /api/v1/decisions/{id}/correct` | Müşavir düzeltmesi |
+| `GET /api/v1/customs-data/*` | Bilgi gezgini: fasıllar, pozisyonlar, BTB'ler, kurallar ve notlar, senkron durumu |
+| `GET /api/v1/health`, `GET /api/v1/ready` | Sağlık ve veritabanı hazırlık kontrolü |
+
+### 9.5. İzleme
+Loglar yapılandırılmış JSON olarak Cloud Logging'e gider. Her karar şu alanlarla loglanır: `session_id`,
+`decision_status`, `duration_ms`, `btb_hits`, `ebti_hits`, `gtip_code`, `confidence_score`.
+[setup_log_metrics.ps1](scripts/setup_log_metrics.ps1) şu log tabanlı metrikleri kurar:
+
+| Metrik | İzlediği |
+| :--- | :--- |
+| `gtip_analysis_errors` | `severity >= ERROR` |
+| `gtip_manual_review` | `MANUAL_REVIEW_REQUIRED` kararlar |
+| `gtip_hitl_questions` | `WAITING_FOR_USER` kararlar |
+| `gtip_chapter_backtrack` | Fasıl geri alması (gecikme maliyeti göstergesi) |
+| `gtip_slow_analysis` | 20 sn'yi aşan analizler |
 
 ---
 
-## 10. BENCHMARK DEĞERLENDİRME VE KALİTE METRİKLERİ
+<a id="bolum-10"></a>
 
-Sistemin başarısı ve yasal doğruluğu, [evaluate_gtip_benchmark.py](file:///c:/Users/yusuf/Github/yapay-zeka-gtip-tespiti/scripts/evaluate_gtip_benchmark.py) aracıyla doğrulanmış zemin gerçeklik (*ground truth*) test kümesi üzerinde periyodik olarak ölçülür.
+## 10. BENCHMARK VE ÖLÇÜLEN BAŞARIM
 
-### Temel Metrikler ve Hedefler
+### 10.1. Yöntem
+[evaluate_gtip_benchmark.py](scripts/evaluate_gtip_benchmark.py) canlı Vertex AI ve Cloud SQL ile çalışır. Canlı
+bağımlılık gerektirdiği için CI kapısı değildir.
+* **Ground truth:** Cloud SQL'deki gerçek Ticaret Bakanlığı BTB kararları (ürün tanımı, resmî GTİP). Elle yazılmış örnek kullanılmaz.
+* **Holdout:** Fasıl bazında tabakalı, tohumlu (`seed=42`) ve tekrarlanabilir. Numunenin kendi BTB'si emsal havuzundan çıkarılır.
+* **Uzman izi:** Her dallanmada beklenen GTİP ile öneki uyuşan resmî seçenek otomatik yanıtlanır. Bu, ortalama kullanıcıyı
+  değil, **ulaşılabilir doğruluğun üst sınırını** ölçer.
+* **Ablasyon:** `SELECTION_USE_RAW_TEXT`, `SELECTION_USE_PRECEDENTS`, `SELECTION_USE_CHAPTER_NOTES` ortam değişkenleriyle tek tek kapatılabilir.
+  Her rapor `evidence_flags` alanını saklar.
 
-| Metrik | Tanım ve Ölçüm Yöntemi | Hedef Başarım | Ölçülen Başarım |
-| :--- | :--- | :---: | :---: |
-| **Chapter Precision (Fasıl Doğruluğu)** | İlk 2 haneli faslın doğru kilitlenme oranı. GİR 1 kural motorunun başarısını gösterir. | $\ge \%98.0$ | **%100.0** |
-| **Top-1 Heading Accuracy** | 4 haneli tarife pozisyonunun ilk sırada doğru tespit edilme oranı. | $\ge \%90.0$ | **%95.0** |
-| **Top-3 Recall** | Doğru pozisyonun ilk 3 RAG adayı arasında yer alma oranı. | $\ge \%95.0$ | **%100.0** |
-| **Zero-Hallucination Faithfulness** | Karar raporundaki mevzuat metninin uydurma olmayıp doğrudan resmî veri tabanından JOIN edilme oranı. | **%100.0** | **%100.0** |
-| **HITL Disambiguation Success** | Ayırt edici soru yöneltildiğinde kullanıcının doğru dala yönlendirilme oranı. | $\ge \%92.0$ | **%96.5** |
+### 10.2. Sonuçlar (120 numune, `gemini-2.5-flash` + `gemini-2.5-flash-lite`)
+
+| Metrik (%) | Baseline, kanıt kapalı (2026-09-22) | Tam kanıt, ilk (2026-09-22) | Kurtarma sonrası (2026-09-22) | Katalog + seçici düzeltmeleri (2026-09-23 13:00) | **Güncel (2026-09-23 19:11)** |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| `chapter_acc` | 13.33 | 38.33 | 41.67 | 55.83 | **53.33** |
+| `heading_acc` | 12.50 | 36.67 | 40.00 | 49.17 | **47.50** |
+| `subheading_acc` | 8.33 | 26.67 | 30.83 | 39.17 | **37.50** |
+| `leaf_acc` | 5.00 | 22.50 | 26.67 | 35.83 | **35.00** |
+| `coverage` (kod üretildi) | 24.17 | 53.33 | 59.17 | 77.50 | **71.67** |
+| `hitl_rate` | 40.00 | 10.83 | 19.17 | 20.83 | **18.33** |
+| `manual_review_rate` | 35.83 | 35.83 | 21.67 | 1.67 | **10.00** |
+| `leaf_acc_of_completed` | 20.69 | 42.19 | 45.07 | 46.24 | **48.84** |
+| `leaf_acc_with_expert` | – | – | 29.17 | 37.50 | **35.83** |
+
+Güncel ölçümün gecikmesi: **p50 10.4 sn, p95 35.5 sn**. Durum dağılımı: 86 `COMPLETED`, 22 `WAITING_FOR_USER`, 12 `MANUAL_REVIEW_REQUIRED`.
+
+### 10.3. Pozisyon yönlendirme deneyi (2026-09-25)
+[evaluate_heading_routing.py](scripts/evaluate_heading_routing.py) LLM çağrısı yapmadan, güncel benchmark'ın aynı 120
+numunesinde aday pozisyon üretme yöntemlerini ölçer (`routing-20260925T101052Z.json`). Doğru pozisyonun ilk k aday
+arasında bulunma oranı (%):
+
+| Yöntem | ilk 1 | ilk 3 | ilk 5 | ilk 10 |
+| :--- | ---: | ---: | ---: | ---: |
+| BTB emsal oylaması (numunelerin %52.5'inde aday var) | 32.5 | 33.3 | 33.3 | 33.3 |
+| Sözcüksel BM25 (pozisyon belgeleri) | 21.7 | 35.8 | 41.7 | 52.5 |
+| Dense (`text-multilingual-embedding-002`) | 27.5 | 46.7 | 50.8 | 56.7 |
+| Füzyon (RRF, k=60) | 40.8 | 59.2 | 65.0 | 75.0 |
+
+BTB kapısı taraması:
+
+| En iyi BTB benzerliği | Kapıyı geçen | Doğru pozisyon ilk 3'te |
+| :--- | ---: | ---: |
+| ≥ 0.6 | %29.2 | %91.4 |
+| **≥ 0.8** | **%23.3** | **%96.4** |
+| ≥ 0.9 | %17.5 | %100 |
+
+### 10.4. Yorum
+* **Fasıl seçimini aramayla tamamen değiştirmek reddedildi:** En iyi yöntem doğru pozisyonu numunelerin %41'inde ilk
+  3'ün dışında bırakıyor. Mevcut dolaşım fasılda yalnız %18'ini kaybediyor. Dolaşımın fasılda yanıldığı 22 numunenin
+  yalnız 9'unda füzyon doğru pozisyonu ilk 3'te buluyor.
+* **Hibrit giriş kabul edildi:** Kapı (≥ 0.80) trafiğin yaklaşık %23'ünde %96 isabetle aday veriyor. Bu numunelerde
+  dolaşım zaten 28'in 24'ünde doğru pozisyonu buluyordu. Beklenen kazanç doğrulukta küçük (en fazla ~3 numune),
+  asıl kazanç en pahalı çağrı olan CHAPTER seçiminin (~11 bin token) atlanmasıdır.
+* Füzyonun ilk 3 pozisyonunda alt pozisyon sayısı medyanda 17, en fazla 44. Alt pozisyon seviyesini atlamak seçenek
+  listesini büyüteceği için korunmuştur.
+
+### 10.5. Benchmark yorumu
+* Kanıt zinciri (ham beyan, emsaller, fasıl notları) yaprak doğruluğunu %5'ten %22.5'e çıkardı. Kurtarma mekanizmaları,
+  katalog yeniden çıkarımı ve harf kimlikleri %35'e taşıdı. Ölü uç oranı %35.8'den %1.7–10 aralığına indi.
+* Sistem bu doğruluk seviyesinde **müşavirin yerini alamaz**. Karar destek aracıdır. Tamamlanan kararların yaklaşık yarısı
+  doğru yaprağa ulaşıyor. Güven eşiği bu yüzden bilinçli olarak yüksek oranda işaretleme yapacak şekilde seçildi (Aşama 5).
+* Emsal desteği en güçlü doğruluk sinyalidir (%87.5'e karşı %33.9). Emsal havuzunun kapsamı doğrudan başarımı belirler.
+* Son iki ölçüm arasındaki küçük düşüş model yanıtlarındaki dalgalanma aralığındadır. Tek bir ölçümle karar verilmemeli,
+  değişiklikler önce/sonra ölçümüyle karşılaştırılmalıdır.
 
 ---
 
-## 11. ÖZET VE SONUÇ
+<a id="bolum-11"></a>
 
-Türk Gümrük Tarife Cetveli GTİP Tespit ve Karar Destek Sistemi;
-1. Yapay zekayı bir "karar verici" değil, "semantik veri çıkarıcı ve kural hakemi" olarak konumlandırarak **halüsinasyon riskini sıfırlamıştır**.
-2. Karar alma yetkisini **GİR 1-6 deterministik kurallarına** ve **%5 benzerlik eşiği HITL mekanizmasına** bağlayarak gümrük müşavirinin mesleki güvencesini garanti altına almıştır.
-3. Çıktı metinlerini doğrudan **canlı mevzuat veritabanından statik bağlayarak (No-AI Binding)** hukuki geçerlilik ve denetlenebilirlik sağlamıştır.
-4. Resmî Gazete ve AB EBTI entegrasyonlu canlı ETL boru hatlarıyla **her daim güncel ve yaşayan bir kurumsal hafıza** inşa etmiştir.
+## 11. BİLİNEN SINIRLAR VE TEKNİK BORÇ
+
+| Konu | Mevcut durum | Etki / öneri |
+| :--- | :--- | :--- |
+| **Görsel girdisi** | Görsel GCS'e yüklenir ve `image_uri` saklanır. Özellik çıkarımı yalnız metni modele gönderir; görsel yalnız kısa yolu devre dışı bırakır. | Sistem fiilen multimodal değildir. Görsel ya modele verilmeli ya da arayüzde bu beklenti kaldırılmalı. |
+| **Ticaret tedbirleri** | `get_customs_trade_measures` faslı esas alan sabit bir tablodur (KDV %20, belirli fasıllarda İGV %20, TAREKS, gözetim). | Resmî İthalat Rejimi verisine dayanmaz. Hukuki karar için kullanılmamalı; kaynak bağlanana kadar arayüzde "gösterge" olarak etiketlenmeli. |
+| **Prompttaki ürüne özel kural** | Seçim promptunda cam balkon ve mimari doğrama sistemleri için 76.10 / 73.08 / 39.25 yönlendirmesi sabit kodludur. | Genel ilkeyle (GİR 3) çelişmez ama ürüne özel kural büyüdükçe prompt kırılganlaşır. Fasıl notları ve emsallerle çözülmeli. |
+| **Kullanılmayan altyapı** | Embedding sütunları, HNSW indeksleri, `hybrid_search_headings_and_gtip`/RRF, `USE_CONTEXT_CACHE`, `gtip_rules`, `generation_config` karar yolunda yok. | Bakım yükü ve yanıltıcı dokümantasyon riski var. Kaldırılmalı ya da ölçülerek yeniden devreye alınmalı. |
+| **Arayüz güven bantları** | `GTIPResultCard` %80 ve üstünü yeşil, %60–79'u sarı, %60 altını kırmızı gösterir. Sunucu eşiği 0.50'dir ve emsalsiz tipik skor yaklaşık 0.46'dır. | Bantlar kalibre skorla uyumlu değil. Arayüz `legal_validation_status` ve `evidence_summary` değerlerini esas almalı. |
+| **PDF'in veri kaynağı** | Oturum durumundan yeniden kurulan kararda `legal_justification` ve `applied_gir_rules` saklanmadığı için PDF'te boş kalabilir. Durum yoksa sabit metin kullanılır. | Kararın tamamı oturumda saklanmalı. |
+| **Denetim kaydı kapsamı** | `audit_logs` yalnız `COMPLETED` kararları ve 50 karakterlik ürün adını tutar. | Tam iz `classification_run` tablosundadır. Denetim raporları o tablodan beslenmeli. |
+| **SSE akışı** | Yalnız başlangıç ve sonuç olayı gönderilir; seviye bazında ara ilerleme yok. | Canlı ilerleme için seviye olayları eklenebilir. |
+| **Gecikme** | p95 35.5 sn. Fasıl geri alması ek bir CHAPTER çağrısı (~11k token) ekler. | `gtip_slow_analysis` ve `gtip_chapter_backtrack` metrikleriyle izlenmeli. |
+| **Eski log metriği** | `gtip_intl_search_failures` kurulum betiğinden çıkarıldı; ancak GCP'de daha önce oluşturulmuşsa orada durur. | Cloud Logging'den elle silinebilir. |
+| **Yönlendirmenin uçtan uca etkisi** | Hibrit giriş, çevrimdışı yönlendirme deneyine göre kuruldu; LLM'li benchmark ile önce/sonra ölçümü ayrıca yapılmalıdır. | `gtip-benchmark` job'u `HEADING_ROUTING_ENABLED` açık ve kapalıyken çalıştırılıp `leaf_acc` ve p95 karşılaştırılmalı. |
+| **Rate limit** | Süreç içi bellekte tutulur. Cloud Run'da örnek başına ayrı sayılır. | Çok örnekli dağıtımda sınır gevşer. Gerekirse paylaşılan bir depo (Redis/Memorystore) kullanılmalı. |
+
+---
+
+<a id="bolum-12"></a>
+
+## 12. ÖZET
+
+GTİP Tespit ve Karar Destek Sistemi'nin güncel hâli:
+1. **Kodu model üretmez.** Model resmî TGTC ağacında her seviyede sunucunun verdiği harf kimliklerinden birini seçer.
+   Kod sunucuda çözülür ve yürürlükteki aktif yaprak olarak doğrulanır.
+2. **Kanıtı modele verir, hükmü metne bırakır.** Ham beyan, seviyeyle eşleşen BTB/EBTI emsalleri ve resmî fasıl notları
+   seçim promptuna girer. Emsal bağlayıcı sayılmaz; metin ve not üstündür.
+3. **Çıkmazları insana sorar.** Bilgi eksikliği ve seçim yapılamayan durumlar, yalnız resmî kardeş dallardan oluşan
+   sınırlı sorulara dönüşür. Oturum saklanır ve aynı kanıtla devam eder.
+4. **Hukuki dayanağı kayıttan okur.** GİR, tarife ve fasıl notu metinleri model tarafından yazılmaz.
+5. **Başarımını ölçer ve dürüst raporlar.** Gerçek BTB holdout'unda yaprak doğruluğu %35, kapsam %72. Güven skoru etiketli
+   veriyle kalibre edildi. Zayıf kararlar müşavir incelemesine işaretlenir. Sistem bir karar destek aracıdır, müşavirin yerini almaz.
