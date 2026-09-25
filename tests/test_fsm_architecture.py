@@ -574,3 +574,35 @@ def test_static_option_block_precedes_variable_product_text(monkeypatch):
     assert prompt.index("KAPALI SEÇENEKLER") < prompt.index("<product_data>")
     # Ürün metni ön-ekin dışında kalmalı: aksi halde ortak ön-ek sıfırlanır.
     assert "BENZERSIZ-URUN-METNI" not in prompt[: prompt.index("KAPALI SEÇENEKLER")]
+
+
+def test_chapter_routing_gets_thinking_budget_but_lower_levels_do_not():
+    """Bütçe 0 iken fasıl seçimi yüzeysel malzeme eşleşmesine kayıyordu
+    (ahşap sandalye -> ahşap eşya faslı). Alt seviyelerin ilk denemesi hızlı kalır."""
+    from api.config import settings
+    from api.modules.llm_verifier import LLMFactVerifier
+
+    assert LLMFactVerifier._thinking_budget(False, "CHAPTER") == settings.THINKING_BUDGET_CHAPTER > 0
+    assert LLMFactVerifier._thinking_budget(False, "HEADING") == 0
+    assert LLMFactVerifier._thinking_budget(True, "HEADING") == settings.THINKING_BUDGET_EXCLUSION
+
+
+def test_function_over_material_rule_is_generic_and_chapter_only(monkeypatch):
+    from api.modules import llm_verifier as verifier_module
+
+    prompts = {}
+
+    class Models:
+        def generate_content(self, **kwargs):
+            prompts["last"] = kwargs["contents"]
+            return SimpleNamespace(text='{"status":"SELECT","selected_candidate_id":"A"}')
+
+    monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr("api.modules.vertex_client.get_genai_client", lambda: SimpleNamespace(models=Models()))
+    nodes = [{"gtip_code": "44", "description": "a"}, {"gtip_code": "94", "description": "b"}]
+
+    verifier_module.llm_verifier.select_tariff_node("x", "CHAPTER", nodes)
+    assert "İŞLEV MALZEMEDEN ÖNCE GELİR" in prompts["last"]
+    verifier_module.llm_verifier.select_tariff_node("x", "HEADING", nodes)
+    assert "İŞLEV MALZEMEDEN ÖNCE GELİR" not in prompts["last"]

@@ -58,7 +58,11 @@ class LLMFactVerifier:
         return int(max(4000, min(ceiling, remaining_ms * 0.6)))
 
     @staticmethod
-    def _config(narrowing: bool = False, timeout_ms: Optional[int] = None) -> Optional[Any]:
+    def _config(
+        narrowing: bool = False,
+        timeout_ms: Optional[int] = None,
+        level: Optional[str] = None,
+    ) -> Optional[Any]:
         try:
             from google.genai import types
 
@@ -68,7 +72,7 @@ class LLMFactVerifier:
             # üretir, bu yüzden bütçe ve sıcaklık bilinçli olarak değiştirilir.
             return types.GenerateContentConfig(
                 thinking_config=types.ThinkingConfig(
-                    thinking_budget=settings.THINKING_BUDGET_EXCLUSION if narrowing else 0
+                    thinking_budget=LLMFactVerifier._thinking_budget(narrowing, level)
                 ),
                 temperature=0.3 if narrowing else 0.0,
                 response_mime_type="application/json",
@@ -78,6 +82,13 @@ class LLMFactVerifier:
             )
         except Exception:
             return None
+
+    @staticmethod
+    def _thinking_budget(narrowing: bool, level: Optional[str]) -> int:
+        """CHAPTER yönlendirmesi düşünme payı ister; alt seviyelerde ilk deneme 0'dır."""
+        if level == "CHAPTER":
+            return max(settings.THINKING_BUDGET_CHAPTER, settings.THINKING_BUDGET_EXCLUSION if narrowing else 0)
+        return settings.THINKING_BUDGET_EXCLUSION if narrowing else 0
 
     _LEVEL_PREFIX = {"CHAPTER": 2, "HEADING": 4, "SUBHEADING": 6, "GTIP": 8}
 
@@ -216,7 +227,16 @@ class LLMFactVerifier:
 
         level_rule = (
             "11. CHAPTER bir yönlendirme seviyesidir: ürünün esas niteliği, adı ve işlevine göre en uygun faslı mutlaka "
-            "SELECT et. Bu seviyede malzeme gibi ayrıntıları sorma ve INSUFFICIENT_INFORMATION kullanma."
+            "SELECT et. Bu seviyede malzeme gibi ayrıntıları sorma ve INSUFFICIENT_INFORMATION kullanma.\n"
+            # Genel ilke (GYK 3(a) ve malzeme fasıllarının dışlama notları);
+            # belirli ürün veya kod içermez. Ölçümde model bunu tutarlı
+            # uygulamıyordu: aynı prompt ahşap sandalyeyi malzeme faslına,
+            # metal masayı mobilyaya gönderebiliyordu.
+            "12. İŞLEV MALZEMEDEN ÖNCE GELİR: Önce eşyanın NE OLDUĞUNU belirle (ne işe yarayan hangi tür eşya). Eşyayı bu "
+            "türüyle tanımlayan bir fasıl varsa onu seç; yalnız yapıldığı malzemeyi kapsayan fasıl (ahşap, plastik, metal, "
+            "cam, kağıt vb. eşya fasılları) ikinci plandadır. Malzeme faslını yalnız eşya türüyle başka bir fasılda "
+            "tanımlanmıyorsa seç. Malzeme fasıllarının notları, başka fasıllarda türüyle tanımlanan eşyayı genellikle "
+            "kapsam dışında bırakır."
             if level == "CHAPTER"
             else "11. Seçimi ürünün esas niteliği ve işlevine göre yap; tali malzemeyi ancak resmî ayrım bunu gerektiriyorsa kullan."
         )
@@ -279,7 +299,7 @@ class LLMFactVerifier:
                     response = get_genai_client().models.generate_content(
                         model=settings.REASONING_LLM_MODEL,
                         contents=prompt,
-                        config=self._config(narrowing, self._call_timeout_ms(deadline)),
+                        config=self._config(narrowing, self._call_timeout_ms(deadline), level),
                     )
                     break
                 except Exception as exc:

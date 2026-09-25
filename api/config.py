@@ -59,6 +59,12 @@ class Settings(BaseSettings):
     # 2048 bütçe, birkaç boolean koşulda gereksiz gecikme yaratıyordu.
     THINKING_BUDGET_EXCLUSION: int = int(os.getenv("THINKING_BUDGET_EXCLUSION", "384"))
     THINKING_BUDGET_VERIFIER: int = int(os.getenv("THINKING_BUDGET_VERIFIER", "1024"))
+    # Fasıl seçimi 97 seçenekli ~11 bin token'lık bir yönlendirmedir. Düşünme
+    # bütçesi 0 iken model "ahşap sandalye"yi mobilya yerine ahşap eşya faslına
+    # gönderiyordu (yüzeysel malzeme eşleşmesi). 12 ürünlük işlev/malzeme
+    # denemesinde: bütçe 0 -> 9/12, 256 -> 11/12, 512 -> 12/12 (medyan ~5 sn).
+    # Yalnız CHAPTER seviyesinin ilk denemesine uygulanır.
+    THINKING_BUDGET_CHAPTER: int = int(os.getenv("THINKING_BUDGET_CHAPTER", "512"))
 
     # Context cache hazırlığı büyük TGTC bağlamını Vertex'e yüklediği için kullanıcı
     # isteğinin sıcak yolunda çalıştırılmaz. Cache gerekiyorsa ayrı bir bakım işiyle
