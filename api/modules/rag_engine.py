@@ -704,11 +704,14 @@ class RAGEngine:
         deadline: Optional[float] = None,
         recover_no_match: bool = True,
         always_ask_model: bool = False,
+        no_match_retries: Optional[int] = None,
     ) -> Tuple[Optional[Dict[str, Any]], Optional[DiscriminatorQuestion], List[str], List[str]]:
         """`recover_no_match=False`: NO_MATCH soruya çevrilmez, çağıran geri döner.
         `always_ask_model=True`: tek seçenek de modele onaylatılır. Emsal
         yönlendirmesinde tek aday resmî ağaçtan değil emsalden gelir; model onu
         reddedebilmelidir.
+        `no_match_retries`: NO_MATCH sonrası daraltma denemesi sayısı; None ise
+        seçicinin varsayılanı kullanılır.
         """
         if not nodes:
             return None, None, [], []
@@ -730,6 +733,7 @@ class RAGEngine:
             ),
             rejected_codes=list(rejected_codes or []) or None,
             deadline=deadline,
+            **({"_no_match_retries": no_match_retries} if no_match_retries is not None else {}),
         )
         applied_gir_keys = list(getattr(selection, "applied_gir_keys", []) or [])
         cited_chapter_notes = list(getattr(selection, "cited_chapter_notes", []) or [])
@@ -932,9 +936,17 @@ class RAGEngine:
 
             heading_nodes = self._heading_nodes(locked_chapter)
             traversal["heading_option_count"] = len(heading_nodes)
+            # Faslın hiçbir pozisyonu uymuyorsa asıl sinyal "fasıl yanlış"tır.
+            # Geri alma hakkı varken daraltma denemesi yapılmaz: model yanlış
+            # fasılda "en yakın" pozisyonu seçip dolaşımı yanlış dala sokuyordu
+            # (canlıda ahşap sandalye: 44 -> 4419), sorular da yanlış faslın
+            # pozisyonları arasında soruluyordu. Daraltma ve soru son fasla kalır.
+            can_backtrack = attempt + 1 < max_chapter_attempts
             node, question, g_keys, c_notes = self._select_node(
                 session_id, product_text, "HEADING", heading_nodes,
                 traversal=traversal, precedents=precedents, deadline=deadline,
+                recover_no_match=not can_backtrack,
+                no_match_retries=0 if can_backtrack else None,
             )
             _merge_rules(g_keys, c_notes)
             if question:

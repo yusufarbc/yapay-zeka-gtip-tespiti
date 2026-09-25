@@ -542,3 +542,46 @@ def test_zero_label_length_keeps_heading_codes(monkeypatch):
     # Etiket kapatılsa bile pozisyon KODLARI kalır: liste asla kesilmez.
     ch61 = next(n for n in nodes if n["gtip_code"] == "61")
     assert "6109" in ch61["description"]
+
+
+def test_first_chapter_no_match_backtracks_before_narrowing(monkeypatch):
+    """Canlıda: ahşap sandalye -> Fasıl 44, pozisyonların hiçbiri uymadı. Daraltma
+    denemesi yanlış fasılda "en yakın" 4419'u seçtirip dolaşımı yanlış dala soktu.
+    Geri alma hakkı varken önce fasıl geri alınmalı; daraltma ve soru son fasla kalır."""
+    from api.schemas.product import ProductFeatures
+
+    calls = []
+
+    def _selector(product_text, level, nodes, **kwargs):
+        calls.append((level, [n["gtip_code"] for n in nodes], kwargs.get("_no_match_retries"), kwargs.get("rejected_codes")))
+        if level == "CHAPTER":
+            pick = "B" if kwargs.get("rejected_codes") else "A"
+            return CandidateSelection(status=CandidateSelectionStatus.SELECT, selected_candidate_id=pick)
+        if nodes[0]["gtip_code"].startswith("44"):
+            return CandidateSelection(status=CandidateSelectionStatus.NO_MATCH)
+        return CandidateSelection(status=CandidateSelectionStatus.SELECT, selected_candidate_id="A")
+
+    monkeypatch.setattr("api.modules.rag_engine.llm_verifier.select_tariff_node", _selector)
+    monkeypatch.setattr(RAGEngine, "_chapter_nodes", staticmethod(lambda: [
+        {"gtip_code": "44", "description": "Ahşap eşya"},
+        {"gtip_code": "94", "description": "Mobilya"},
+    ]))
+    monkeypatch.setattr(RAGEngine, "_heading_nodes", staticmethod(lambda chapter: [
+        {"gtip_code": f"{chapter}01", "description": "a"},
+        {"gtip_code": f"{chapter}02", "description": "b"},
+    ]))
+    monkeypatch.setattr(RAGEngine, "_subheading_nodes", classmethod(lambda cls, h: []))
+
+    result = RAGEngine().search_candidates_hierarchical(
+        session_id="s1",
+        features=ProductFeatures(product_name="ahşap sandalye", primary_material="ahşap", intended_use="oturma"),
+    )
+
+    first_heading = next(c for c in calls if c[0] == "HEADING")
+    assert first_heading[1] == ["4401", "4402"]
+    assert first_heading[2] == 0, "ilk fasılda daraltma denemesi yapılmamalı"
+    assert result.discriminator_question is None, "yanlış faslın pozisyonları sorulmamalı"
+    assert result.traversal_state["used_chapter_backtrack"] is True
+    assert result.traversal_state["locked_heading"] == "9401"
+    second_heading = [c for c in calls if c[0] == "HEADING"][1]
+    assert second_heading[2] is None, "son fasılda varsayılan kurtarma geçerli olmalı"
