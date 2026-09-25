@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Award, Download, Scale, CheckCircle2, Bot, Layers, Copy, Check, Globe, BookOpen, ShieldCheck, FileText } from 'lucide-react';
+import { Award, Download, Scale, CheckCircle2, Bot, Layers, Copy, Check, BookOpen, ShieldCheck, FileText } from 'lucide-react';
 import { getPDFReportUrl } from '../api/client';
 import { useToast } from './ToastContext';
 
@@ -574,50 +574,6 @@ export const GTIPResultCard = ({ decision }) => {
           </p>
         </div>
       )}
-
-      {/* Uluslararası emsal bulunamadığında resmi portal arama bağlantıları.
-          Sistem asla emsal karar uydurmaz; araştırmayı kullanıcı sürdürür. */}
-      {decision.research_portal_links && (
-        <div style={{ marginBottom: '24px' }}>
-          <h4 style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Globe size={18} color="var(--text-muted)" />
-            <span>Uluslararası Emsal Araştırma (ABD CBP CROSS, AB EBTI, Çin GACC):</span>
-          </h4>
-          <p style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.4 }}>
-            Aşağıdaki bağlantılar bu ürünü resmî yabancı gümrük veritabanlarında
-            doğrudan aratır.
-          </p>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-            {[
-              ['us_customsmobile', '🇺🇸 ABD CBP CROSS (CustomsMobile)'],
-              ['eu_ebti', '🇪🇺 AB EBTI (EC TAXUD)'],
-              ['cn_gacc', '🇨🇳 Çin GACC (海关总署)'],
-            ].map(([key, label]) => (
-              decision.research_portal_links[key] ? (
-                <a
-                  key={key}
-                  href={decision.research_portal_links[key]}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{
-                    fontSize: '0.78rem',
-                    color: 'var(--text-secondary)',
-                    textDecoration: 'none',
-                    background: 'var(--bg-surface-subtle)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: '8px',
-                    padding: '8px 12px',
-                    fontWeight: 600,
-                  }}
-                >
-                  {label} ↗
-                </a>
-              ) : null
-            ))}
-          </div>
-        </div>
-      )}
-
 
       {/* Alt Aksiyon Butonları */}
       <div style={{

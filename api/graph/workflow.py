@@ -426,20 +426,6 @@ class GTIPWorkflowEngine:
             for ep in ebti_precedents
         ] if has_ebti else []
 
-        # Canlı uluslararası arama kaldırıldı. Üretimde her çağrı 504 ile
-        # bitiyor, ~25 saniye harcayıp sıfır sonuç dönüyordu; yalın promptla
-        # bile 63 saniye sürdüğü ölçüldü. Sonuçlar zaten sınıflandırmaya etki
-        # etmiyor, yalnız gösterime giriyordu. Kullanıcı araştırmayı resmî
-        # portal bağlantılarıyla sürdürür (model çağrısı yok, maliyeti yok).
-        research_portal_links: Optional[Dict[str, str]] = None
-        try:
-            from api.modules.international_search import generate_portal_links
-            research_portal_links = generate_portal_links(
-                raw_text, locked_digits[:6] if locked_digits else None
-            )
-        except Exception as exc_links:
-            logger.warning("Portal bağlantıları üretilemedi: %s", exc_links)
-
         # Resmi Kanuni Maddeler (Model yazmaz; sistem doğrudan veritabanından çeker)
         applied_gir_keys = list(traversal.get("applied_gir_keys") or [])
         cited_chapters = list(traversal.get("cited_chapter_notes") or [])
@@ -504,7 +490,6 @@ class GTIPWorkflowEngine:
             precedent_btbs=precedents,
             precedent_ebtis=ebti_precedents,
             decision_signals=signals,
-            research_portal_links=research_portal_links,
             legal_sources=dedup_legal_sources,
             consulted_sources=consulted,
             trade_measures=get_customs_trade_measures(formatted_code),
@@ -762,7 +747,7 @@ class GTIPWorkflowEngine:
         )
         # Yalnız btb_precedents'i geri yüklemek, HITL'den geçen kararların
         # doğrudan tamamlananlardan farklı hukuki dayanakla sonuçlanmasına yol
-        # açıyordu; ayrıca uluslararası arama her devamda yeniden tetikleniyordu.
+        # açıyordu.
         for carried_key in (
             "btb_precedents",
             "ebti_precedents",
