@@ -217,13 +217,20 @@ class LLMFactVerifier:
         # konumsaldır; çıkarmak tüm id'leri kaydırır ve model aynı id'yi
         # döndürdüğünde komşu dala geçilir (üretimde 86 -> 87 böyle oluştu).
         # Liste sabit tutulur, dışlama modele açıkça bildirilir.
+        # Model seçimi harf kimliğiyle yapar; yalnız tarife kodunu söylemek
+        # yetmiyordu (canlıda reddedilen "44" yine "AR" kimliğiyle seçildi).
+        rejected_labels = [
+            f"{oid} ({re.sub(r'[^0-9]', '', str(node.get('gtip_code') or ''))})"
+            for oid, node in option_map.items()
+            if re.sub(r"\D", "", str(node.get("gtip_code") or "")) in set(rejected_codes or [])
+        ] or list(rejected_codes or [])
         rejection_block = (
-            "ÖNCEKİ DENEME BAŞARISIZ: {codes} kodlu dal(lar)ı seçtin, fakat o dalın "
+            "ÖNCEKİ DENEME BAŞARISIZ: {codes} seçeneğini seçtin, fakat o dalın "
             "altında ürüne uyan hiçbir alt dal bulunamadı.{nl}"
             "- Bu dal(lar)ı TEKRAR SEÇME.{nl}"
             "- Ürünün esas niteliğini yeniden değerlendir ve FARKLI bir dal seç.{nl}"
             "- Komşu numaraya kaymak yerine ürünün işlevine göre karar ver.{nl}{nl}"
-        ).format(codes=", ".join(rejected_codes), nl=chr(10)) if rejected_codes else ""
+        ).format(codes=", ".join(rejected_labels), nl=chr(10)) if rejected_codes else ""
 
         level_rule = (
             "11. CHAPTER bir yönlendirme seviyesidir: ürünün esas niteliği, adı ve işlevine göre en uygun faslı mutlaka "
@@ -372,6 +379,20 @@ class LLMFactVerifier:
                     logger.warning(
                         "Model reddedilen dalı yeniden seçti (%s); seçim geçersiz.", picked_code
                     )
+                    # Hak ve bütçe varsa bir kez daha sorulur; doğrudan pes etmek
+                    # geri almanın kendisini boşa çıkarıyordu.
+                    if _no_match_retries > 0 and (deadline is None or time.monotonic() < deadline):
+                        return self.select_tariff_node(
+                            raw_text,
+                            level,
+                            nodes,
+                            _no_match_retries=_no_match_retries - 1,
+                            precedents=precedents,
+                            chapter_notes=chapter_notes,
+                            narrowing=True,
+                            rejected_codes=rejected_codes,
+                            deadline=deadline,
+                        )
                     return CandidateSelection(
                         status=CandidateSelectionStatus.NO_MATCH,
                         reasoning_points=[

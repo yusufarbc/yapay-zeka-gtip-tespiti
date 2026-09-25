@@ -585,3 +585,30 @@ def test_first_chapter_no_match_backtracks_before_narrowing(monkeypatch):
     assert result.traversal_state["locked_heading"] == "9401"
     second_heading = [c for c in calls if c[0] == "HEADING"][1]
     assert second_heading[2] is None, "son fasılda varsayılan kurtarma geçerli olmalı"
+
+
+def test_rejection_names_the_option_id_and_reselection_is_retried(monkeypatch):
+    """Model harf kimliğiyle seçer; uyarı yalnız "44" deyince yine "AR" seçiliyordu.
+    Reddedilen dal yeniden seçilirse doğrudan pes edilmez, bir kez daha sorulur."""
+    prompts = []
+    answers = iter(['{"status":"SELECT","selected_candidate_id":"A"}',
+                    '{"status":"SELECT","selected_candidate_id":"B"}'])
+
+    class Models:
+        def generate_content(self, **kwargs):
+            prompts.append(kwargs["contents"])
+            return SimpleNamespace(text=next(answers))
+
+    monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr("api.modules.vertex_client.get_genai_client", lambda: SimpleNamespace(models=Models()))
+    monkeypatch.setattr(verifier_module.time, "sleep", lambda _: None)
+
+    selection = verifier_module.llm_verifier.select_tariff_node(
+        "ahşap sandalye", "CHAPTER",
+        [{"gtip_code": "44", "description": "Ahşap eşya"}, {"gtip_code": "94", "description": "Mobilya"}],
+        rejected_codes=["44"],
+    )
+    assert "A (44)" in prompts[0]
+    assert len(prompts) == 2, "reddedilen dal yeniden seçilince tekrar sorulmadı"
+    assert selection.selected_candidate_id == "B"
