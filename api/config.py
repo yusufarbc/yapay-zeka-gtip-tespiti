@@ -112,6 +112,23 @@ class Settings(BaseSettings):
     SELECTION_USE_PRECEDENTS: bool = os.getenv("SELECTION_USE_PRECEDENTS", "true").lower() == "true"
     SELECTION_USE_CHAPTER_NOTES: bool = os.getenv("SELECTION_USE_CHAPTER_NOTES", "true").lower() == "true"
 
+    # Emsal güdümlü pozisyon yönlendirmesi. Güçlü bir BTB emsali varsa dolaşım
+    # 97 fasıllık CHAPTER seçimini atlayıp emsallerin işaret ettiği en çok 3
+    # pozisyondan başlar; model bunlarda eşleşme bulamazsa tam dolaşıma dönülür.
+    # Eşik 120 numunelik yönlendirme deneyiyle seçildi
+    # (scripts/evaluate_heading_routing.py, routing-20260925T101052Z):
+    #
+    #   eşik  kapıyı geçen  doğru pozisyon ilk 3'te
+    #   0.6       %29.2          %91.4
+    #   0.8       %23.3          %96.4   <-- seçilen
+    #   0.9       %17.5          %100
+    #
+    # Aramayla fasıl adımını TAMAMEN atlamak ölçümde reddedildi: en iyi füzyon
+    # bile doğru pozisyonu numunelerin %41'inde ilk 3'ün dışında bıraktı.
+    HEADING_ROUTING_ENABLED: bool = os.getenv("HEADING_ROUTING_ENABLED", "true").lower() == "true"
+    HEADING_ROUTING_MIN_BTB: float = float(os.getenv("HEADING_ROUTING_MIN_BTB", "0.80"))
+    HEADING_ROUTING_MAX_HEADINGS: int = int(os.getenv("HEADING_ROUTING_MAX_HEADINGS", "3"))
+
     # RAG & Decision Settings
     # BTB'ler retrieval/reranking için değerli emsallerdir; ancak üçüncü kişiler
     # bakımından normatif bir kaynak değildir. Bu yüzden nihai aday skoruna ağırlık

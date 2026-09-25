@@ -21,7 +21,7 @@ from api.db.database import SessionLocal, validate_leaf_gtip
 from api.db.gcp_emulator import local_state_store
 from api.modules.discriminator_engine import DiscriminatorQuestion
 from api.modules.feature_extractor import feature_extractor
-from api.modules.rag_engine import HierarchicalSearchResult, rag_engine
+from api.modules.rag_engine import HierarchicalSearchResult, rag_engine, route_headings_from_precedents
 from api.schemas.product import GTIPCandidate, GTIPDecision, HITLOption, HITLQuestion, LegalSource, PrecedentBTB, ProductFeatures
 
 
@@ -136,6 +136,9 @@ def collect_signals(
         "cited_chapter_note_count": len(traversal.get("cited_chapter_notes") or []),
         "used_residual_fallback": bool(traversal.get("used_residual_fallback")),
         "used_chapter_backtrack": bool(traversal.get("used_chapter_backtrack")),
+        # Emsal yönlendirmesinin etkisi benchmark'ta bu alanlarla ayrıştırılır.
+        "routing": traversal.get("routing"),
+        "used_routing_fallback": bool(traversal.get("used_routing_fallback")),
         "hitl_answer_count": int(traversal.get("hitl_answer_count") or 0),
         "leaf_option_count": int(traversal.get("leaf_option_count") or 0),
         "heading_option_count": int(traversal.get("heading_option_count") or 0),
@@ -556,6 +559,7 @@ class GTIPWorkflowEngine:
         locked_subheading: Optional[str] = None,
         locked_gtip: Optional[str] = None,
         query_vector: Optional[List[float]] = None,
+        routed_headings: Optional[List[str]] = None,
     ) -> Any:
         return rag_engine.search_candidates_hierarchical(
             session_id=session_id,
@@ -570,6 +574,7 @@ class GTIPWorkflowEngine:
             raw_text=raw_text,
             precedents=precedents,
             deadline=deadline,
+            routed_headings=routed_headings,
         )
 
     def start_analysis(
@@ -582,9 +587,13 @@ class GTIPWorkflowEngine:
         session_id = str(uuid.uuid4())
         started = time.perf_counter()
         features = feature_extractor.extract_features(raw_text, image_uri)
-        btb_precedents = rag_engine.search_btb_precedents(
-            raw_text, exclude_refs=exclude_btb_refs
+        # Yönlendirme pozisyon oylaması için geniş küme (deneyde 20) kullanır;
+        # modele ve karara giden emsaller önceki gibi en iyi 5'tir. Sonuçlar
+        # benzerliğe göre sıralı olduğundan ilk 5 aynı kalır.
+        btb_pool = rag_engine.search_btb_precedents(
+            raw_text, top_k=20, exclude_refs=exclude_btb_refs
         )
+        btb_precedents = btb_pool[:5]
         # EBTI araması: BTB aramasından bağımsız çalışır, hata durumunda boş liste döner
         try:
             ebti_precedents = rag_engine.search_ebti_precedents(raw_text)
@@ -613,13 +622,44 @@ class GTIPWorkflowEngine:
             # Bütçe saati TRAVERSAL başlarken kurulur. İstek başlangıcından
             # saymak, öncesindeki emsal aramalarının bütçeyi yemesine ve
             # traversal'ın hiç çalışmamasına yol açıyordu.
+            deadline = time.monotonic() + settings.ANALYSIS_BUDGET_MS / 1000.0
+            routed = (
+                route_headings_from_precedents(
+                    btb_pool,
+                    settings.HEADING_ROUTING_MIN_BTB,
+                    settings.HEADING_ROUTING_MAX_HEADINGS,
+                )
+                if settings.HEADING_ROUTING_ENABLED else []
+            )
             tree_result = self._search(
                 session_id,
                 features,
                 raw_text=raw_text,
                 precedents=[*btb_precedents, *ebti_precedents],
-                deadline=time.monotonic() + settings.ANALYSIS_BUDGET_MS / 1000.0,
+                deadline=deadline,
+                routed_headings=routed or None,
             )
+            # Yönlendirme yalnız hızlandırıcıdır; doğruluğu düşürmemeli. Model
+            # adaylardan birine bağlanamazsa tam dolaşım aynı bütçeyle denenir.
+            if (
+                routed
+                and not tree_result.candidates
+                and not tree_result.discriminator_question
+                and time.monotonic() < deadline
+            ):
+                logger.info("Emsal yönlendirmesi sonuç vermedi; tam dolaşıma dönülüyor (%s)", routed)
+                tree_result = self._search(
+                    session_id,
+                    features,
+                    raw_text=raw_text,
+                    precedents=[*btb_precedents, *ebti_precedents],
+                    deadline=deadline,
+                )
+                tree_result.traversal_state.update({
+                    "routing": "BTB_HEADINGS_FALLBACK",
+                    "routed_headings": list(routed),
+                    "used_routing_fallback": True,
+                })
             tree_result.traversal_state["btb_precedents"] = [
                 item.model_dump() for item in btb_precedents
             ]
@@ -754,6 +794,10 @@ class GTIPWorkflowEngine:
             "applied_gir_keys",
             "cited_chapter_notes",
             "used_residual_fallback",
+            "routing",
+            "routed_headings",
+            "used_routing_fallback",
+            "heading_option_count",
         ):
             if carried_key in traversal:
                 tree_result.traversal_state.setdefault(carried_key, traversal[carried_key])

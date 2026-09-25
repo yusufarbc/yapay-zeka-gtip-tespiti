@@ -113,6 +113,11 @@ Seçim promptuna giren üç kanıt ayrı ayrı kapatılabilir:
 | `SELECTION_USE_PRECEDENTS` | Seviyeyle eşleşen BTB/EBTI emsalleri |
 | `SELECTION_USE_CHAPTER_NOTES` | İlgili faslın resmî notları (GİR 1 dışlama hükümleri) |
 
+Kanıttan ayrı olarak `HEADING_ROUTING_ENABLED` emsal güdümlü pozisyon yönlendirmesini açar/kapatır
+(güçlü BTB emsali varken fasıl seçimi atlanır). Baseline'a dahil değildir; etkisi
+`--ablate HEADING_ROUTING_ENABLED` ile ölçülür. Çevrimdışı gerekçesi:
+`python -m scripts.evaluate_heading_routing --from-report <benchmark raporu>`.
+
 Bu, her maddenin doğruluk katkısını tek tek ölçmeyi sağlar; aynı zamanda bir madde
 üretimde doğruluğu düşürürse yeniden deploy etmeden kapatma imkânı verir.
 
