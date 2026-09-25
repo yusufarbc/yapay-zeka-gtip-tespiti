@@ -118,6 +118,31 @@ def test_real_btb_exact_text_search_returns_the_precedent():
             session.commit()
 
 
+def test_a_single_shared_word_is_not_a_precedent():
+    """Canlıda "ahşap sandalye" için yalnız "ahşap" kelimesini paylaşan 5 karar
+    emsal sayıldı ve modeli ahşap eşya faslına itti. İki kelime paylaşan kalmalı."""
+    rows = {
+        "TEST-BTB-ONLY-MATERIAL": ("441899500000", "AHŞAP PARKE PANELİ"),
+        "TEST-BTB-SAME-THING": ("940161000000", "AHŞAP İSKELETLİ DÖŞEMELİ SANDALYE"),
+    }
+    with SessionLocal() as session:
+        session.query(GumrukEmsalKararModel).filter(GumrukEmsalKararModel.referans_no.in_(list(rows))).delete()
+        for ref, (code, desc) in rows.items():
+            session.add(GumrukEmsalKararModel(
+                karar_tipi="BTB", referans_no=ref, gtip_kodu=code, yayin_tarihi="2026-09-09",
+                esya_tanimi=desc, hukuki_gerekce="Test", valid_until="9999-12-31",
+            ))
+        session.commit()
+    try:
+        refs = [m.btb_no for m in rag_engine.search_btb_precedents("ahşap sandalye")]
+        assert "TEST-BTB-ONLY-MATERIAL" not in refs
+        assert "TEST-BTB-SAME-THING" in refs
+    finally:
+        with SessionLocal() as session:
+            session.query(GumrukEmsalKararModel).filter(GumrukEmsalKararModel.referans_no.in_(list(rows))).delete()
+            session.commit()
+
+
 def test_exact_btb_candidate_requires_one_agreed_active_leaf(monkeypatch):
     precedent = PrecedentBTB(
         btb_no="TR-EXACT",
@@ -489,19 +514,55 @@ def test_canonical_chapter_titles_accuracy():
     assert chapters.get("85") == "Fasıl 85: Elektrikli makine ve cihazlar, ses ve görüntü kaydetme/çoğaltma cihazları, bunların aksam ve parçaları"
 
 
-def test_feature_extractor_cam_balkon_architectural_composite():
+def test_feature_extractor_has_no_product_specific_overrides():
+    """Özellik çıkarıcı yalnız kullanıcının yazdığını çıkarır; ürüne özel kural yoktur.
+
+    Önceki sürüm "cam balkon" geçince malzemeyi "alüminyum / cam (mimari sistem)"
+    yapıyor, işlevi sabit metinle değiştiriyor ve set/demonte bayraklarını açıyordu.
+    Kullanıcı alüminyum yazmasa da alüminyum varsayılıyordu.
+    """
     from api.modules.feature_extractor import FeatureExtractor
 
     fe = FeatureExtractor()
     features = fe.extract_features("cam balkon sistemi")
-    assert "alüminyum" in features.primary_material.lower()
-    assert "cam" in features.primary_material.lower()
-    assert features.is_set_or_kit is True
-    assert features.is_disassembled is True
+    assert features.primary_material == "cam"
+    assert "alüminyum" not in features.primary_material
+    assert features.function == "cam balkon sistemi"
+    assert features.is_set_or_kit is False
+    assert features.is_disassembled is False
 
-    steel_features = fe.extract_features("çelik profilli cam balkon")
-    assert "çelik" in steel_features.primary_material.lower()
-    assert "cam" in steel_features.primary_material.lower()
+    explicit = fe.extract_features("aluminyum doğrama cam balkon sistemi")
+    assert explicit.primary_material == "alüminyum / cam"
+
+
+def test_selection_prompt_contains_no_product_specific_rules(monkeypatch):
+    """Seçim promptu yalnız genel yorum kurallarını içermeli.
+
+    Ürüne özel kural ("cam balkon -> 76.10, asla Fasıl 70") modele resmî Fasıl 70
+    notunda bulunmayan bir hükmü "fasıl notları uyarınca" diye aktarttı.
+    """
+    from api.modules import llm_verifier as verifier_module
+
+    captured = {}
+
+    class Models:
+        def generate_content(self, **kwargs):
+            captured["prompt"] = kwargs["contents"]
+            return SimpleNamespace(text='{"status":"SELECT","selected_candidate_id":"A"}')
+
+    monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr("api.modules.vertex_client.get_genai_client",
+                        lambda: SimpleNamespace(models=Models()))
+
+    verifier_module.llm_verifier.select_tariff_node(
+        "x", "HEADING",
+        [{"gtip_code": "8471", "description": "a"}, {"gtip_code": "8517", "description": "b"}],
+    )
+    rules = captured["prompt"][: captured["prompt"].index("SEVİYE:")].casefold()
+    for forbidden in ("balkon", "76.10", "7610", "70.05", "73.08", "39.25", "kış bahçesi"):
+        assert forbidden not in rules, f"promptta ürüne özel kural: {forbidden}"
+    assert "atif dürüstlüğü" in rules  # "ATIF" casefold ile "atif" olur
 
 
 
@@ -538,3 +599,58 @@ def test_static_option_block_precedes_variable_product_text(monkeypatch):
     assert prompt.index("KAPALI SEÇENEKLER") < prompt.index("<product_data>")
     # Ürün metni ön-ekin dışında kalmalı: aksi halde ortak ön-ek sıfırlanır.
     assert "BENZERSIZ-URUN-METNI" not in prompt[: prompt.index("KAPALI SEÇENEKLER")]
+
+
+def test_chapter_routing_gets_thinking_budget_but_lower_levels_do_not():
+    """Bütçe 0 iken fasıl seçimi yüzeysel malzeme eşleşmesine kayıyordu
+    (ahşap sandalye -> ahşap eşya faslı). Alt seviyelerin ilk denemesi hızlı kalır."""
+    from api.config import settings
+    from api.modules.llm_verifier import LLMFactVerifier
+
+    assert LLMFactVerifier._thinking_budget(False, "CHAPTER") == settings.THINKING_BUDGET_CHAPTER > 0
+    assert LLMFactVerifier._thinking_budget(False, "HEADING") == 0
+    assert LLMFactVerifier._thinking_budget(True, "HEADING") == settings.THINKING_BUDGET_EXCLUSION
+
+
+def test_function_over_material_rule_is_generic_and_chapter_only(monkeypatch):
+    from api.modules import llm_verifier as verifier_module
+
+    prompts = {}
+
+    class Models:
+        def generate_content(self, **kwargs):
+            prompts["last"] = kwargs["contents"]
+            return SimpleNamespace(text='{"status":"SELECT","selected_candidate_id":"A"}')
+
+    monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr("api.modules.vertex_client.get_genai_client", lambda: SimpleNamespace(models=Models()))
+    nodes = [{"gtip_code": "44", "description": "a"}, {"gtip_code": "94", "description": "b"}]
+
+    verifier_module.llm_verifier.select_tariff_node("x", "CHAPTER", nodes)
+    assert "İŞLEV MALZEMEDEN ÖNCE GELİR" in prompts["last"]
+    verifier_module.llm_verifier.select_tariff_node("x", "HEADING", nodes)
+    assert "İŞLEV MALZEMEDEN ÖNCE GELİR" not in prompts["last"]
+
+
+def test_prompt_instructions_are_unnumbered(monkeypatch):
+    """Numaralı talimat listesinde model "12. madde"yi "GYK 12" diye gerekçeye
+    yazıyordu. Atıf yapılabilecek tek numara GYK 1-6 olmalı."""
+    import re
+    from api.modules import llm_verifier as verifier_module
+
+    captured = {}
+
+    class Models:
+        def generate_content(self, **kwargs):
+            captured["prompt"] = kwargs["contents"]
+            return SimpleNamespace(text='{"status":"SELECT","selected_candidate_id":"A"}')
+
+    monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr("api.modules.vertex_client.get_genai_client", lambda: SimpleNamespace(models=Models()))
+    verifier_module.llm_verifier.select_tariff_node(
+        "x", "CHAPTER", [{"gtip_code": "44", "description": "a"}, {"gtip_code": "94", "description": "b"}],
+    )
+    rules = captured["prompt"][: captured["prompt"].index("SEVİYE:")]
+    assert not re.search(r"^\d+\. ", rules, flags=re.M), "talimatlar numaralı"

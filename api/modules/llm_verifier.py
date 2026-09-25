@@ -58,7 +58,11 @@ class LLMFactVerifier:
         return int(max(4000, min(ceiling, remaining_ms * 0.6)))
 
     @staticmethod
-    def _config(narrowing: bool = False, timeout_ms: Optional[int] = None) -> Optional[Any]:
+    def _config(
+        narrowing: bool = False,
+        timeout_ms: Optional[int] = None,
+        level: Optional[str] = None,
+    ) -> Optional[Any]:
         try:
             from google.genai import types
 
@@ -68,7 +72,7 @@ class LLMFactVerifier:
             # üretir, bu yüzden bütçe ve sıcaklık bilinçli olarak değiştirilir.
             return types.GenerateContentConfig(
                 thinking_config=types.ThinkingConfig(
-                    thinking_budget=settings.THINKING_BUDGET_EXCLUSION if narrowing else 0
+                    thinking_budget=LLMFactVerifier._thinking_budget(narrowing, level)
                 ),
                 temperature=0.3 if narrowing else 0.0,
                 response_mime_type="application/json",
@@ -78,6 +82,13 @@ class LLMFactVerifier:
             )
         except Exception:
             return None
+
+    @staticmethod
+    def _thinking_budget(narrowing: bool, level: Optional[str]) -> int:
+        """CHAPTER yönlendirmesi düşünme payı ister; alt seviyelerde ilk deneme 0'dır."""
+        if level == "CHAPTER":
+            return max(settings.THINKING_BUDGET_CHAPTER, settings.THINKING_BUDGET_EXCLUSION if narrowing else 0)
+        return settings.THINKING_BUDGET_EXCLUSION if narrowing else 0
 
     _LEVEL_PREFIX = {"CHAPTER": 2, "HEADING": 4, "SUBHEADING": 6, "GTIP": 8}
 
@@ -206,51 +217,67 @@ class LLMFactVerifier:
         # konumsaldır; çıkarmak tüm id'leri kaydırır ve model aynı id'yi
         # döndürdüğünde komşu dala geçilir (üretimde 86 -> 87 böyle oluştu).
         # Liste sabit tutulur, dışlama modele açıkça bildirilir.
+        # Model seçimi harf kimliğiyle yapar; yalnız tarife kodunu söylemek
+        # yetmiyordu (canlıda reddedilen "44" yine "AR" kimliğiyle seçildi).
+        rejected_labels = [
+            f"{oid} ({re.sub(r'[^0-9]', '', str(node.get('gtip_code') or ''))})"
+            for oid, node in option_map.items()
+            if re.sub(r"\D", "", str(node.get("gtip_code") or "")) in set(rejected_codes or [])
+        ] or list(rejected_codes or [])
         rejection_block = (
-            "ÖNCEKİ DENEME BAŞARISIZ: {codes} kodlu dal(lar)ı seçtin, fakat o dalın "
+            "ÖNCEKİ DENEME BAŞARISIZ: {codes} seçeneğini seçtin, fakat o dalın "
             "altında ürüne uyan hiçbir alt dal bulunamadı.{nl}"
             "- Bu dal(lar)ı TEKRAR SEÇME.{nl}"
             "- Ürünün esas niteliğini yeniden değerlendir ve FARKLI bir dal seç.{nl}"
             "- Komşu numaraya kaymak yerine ürünün işlevine göre karar ver.{nl}{nl}"
-        ).format(codes=", ".join(rejected_codes), nl=chr(10)) if rejected_codes else ""
+        ).format(codes=", ".join(rejected_labels), nl=chr(10)) if rejected_codes else ""
 
         level_rule = (
-            "11. CHAPTER bir yönlendirme seviyesidir: ürünün esas niteliği, adı ve işlevine göre en uygun faslı mutlaka "
-            "SELECT et. Bu seviyede malzeme gibi ayrıntıları sorma ve INSUFFICIENT_INFORMATION kullanma."
+            "- CHAPTER bir yönlendirme seviyesidir: ürünün esas niteliği, adı ve işlevine göre en uygun faslı mutlaka "
+            "SELECT et. Bu seviyede malzeme gibi ayrıntıları sorma ve INSUFFICIENT_INFORMATION kullanma.\n"
+            # Genel ilke (GYK 3(a) ve malzeme fasıllarının dışlama notları);
+            # belirli ürün veya kod içermez. Ölçümde model bunu tutarlı
+            # uygulamıyordu: aynı prompt ahşap sandalyeyi malzeme faslına,
+            # metal masayı mobilyaya gönderebiliyordu.
+            "- İŞLEV MALZEMEDEN ÖNCE GELİR (GYK 1 ve GYK 3(a) gereği): Önce eşyanın NE OLDUĞUNU belirle (ne işe yarayan hangi tür eşya). Eşyayı bu "
+            "türüyle tanımlayan bir fasıl varsa onu seç; yalnız yapıldığı malzemeyi kapsayan fasıl (ahşap, plastik, metal, "
+            "cam, kağıt vb. eşya fasılları) ikinci plandadır. Malzeme faslını yalnız eşya türüyle başka bir fasılda "
+            "tanımlanmıyorsa seç. Malzeme fasıllarının notları, başka fasıllarda türüyle tanımlanan eşyayı genellikle "
+            "kapsam dışında bırakır."
             if level == "CHAPTER"
             else "11. Seçimi ürünün esas niteliği ve işlevine göre yap; tali malzemeyi ancak resmî ayrım bunu gerektiriyorsa kullan."
         )
         prompt = (
             "Sen Türk Gümrük Tarife Cetveli ve WCO Armonize Sistem sınıflandırma uzmanısın. "
             "Ürünü, aşağıdaki SUNUCU TARAFINDAN SAĞLANAN resmî seçeneklerden birine bağla.\n\n"
-            "KATI HUKUKİ SINIFLANDIRMA VE YORUM KURALLARI (GYK / GİR):\n"
-            "1. YENİ KOD UYDURMA: Yeni GTİP/fasıl/pozisyon kodu yazma veya düzeltme; yalnız option_id döndür.\n"
+            # Talimatlar numarasızdır: numaralı listede model "12. madde"yi
+            # "GYK 12" diye gerekçeye yazıyordu; GYK yalnız 1-6 arasıdır.
+            "SEÇİM TALİMATLARI (gerekçede bu talimatlara değil; yalnız GYK 1-6'ya, resmî seçenek metnine "
+            "veya fasıl notuna atıf yap):\n"
+            "- YENİ KOD UYDURMA: Yeni GTİP/fasıl/pozisyon kodu yazma veya düzeltme; yalnız option_id döndür.\n"
             "   option_id HARF kimliğidir (A, B, ... AA, AB). Tarife koduyla İLGİSİZDİR; "
             "seçmek istediğin seçeneğin option_id alanını birebir kopyala.\n"
-            "2. KAPALI KÜME: Seçenekler dışında bilgi uydurma. Ürün açıkça bir seçeneğe uyuyorsa SELECT kullan.\n"
-            "3. GYK 1 & BÖLÜM/FASIL DIŞLAMA NOTLARI (EXCLUSION NOTES):\n"
-            "   - Sınıflandırma öncelikle tarife pozisyonu metinlerine ve fasıl notlarına göre yapılır.\n"
-            "   - Çerçeveli, profilli veya mekanizmalı mimari kapama, bölme, doğrama, pencere, kapı ve balkon sistemleri "
-            "(örneğin 'cam balkon sistemi', 'balkon camlama', 'kış bahçesi', 'sürme/katlanır cam sistemleri'), "
-            "FASIL 70 (Cam) KAPSAMI DIŞINDADIR (Fasıl 70 notları uyarınca).\n"
-            "   - Bu tür sistemler taşıyıcı/çerçeve malzemesine göre sınıflandırılır: Alüminyum profilli ise FASIL 76 "
-            "(özellikle 76.10 pozisyonu: Alüminyum inşaat ve inşaat aksamı; kapılar, pencereler ve çerçeveleri), "
-            "demir/çelik ise FASIL 73 (73.08), plastik/PVC ise FASIL 39 (39.25). Asla Fasıl 70'e yönlendirme!\n"
-            "4. GYK 2(a) - DEMONTE / SÖKÜLMÜŞ EŞYA: Demonte, profil veya parça kitleri halinde sevk edilen sistemler, "
-            "monte edilmiş yapının esas karakterini taşıyorsa bitmiş mamul pozisyonunda (örn. 76.10) sınıflandırılır.\n"
-            "5. GYK 3(a) - ÖZEL TANIM GENEL TANIMA ÜSTÜNDÜR: Eşyanın mimari işlevini doğrudan tanımlayan pozisyon "
-            "(örn. 76.10: Alüminyum inşaat aksamı, kapılar, pencereler, çerçeveler), sırf hammaddeyi genel olarak belirten "
-            "pozisyona (örn. Fasıl 70 / 70.05 / 70.07 ham cam) daima tercih edilir.\n"
-            "6. GYK 3(b) - KOMPOZİT EŞYADA ESAS KARAKTER: Farklı maddelerden oluşan eşyalarda (örn. alüminyum ray/profil + "
-            "cam paneller), sisteme taşıma, katlanma, sürme mekanizması ve mimari dayanım sağlayan alüminyum strüktür esas karakteri verir.\n"
-            "7. GEREKSİZ CAM İMALAT SORULARI SORMA: Cam balkon ve mimari doğrama sistemlerinde kullanıcıya camın üretim şeklini "
-            "(float, çekme, temperli/lamine - 7004/7005/7007) sorma! Ürün hammadde camı değildir; doğrudan 76.10 / 7610.10 dalına ilerle.\n"
-            "8. DAR/İSTİSNAİ DALLAR: Tohumluk, sivil hava taşıtı, soğuk hava deposu, çocuklar için, tıbbi kullanım gibi dar dalları "
+            "- KAPALI KÜME: Seçenekler dışında bilgi uydurma. Ürün açıkça bir seçeneğe uyuyorsa SELECT kullan.\n"
+            # Bu kurallar genel yorum kurallarıdır; belirli ürün veya kod için kural
+            # YAZILMAZ. Ürüne özel kural (ör. "cam balkon -> 76.10") modele resmî
+            # notta bulunmayan bir hükmü "fasıl notları uyarınca" diye aktarttı.
+            # Ayrım resmî metinden, fasıl notlarından ve emsallerden gelmelidir.
+            "- GYK 1: Sınıflandırma öncelikle tarife pozisyonu metinlerine ve bölüm/fasıl notlarına göre yapılır. "
+            "Aşağıda verilen fasıl notlarındaki dışlama hükümlerine uy.\n"
+            "- ATIF DÜRÜSTLÜĞÜ: Yalnız bu promptta sana verilen resmî seçenek metnine, fasıl notuna veya emsale atıf yap. "
+            "Sana verilmeyen bir not hükmünü 'fasıl notları uyarınca' diye yazma; notta açıkça geçmeyen bir kuralı notun "
+            "hükmüymüş gibi sunma.\n"
+            "- GYK 2(a): Eksik, bitmemiş, demonte veya sökülmüş halde sunulan eşya, tamamlanmış eşyanın esas niteliğini "
+            "taşıyorsa tamamlanmış eşyanın pozisyonunda sınıflandırılır.\n"
+            "- GYK 3(a): Eşyayı en özel şekilde tanımlayan pozisyon, daha genel tanımlayan pozisyona tercih edilir.\n"
+            "- GYK 3(b): Karışımlar ve farklı maddelerden oluşan eşyalar, esas niteliğini veren madde veya parçaya göre "
+            "sınıflandırılır.\n"
+            "- DAR/İSTİSNAİ DALLAR: Tohumluk, sivil hava taşıtı, soğuk hava deposu, çocuklar için, tıbbi kullanım gibi dar dalları "
             "yalnız ürün metninde bunu destekleyen olumlu kanıt varsa seç. Böyle kanıt yoksa mevcut genel/kalıntı 'diğerleri' dalını SELECT et.\n"
-            "9. SORU SINIRI (INSUFFICIENT_INFORMATION): Ancak seçenekler arasındaki ayrım için gerçekten gerekli, kullanıcıca "
+            "- SORU SINIRI (INSUFFICIENT_INFORMATION): Ancak seçenekler arasındaki ayrım için gerçekten gerekli, kullanıcıca "
             "gözlenebilir bir teknik özellik eksikse INSUFFICIENT_INFORMATION kullan, iki ila dört alternative_candidate_ids ve tek "
             "somut Türkçe question_text döndür. Soru yalnız malzeme, işlev, ölçü veya fiziksel nitelik hakkında olabilir; tarife kodu seçtiremez.\n"
-            "10. EŞLEŞME YOKSA: Hiçbir seçenek eşleşmiyorsa NO_MATCH kullan.\n"
+            "- EŞLEŞME YOKSA: Hiçbir seçenek eşleşmiyorsa NO_MATCH kullan.\n"
             f"{level_rule}\n\n"
             f"SEVİYE: {level}\n"
             # Seçenek listesi bu seviye için SABİTTİR (yalnız fasıl listesi
@@ -268,7 +295,8 @@ class LLMFactVerifier:
             "\"selected_candidate_id\":\"A veya null\","
             "\"alternative_candidate_ids\":[\"A\",\"B\"],"
             "\"question_text\":\"Türkçe soru veya null\","
-            "\"reasoning_points\":[\"kısa Türkçe gerekçe\"],"
+            "\"reasoning_points\":[\"1-3 kısa Türkçe cümle: seçimi belirleyen ürün özelliği ve "
+            "dayandığın GİR kuralı veya fasıl notu\"],"
             "\"applied_gir_keys\":[\"GIR_1\",\"GIR_3A\",\"GIR_3B\",\"GIR_6\"],"
             "\"cited_chapter_notes\":[\"70\",\"76\"]}"
         )
@@ -281,7 +309,7 @@ class LLMFactVerifier:
                     response = get_genai_client().models.generate_content(
                         model=settings.REASONING_LLM_MODEL,
                         contents=prompt,
-                        config=self._config(narrowing, self._call_timeout_ms(deadline)),
+                        config=self._config(narrowing, self._call_timeout_ms(deadline), level),
                     )
                     break
                 except Exception as exc:
@@ -354,6 +382,20 @@ class LLMFactVerifier:
                     logger.warning(
                         "Model reddedilen dalı yeniden seçti (%s); seçim geçersiz.", picked_code
                     )
+                    # Hak ve bütçe varsa bir kez daha sorulur; doğrudan pes etmek
+                    # geri almanın kendisini boşa çıkarıyordu.
+                    if _no_match_retries > 0 and (deadline is None or time.monotonic() < deadline):
+                        return self.select_tariff_node(
+                            raw_text,
+                            level,
+                            nodes,
+                            _no_match_retries=_no_match_retries - 1,
+                            precedents=precedents,
+                            chapter_notes=chapter_notes,
+                            narrowing=True,
+                            rejected_codes=rejected_codes,
+                            deadline=deadline,
+                        )
                     return CandidateSelection(
                         status=CandidateSelectionStatus.NO_MATCH,
                         reasoning_points=[

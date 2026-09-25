@@ -227,6 +227,8 @@ ABLATION_FLAGS = (
     "SELECTION_USE_PRECEDENTS",
     "SELECTION_USE_CHAPTER_NOTES",
 )
+# Kanıt değil dolaşım biçimi: baseline'a dahil değildir, ayrıca kapatılır.
+ROUTING_FLAGS = ("HEADING_ROUTING_ENABLED",)
 
 
 def run_benchmark(
@@ -241,10 +243,12 @@ def run_benchmark(
     # Ablasyon: kanıt enjeksiyonunu kapatarak her maddenin katkısını tek tek ölç.
     # Hepsi kapalıyken alınan ölçüm baseline'dır.
     for flag in (ablate or []):
-        if flag not in ABLATION_FLAGS:
-            raise SystemExit(f"Bilinmeyen ablasyon bayrağı: {flag} (geçerli: {ABLATION_FLAGS})")
+        if flag not in ABLATION_FLAGS + ROUTING_FLAGS:
+            raise SystemExit(
+                f"Bilinmeyen ablasyon bayrağı: {flag} (geçerli: {ABLATION_FLAGS + ROUTING_FLAGS})"
+            )
         setattr(settings, flag, False)
-    active_flags = {flag: bool(getattr(settings, flag)) for flag in ABLATION_FLAGS}
+    active_flags = {flag: bool(getattr(settings, flag)) for flag in ABLATION_FLAGS + ROUTING_FLAGS}
     logger.info("Kanıt bayrakları: %s", active_flags)
 
     test_set = dataset or build_holdout(sample_size, seed)
@@ -460,7 +464,7 @@ def main() -> int:
     report = run_benchmark(sample_size=args.sample, seed=args.seed, ablate=ablate)
 
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    label = "baseline" if len(ablate) == len(ABLATION_FLAGS) else ("ablate" if ablate else "full")
+    label = "baseline" if set(ABLATION_FLAGS) <= set(ablate) else ("ablate" if ablate else "full")
     out_path = args.out or os.path.join(RESULTS_DIR, f"benchmark-{label}-{stamp}.json")
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as handle:

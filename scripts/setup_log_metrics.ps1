@@ -28,6 +28,8 @@ function Assert-LastExitCode([string]$Message) {
 
 $base = "resource.type=`"cloud_run_revision`" AND resource.labels.service_name=`"$ServiceName`""
 
+# NOT: filtre degerlerinde BOSLUK kullanilmaz; PowerShell -> cmd.exe arguman
+# bolmesi tirnak icindeki boslukta filtreyi parcaliyor.
 $metrics = @(
     @{
         Name        = "gtip_analysis_errors"
@@ -43,16 +45,6 @@ $metrics = @(
         Name        = "gtip_hitl_questions"
         Description = "Musavire teknik ayrim sorusu yoneltilen kararlar"
         Filter      = "$base AND jsonPayload.decision_status=`"WAITING_FOR_USER`""
-    },
-    @{
-        # Uluslararasi emsal aramasinin basarisizlik orani. Iki isi birden gorur:
-        # (1) grounded arama ne siklikta 504 aliyor, (2) uydurma emsal uretiminin
-        # geri gelmedigini izlemek icin bu logger'in tum uyarilarini yuzeye cikarir.
-        # NOT: filtre degerlerinde BOSLUK kullanilmaz; PowerShell -> cmd.exe
-        # argüman bölmesi tirnak icindeki boslukta filtreyi parcaliyor.
-        Name        = "gtip_intl_search_failures"
-        Description = "Uluslararasi emsal aramasi uyari/hatalari (grounded search saglik gostergesi)"
-        Filter      = "$base AND jsonPayload.logger=`"InternationalSearchEngine`" AND severity>=WARNING"
     },
     @{
         # Fasil geri almasi: ilk fasil secimi hicbir pozisyonla eslesmedi.

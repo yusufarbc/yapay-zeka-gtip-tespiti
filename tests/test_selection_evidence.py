@@ -103,14 +103,18 @@ def test_chapter_level_omits_notes_because_all_chapters_are_options(captured_pro
     assert "İLGİLİ FASIL NOTLARI" not in captured_prompt["prompt"]
 
 
-def test_mixed_chapter_node_sets_do_not_inject_misleading_notes(captured_prompt):
-    """Seçenekler tek fasıla ait değilse hangi faslın notu geçerli belli değildir."""
+def test_mixed_chapter_node_sets_label_each_chapter_note(captured_prompt):
+    """Emsal yönlendirmesinde adaylar birden çok fasla yayılır ve fasıl seçimi
+    atlanır; dışlama notları tam da bu adaylar arasında ayrım yapar. Her not
+    kendi faslıyla etiketlenir ki hangi seçeneğe ait olduğu karışmasın."""
     RAGEngine._select_node(
         "s1", "cam balkon", "HEADING",
         [{"gtip_code": "7007", "description": "Emniyet camları"},
          {"gtip_code": "7610", "description": "Alüminyum inşaat aksamı"}],
     )
-    assert "İLGİLİ FASIL NOTLARI" not in captured_prompt["prompt"]
+    prompt = captured_prompt["prompt"]
+    assert "İLGİLİ FASIL NOTLARI" in prompt
+    assert "FASIL 70 NOTLARI:" in prompt and "FASIL 76 NOTLARI:" in prompt
 
 
 def test_retry_keeps_evidence_context(monkeypatch):

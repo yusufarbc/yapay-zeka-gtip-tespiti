@@ -21,8 +21,22 @@ from api.db.database import SessionLocal, validate_leaf_gtip
 from api.db.gcp_emulator import local_state_store
 from api.modules.discriminator_engine import DiscriminatorQuestion
 from api.modules.feature_extractor import feature_extractor
-from api.modules.rag_engine import HierarchicalSearchResult, rag_engine
-from api.schemas.product import GTIPCandidate, GTIPDecision, HITLOption, HITLQuestion, LegalSource, PrecedentBTB, ProductFeatures
+from api.modules.rag_engine import (
+    HierarchicalSearchResult,
+    rag_engine,
+    record_selection_step,
+    route_headings_from_precedents,
+)
+from api.schemas.product import (
+    GTIPCandidate,
+    GTIPDecision,
+    HITLOption,
+    HITLQuestion,
+    LegalSource,
+    PrecedentBTB,
+    ProductFeatures,
+    SelectionStep,
+)
 
 
 logger = logging.getLogger("GTIPWorkflowEngine")
@@ -136,6 +150,9 @@ def collect_signals(
         "cited_chapter_note_count": len(traversal.get("cited_chapter_notes") or []),
         "used_residual_fallback": bool(traversal.get("used_residual_fallback")),
         "used_chapter_backtrack": bool(traversal.get("used_chapter_backtrack")),
+        # Emsal yönlendirmesinin etkisi benchmark'ta bu alanlarla ayrıştırılır.
+        "routing": traversal.get("routing"),
+        "used_routing_fallback": bool(traversal.get("used_routing_fallback")),
         "hitl_answer_count": int(traversal.get("hitl_answer_count") or 0),
         "leaf_option_count": int(traversal.get("leaf_option_count") or 0),
         "heading_option_count": int(traversal.get("heading_option_count") or 0),
@@ -225,6 +242,48 @@ def evidence_summary(traversal: Dict[str, Any], precedents: List[Any]) -> str:
         "Bu ürün için BTB emsali bulunamadı; karar yalnız tarife metnine ve "
         "fasıl notlarına dayanıyor. Ölçümde emsalsiz kararların doğruluğu düşüktür."
     )
+
+
+LEVEL_LABELS = {"CHAPTER": "Fasıl", "HEADING": "Pozisyon", "SUBHEADING": "Alt pozisyon", "GTIP": "GTİP"}
+SOURCE_NOTES = {
+    "SINGLE_OPTION": "Bu dalda tek resmî seçenek vardı.",
+    "RESIDUAL": "Model özel bir dal eşleştiremedi; resmî 'diğerleri' dalı seçildi.",
+    "BROKER": "Müşavir seçti.",
+}
+
+
+def selection_rationale(traversal: Dict[str, Any], precedents: List[Any]) -> List[SelectionStep]:
+    """Kararın seviye seviye gerekçesi: hangi resmî dal, neden seçildi."""
+    if traversal.get("selection_source") == "BTB_EXACT":
+        exact = [p_ for p_ in precedents if float(getattr(p_, "similarity_score", 0.0) or 0.0) >= 0.999]
+        refs = ", ".join(str(getattr(p_, "btb_no", "")) for p_ in exact[:3]) or "BTB"
+        return [SelectionStep(
+            level="GTIP",
+            code=re.sub(r"\D", "", str(traversal.get("locked_gtip") or "")),
+            source="BTB_EXACT",
+            reasoning_points=[
+                f"Ürün tanımı {refs} sayılı BTB kararındaki eşya tanımıyla birebir aynı; "
+                "kod idarenin bu kararından alındı ve yürürlükteki tarifede doğrulandı."
+            ],
+        )]
+    steps: List[SelectionStep] = []
+    for raw in traversal.get("selection_trail") or []:
+        try:
+            steps.append(SelectionStep(**raw))
+        except Exception:
+            continue
+    return steps
+
+
+def rationale_commentary(steps: List[SelectionStep]) -> Optional[str]:
+    """PDF ve eski istemciler için gerekçe izinin düz metni."""
+    lines = []
+    for step in steps:
+        points = step.reasoning_points or [SOURCE_NOTES.get(step.source, "")]
+        text = " ".join(point for point in points if point)
+        if text:
+            lines.append(f"{LEVEL_LABELS.get(step.level, step.level)} {step.code}: {text}")
+    return "\n".join(lines) or None
 
 
 def _restore_precedents(traversal: Dict[str, Any]) -> List[Any]:
@@ -426,20 +485,6 @@ class GTIPWorkflowEngine:
             for ep in ebti_precedents
         ] if has_ebti else []
 
-        # Canlı uluslararası arama kaldırıldı. Üretimde her çağrı 504 ile
-        # bitiyor, ~25 saniye harcayıp sıfır sonuç dönüyordu; yalın promptla
-        # bile 63 saniye sürdüğü ölçüldü. Sonuçlar zaten sınıflandırmaya etki
-        # etmiyor, yalnız gösterime giriyordu. Kullanıcı araştırmayı resmî
-        # portal bağlantılarıyla sürdürür (model çağrısı yok, maliyeti yok).
-        research_portal_links: Optional[Dict[str, str]] = None
-        try:
-            from api.modules.international_search import generate_portal_links
-            research_portal_links = generate_portal_links(
-                raw_text, locked_digits[:6] if locked_digits else None
-            )
-        except Exception as exc_links:
-            logger.warning("Portal bağlantıları üretilemedi: %s", exc_links)
-
         # Resmi Kanuni Maddeler (Model yazmaz; sistem doğrudan veritabanından çeker)
         applied_gir_keys = list(traversal.get("applied_gir_keys") or [])
         cited_chapters = list(traversal.get("cited_chapter_notes") or [])
@@ -475,6 +520,7 @@ class GTIPWorkflowEngine:
                 seen_source_keys.add(s_key)
                 dedup_legal_sources.append(src)
 
+        rationale = selection_rationale(traversal, precedents)
         signals = collect_signals(traversal, precedents, ebti_precedents)
         confidence = compute_confidence(traversal, precedents, ebti_precedents)
         # İnceleme işareti iki kaynaktan gelir: düşük skor VEYA skordan bağımsız
@@ -488,13 +534,9 @@ class GTIPWorkflowEngine:
             gtip_code=formatted_code,
             confidence_score=confidence,
             official_statute_text=f"2026 TGTC {formatted_code}: {description}",
-            llm_reasoning_commentary=(
-                "Ürün açıklaması gerçek BTB havuzundaki emsal kararla tam eşleşti; BTB kodu "
-                "yürürlükteki TGTC veritabanında aktif 12 haneli yaprak olarak doğrulandı."
-                if is_exact_btb
-                else "Gemini resmi TGTC ağacındaki seçenek kimliklerini seçti; kod sunucu tarafından "
-                "kapalı kümeye ve yürürlükteki veritabanı yaprağına bağlandı."
-            ),
+            llm_reasoning_commentary=rationale_commentary(rationale),
+            selection_rationale=rationale,
+            evidence_summary=evidence_summary(traversal, precedents),
             legal_justification=(
                 f"Tam ürün eşleşmeli emsal BTB ve güncel TGTC yaprak doğrulaması: {formatted_code}."
                 if is_exact_btb
@@ -504,7 +546,6 @@ class GTIPWorkflowEngine:
             precedent_btbs=precedents,
             precedent_ebtis=ebti_precedents,
             decision_signals=signals,
-            research_portal_links=research_portal_links,
             legal_sources=dedup_legal_sources,
             consulted_sources=consulted,
             trade_measures=get_customs_trade_measures(formatted_code),
@@ -571,6 +612,7 @@ class GTIPWorkflowEngine:
         locked_subheading: Optional[str] = None,
         locked_gtip: Optional[str] = None,
         query_vector: Optional[List[float]] = None,
+        routed_headings: Optional[List[str]] = None,
     ) -> Any:
         return rag_engine.search_candidates_hierarchical(
             session_id=session_id,
@@ -585,6 +627,7 @@ class GTIPWorkflowEngine:
             raw_text=raw_text,
             precedents=precedents,
             deadline=deadline,
+            routed_headings=routed_headings,
         )
 
     def start_analysis(
@@ -597,9 +640,13 @@ class GTIPWorkflowEngine:
         session_id = str(uuid.uuid4())
         started = time.perf_counter()
         features = feature_extractor.extract_features(raw_text, image_uri)
-        btb_precedents = rag_engine.search_btb_precedents(
-            raw_text, exclude_refs=exclude_btb_refs
+        # Yönlendirme pozisyon oylaması için geniş küme (deneyde 20) kullanır;
+        # modele ve karara giden emsaller önceki gibi en iyi 5'tir. Sonuçlar
+        # benzerliğe göre sıralı olduğundan ilk 5 aynı kalır.
+        btb_pool = rag_engine.search_btb_precedents(
+            raw_text, top_k=20, exclude_refs=exclude_btb_refs
         )
+        btb_precedents = btb_pool[:5]
         # EBTI araması: BTB aramasından bağımsız çalışır, hata durumunda boş liste döner
         try:
             ebti_precedents = rag_engine.search_ebti_precedents(raw_text)
@@ -628,13 +675,44 @@ class GTIPWorkflowEngine:
             # Bütçe saati TRAVERSAL başlarken kurulur. İstek başlangıcından
             # saymak, öncesindeki emsal aramalarının bütçeyi yemesine ve
             # traversal'ın hiç çalışmamasına yol açıyordu.
+            deadline = time.monotonic() + settings.ANALYSIS_BUDGET_MS / 1000.0
+            routed = (
+                route_headings_from_precedents(
+                    btb_pool,
+                    settings.HEADING_ROUTING_MIN_BTB,
+                    settings.HEADING_ROUTING_MAX_HEADINGS,
+                )
+                if settings.HEADING_ROUTING_ENABLED else []
+            )
             tree_result = self._search(
                 session_id,
                 features,
                 raw_text=raw_text,
                 precedents=[*btb_precedents, *ebti_precedents],
-                deadline=time.monotonic() + settings.ANALYSIS_BUDGET_MS / 1000.0,
+                deadline=deadline,
+                routed_headings=routed or None,
             )
+            # Yönlendirme yalnız hızlandırıcıdır; doğruluğu düşürmemeli. Model
+            # adaylardan birine bağlanamazsa tam dolaşım aynı bütçeyle denenir.
+            if (
+                routed
+                and not tree_result.candidates
+                and not tree_result.discriminator_question
+                and time.monotonic() < deadline
+            ):
+                logger.info("Emsal yönlendirmesi sonuç vermedi; tam dolaşıma dönülüyor (%s)", routed)
+                tree_result = self._search(
+                    session_id,
+                    features,
+                    raw_text=raw_text,
+                    precedents=[*btb_precedents, *ebti_precedents],
+                    deadline=deadline,
+                )
+                tree_result.traversal_state.update({
+                    "routing": "BTB_HEADINGS_FALLBACK",
+                    "routed_headings": list(routed),
+                    "used_routing_fallback": True,
+                })
             tree_result.traversal_state["btb_precedents"] = [
                 item.model_dump() for item in btb_precedents
             ]
@@ -762,16 +840,43 @@ class GTIPWorkflowEngine:
         )
         # Yalnız btb_precedents'i geri yüklemek, HITL'den geçen kararların
         # doğrudan tamamlananlardan farklı hukuki dayanakla sonuçlanmasına yol
-        # açıyordu; ayrıca uluslararası arama her devamda yeniden tetikleniyordu.
+        # açıyordu.
+        # Atıf listeleri BİRLEŞTİRİLİR: setdefault, devamdaki seviyeler kendi
+        # atıflarını üretince sorudan önceki seviyelerinkini (ör. fasıl
+        # seçimindeki GYK 3(a)) sessizce düşürüyordu.
+        for list_key in ("applied_gir_keys", "cited_chapter_notes"):
+            merged = list(traversal.get(list_key) or [])
+            for item in tree_result.traversal_state.get(list_key) or []:
+                if item not in merged:
+                    merged.append(item)
+            if merged:
+                tree_result.traversal_state[list_key] = merged
+
         for carried_key in (
             "btb_precedents",
             "ebti_precedents",
-            "applied_gir_keys",
-            "cited_chapter_notes",
             "used_residual_fallback",
+            "routing",
+            "routed_headings",
+            "used_routing_fallback",
+            "heading_option_count",
         ):
             if carried_key in traversal:
                 tree_result.traversal_state.setdefault(carried_key, traversal[carried_key])
+
+        # Gerekçe izi: sorudan önceki seviyeler + müşavirin seçimi + devamdaki
+        # seviyeler. Önceki seviyeler kilitli olduğu için yeniden seçilmezler.
+        combined: Dict[str, Any] = {"selection_trail": list(traversal.get("selection_trail") or [])}
+        option_text = str(option.get("text") or "")
+        record_selection_step(
+            combined,
+            pending_level,
+            {"gtip_code": selected_digits, "description": option_text.split(" — ", 1)[-1]},
+            "BROKER",
+        )
+        for step in tree_result.traversal_state.get("selection_trail") or []:
+            combined["selection_trail"].append(step)
+        tree_result.traversal_state["selection_trail"] = combined["selection_trail"]
 
         # Müşavir kaç teknik ayrımı yanıtladı: güven skoruna girer.
         tree_result.traversal_state["hitl_answer_count"] = (

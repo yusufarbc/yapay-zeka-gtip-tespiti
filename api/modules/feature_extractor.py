@@ -33,14 +33,6 @@ _DOCUMENT_MARKERS = (
     "model no", "stok kodu", "ürün kodu", "product code",
 )
 
-_ARCHITECTURAL_SYSTEM_TERMS = (
-    "cam balkon", "balkon camlama", "balkon sistemi", "kış bahçesi", "kis bahcesi",
-    "duşakabin", "dusakabin", "katlanır cam", "katlanir cam", "sürme cam", "surme cam",
-    "giyotin cam", "cephe giydirme", "cephe sistemi", "alüminyum doğrama", "aluminyum dograma",
-    "alimunyum doğrama", "alimunyum dograma", "aliminyum doğrama", "aliminyum dograma",
-    "alüminyum kapı", "alüminyum pencere", "aluminyum kapi", "aluminyum pencere",
-    "doğrama cam", "dograma cam", "balkon cam",
-)
 
 
 def _contains_term(text: str, term: str) -> bool:
@@ -65,20 +57,6 @@ class FeatureExtractor:
         return "Genel Sanayi ve Ticaret Eşyası"
 
     def _extract_explicit_material(self, text_lower: str) -> str:
-        # Mimari ve kompozit sistemlerde çerçeve/ray ve panel tespiti (GİR 1 / GİR 3b)
-        if any(term in text_lower for term in _ARCHITECTURAL_SYSTEM_TERMS):
-            if any(_contains_term(text_lower, m) for m in ("çelik", "celik", "demir", "steel")):
-                framing = "çelik"
-            elif any(_contains_term(text_lower, m) for m in ("plastik", "plastic", "pvc")):
-                framing = "plastik (PVC)"
-            elif any(_contains_term(text_lower, m) for m in ("ahşap", "ahsap", "wood")):
-                framing = "ahşap"
-            else:
-                framing = "alüminyum"
-            
-            has_glass = any(_contains_term(text_lower, g) for g in ("cam", "glass")) or "balkon" in text_lower or "kış bahçesi" in text_lower or "duşakabin" in text_lower
-            return f"{framing} / cam (mimari sistem)" if has_glass else f"{framing} (mimari sistem)"
-
         matches = [
             canonical
             for canonical, aliases in _EXPLICIT_MATERIALS.items()
@@ -118,27 +96,17 @@ class FeatureExtractor:
                 accessories = acc_term
                 break
 
-        is_sys = any(term in text_lower for term in _ARCHITECTURAL_SYSTEM_TERMS)
-
         return ProductFeatures(
             product_name=normalized[:2000],
             commercial_name=normalized[:500],
             primary_material=self._extract_explicit_material(text_lower),
-            function=(
-                "Balkon kapatma / mimari camlama ve doğrama sistemi"
-                if is_sys
-                else normalized[:1000]
-            ),
+            function=normalized[:1000],
             accessories_or_packaging=accessories,
             composition_percentages=composition,
-            intended_use=(
-                "Binalarda mimari dış cephe, balkon veya alan kapama"
-                if is_sys
-                else normalized[:1000]
-            ),
-            is_set_or_kit=is_sys or any(_contains_term(text_lower, w) for w in ("set", "takım", "kit", "sistem", "sistemi")),
-            is_disassembled=is_sys or any(
-                _contains_term(text_lower, w) for w in ("demonte", "sökülmüş", "parça halinde", "profil", "raylı")
+            intended_use=normalized[:1000],
+            is_set_or_kit=any(_contains_term(text_lower, w) for w in ("set", "takım", "kit")),
+            is_disassembled=any(
+                _contains_term(text_lower, w) for w in ("demonte", "sökülmüş", "parça halinde")
             ),
             technical_specifications=specs
         )
@@ -195,7 +163,6 @@ class FeatureExtractor:
                 f'  "is_disassembled": false,\n'
                 f'  "technical_specifications": {{"özellik": "değer"}}\n'
                 f"}}\n"
-                f"ÖNEMLİ KURAL: 'cam balkon sistemi', 'kış bahçesi', 'duşakabin' gibi sistemler alüminyum/metal taşıyıcı konstrüksiyon ve cam panel içerir. Bunlarda primary_material='alüminyum / cam (mimari sistem)', is_set_or_kit=true ve is_disassembled=true olarak analiz et.\n"
             )
 
             try:

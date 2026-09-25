@@ -92,6 +92,110 @@ def _shorten_siblings(nodes: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return trimmed
 
 
+def aggregate_precedents_by_heading(precedents: Sequence[Any]) -> List[Tuple[str, float]]:
+    """Emsalleri pozisyonlarına göre toplar: skor = en iyi benzerlik + 0.05 × ek oy.
+
+    En iyi benzerlik baskındır; aynı pozisyona işaret eden ek emsaller yalnız
+    eşitlikleri bozacak kadar katkı yapar.
+    """
+    best: Dict[str, float] = {}
+    votes: Dict[str, int] = {}
+    for item in precedents:
+        code = _digits(getattr(item, "gtip_code", "") or getattr(item, "cn_code", ""))
+        if len(code) < 4:
+            continue
+        heading = code[:4]
+        similarity = float(getattr(item, "similarity_score", 0.0) or 0.0)
+        best[heading] = max(best.get(heading, 0.0), similarity)
+        votes[heading] = votes.get(heading, 0) + 1
+    ranking = [
+        (heading, round(best[heading] + 0.05 * (votes[heading] - 1), 6))
+        for heading in best
+    ]
+    ranking.sort(key=lambda pair: pair[1], reverse=True)
+    return ranking
+
+
+def route_headings_from_precedents(
+    precedents: Sequence[Any],
+    min_similarity: float,
+    max_headings: int = 3,
+) -> List[str]:
+    """Güçlü BTB emsali varsa dolaşımın başlayacağı aday pozisyonları döndürür.
+
+    Kapı en iyi emsal benzerliğidir; altında kalırsa boş liste döner ve dolaşım
+    fasıldan başlar. Eşik ölçümle seçildi (bkz. `HEADING_ROUTING_MIN_BTB`).
+    """
+    btb = [item for item in precedents if str(getattr(item, "source_type", "BTB")) == "BTB"]
+    best = max((float(getattr(item, "similarity_score", 0.0) or 0.0) for item in btb), default=0.0)
+    if best < min_similarity:
+        return []
+    return [heading for heading, _ in aggregate_precedents_by_heading(btb)[:max(1, max_headings)]]
+
+
+_LEVEL_ORDER = {"CHAPTER": 0, "HEADING": 1, "SUBHEADING": 2, "GTIP": 3}
+
+
+def _display_description(text: str) -> str:
+    """Seçenek metnini kullanıcıya gösterilecek biçime getirir.
+
+    Fasıl seçeneği yalnız model için pozisyon kapsamı özeti taşır; ekranda
+    faslın adı yeterlidir. Katalogdaki girinti tireleri ("- - Diğerleri")
+    hiyerarşiyi gösterir, okunan metinde gürültüdür.
+    """
+    text = re.sub(r"\.?\s*Pozisyon kapsamı:.*$", "", str(text or ""), flags=re.DOTALL)
+    # Tire dizisi segment başında veya türetilmiş özetlerde "— " / "; " sonrasında olabilir.
+    segments = [
+        re.sub(r"(^|— |; )[\s\-–]+", r"\1", part).strip(" -–—")
+        for part in text.split(" > ")
+    ]
+    return " > ".join(segment for segment in segments if segment)
+
+
+def record_selection_step(
+    traversal: Optional[Dict[str, Any]],
+    level: str,
+    node: Dict[str, Any],
+    source: str,
+    reasoning_points: Optional[Sequence[str]] = None,
+    applied_gir_keys: Optional[Sequence[str]] = None,
+    cited_chapter_notes: Optional[Sequence[str]] = None,
+) -> None:
+    """Seçilen resmî dalı ve gerekçesini karar izine yazar.
+
+    Kullanıcıya "neden bu kod" sorusunun cevabı bu izdir. Bir seviye yeniden
+    seçilirse (fasıl geri alması) o seviyenin ve altındaki eski adımlar silinir;
+    iz yalnız sonuca giden yolu gösterir.
+    """
+    if traversal is None:
+        return
+    rank = _LEVEL_ORDER.get(level, 99)
+    trail = [
+        step for step in traversal.get("selection_trail") or []
+        if _LEVEL_ORDER.get(step.get("level"), 99) < rank
+    ]
+    trail.append({
+        "level": level,
+        "code": _digits(node.get("gtip_code")),
+        "description": _display_description(_description(node))[:400],
+        "source": source,
+        "reasoning_points": [str(point) for point in (reasoning_points or []) if str(point).strip()],
+        "applied_gir_keys": list(applied_gir_keys or []),
+        "cited_chapter_notes": list(cited_chapter_notes or []),
+    })
+    traversal["selection_trail"] = trail
+
+
+def min_precedent_overlap(query_tokens: Set[str]) -> int:
+    """Emsal sayılmak için sorguyla paylaşılması gereken en az kelime sayısı.
+
+    "ahşap sandalye" sorgusunda yalnız "ahşap" kelimesini paylaşan kararlar
+    kapsama 0.5 ile eşiği geçiyor ve modeli ahşap eşya faslına itiyordu. Tek
+    ortak kelime (çoğu zaman malzeme) aynı eşyanın kanıtı değildir.
+    """
+    return min(2, len(query_tokens))
+
+
 def _formatted_code(value: Any) -> str:
     code = _digits(value)
     if len(code) == 12:
@@ -189,6 +293,8 @@ class RAGEngine:
             seen.add(key)
             description_tokens = set(desc_normalized.split())
             overlap = len(query_tokens & description_tokens)
+            if overlap < min_precedent_overlap(query_tokens) and normalized_query != desc_normalized:
+                continue
             coverage = overlap / max(1, len(query_tokens))
             precision = overlap / max(1, len(description_tokens))
             if normalized_query == desc_normalized:
@@ -273,7 +379,7 @@ class RAGEngine:
             desc_tokens = set(combined_text.split())
 
             overlap = len(query_tokens & desc_tokens)
-            if overlap == 0:
+            if overlap == 0 or overlap < min_precedent_overlap(query_tokens):
                 continue
 
             coverage = overlap / max(1, len(query_tokens))
@@ -403,6 +509,22 @@ class RAGEngine:
             for code, description in sorted(get_local_tgtc_headings().items())
             if _digits(code).startswith(clean_chapter) and len(_digits(code)) == 4
         ]
+
+    @staticmethod
+    def _routed_heading_nodes(headings: Sequence[str]) -> List[Dict[str, Any]]:
+        """Emsallerin işaret ettiği pozisyonları resmî katalogdaki düğümlerine çevirir.
+
+        Katalogda bulunmayan kod (eski tarife, hatalı emsal) seçeneğe giremez:
+        model yalnız resmî düğümler arasından seçer.
+        """
+        catalog = get_local_tgtc_headings()
+        nodes: List[Dict[str, Any]] = []
+        for heading in headings:
+            code = _digits(heading)
+            description = catalog.get(code)
+            if len(code) == 4 and description:
+                nodes.append({"gtip_code": code, "description": description, "level": "HEADING"})
+        return nodes
 
     @staticmethod
     def _leaf_nodes(parent_code: str) -> List[Dict[str, Any]]:
@@ -557,17 +679,28 @@ class RAGEngine:
 
         CHAPTER seviyesinde 97 faslin notu prompta sigmaz ve o seviye zaten bir
         yonlendirme adimidir; fasil ici ayrim HEADING ve altinda yapilir.
+
+        Emsal yonlendirmesinde HEADING secenekleri birden cok fasla (en cok 3)
+        yayilabilir. Fasil secimi atlandigi icin dislama notlari burada daha da
+        onemlidir: her faslin notu kendi basligiyla ve esit payla verilir.
         """
         if level == "CHAPTER" or not nodes:
             return None
-        chapters = {_digits(node.get("gtip_code"))[:2] for node in nodes}
-        chapters.discard("")
-        if len(chapters) != 1:
+        chapters = sorted({_digits(node.get("gtip_code"))[:2] for node in nodes} - {""})
+        if not chapters or len(chapters) > 3:
             return None
         from api.db.tgtc_knowledge_base import load_tgtc_rules_and_notes
-        note = load_tgtc_rules_and_notes().get("fasil_notlari", {}).get(next(iter(chapters)))
-        note = str(note or "").strip()
-        return note or None
+        all_notes = load_tgtc_rules_and_notes().get("fasil_notlari", {})
+        if len(chapters) == 1:
+            note = str(all_notes.get(chapters[0]) or "").strip()
+            return note or None
+        share = 6000 // len(chapters)
+        parts = [
+            f"FASIL {chapter} NOTLARI:\n{str(all_notes.get(chapter) or '').strip()[:share]}"
+            for chapter in chapters
+            if str(all_notes.get(chapter) or "").strip()
+        ]
+        return "\n\n".join(parts) or None
 
     @classmethod
     def _select_node(
@@ -581,10 +714,21 @@ class RAGEngine:
         precedents: Optional[Sequence[Any]] = None,
         rejected_codes: Optional[List[str]] = None,
         deadline: Optional[float] = None,
+        recover_no_match: bool = True,
+        always_ask_model: bool = False,
+        no_match_retries: Optional[int] = None,
     ) -> Tuple[Optional[Dict[str, Any]], Optional[DiscriminatorQuestion], List[str], List[str]]:
+        """`recover_no_match=False`: NO_MATCH soruya çevrilmez, çağıran geri döner.
+        `always_ask_model=True`: tek seçenek de modele onaylatılır. Emsal
+        yönlendirmesinde tek aday resmî ağaçtan değil emsalden gelir; model onu
+        reddedebilmelidir.
+        `no_match_retries`: NO_MATCH sonrası daraltma denemesi sayısı; None ise
+        seçicinin varsayılanı kullanılır.
+        """
         if not nodes:
             return None, None, [], []
-        if len(nodes) == 1:
+        if len(nodes) == 1 and not always_ask_model:
+            record_selection_step(traversal, level, nodes[0], "SINGLE_OPTION")
             return nodes[0], None, ["GIR_1", "GIR_6"], []
 
         # Ortak önek hem prompta hem soruya gürültü olarak giriyordu.
@@ -601,6 +745,7 @@ class RAGEngine:
             ),
             rejected_codes=list(rejected_codes or []) or None,
             deadline=deadline,
+            **({"_no_match_retries": no_match_retries} if no_match_retries is not None else {}),
         )
         applied_gir_keys = list(getattr(selection, "applied_gir_keys", []) or [])
         cited_chapter_notes = list(getattr(selection, "cited_chapter_notes", []) or [])
@@ -616,6 +761,10 @@ class RAGEngine:
                     selection.selected_candidate_id,
                     _digits(nodes[index].get("gtip_code")),
                     len(nodes),
+                )
+                record_selection_step(
+                    traversal, level, nodes[index], "MODEL",
+                    selection.reasoning_points, applied_gir_keys, cited_chapter_notes,
                 )
                 return nodes[index], None, applied_gir_keys, cited_chapter_notes
             logger.error("Selector returned an option id outside the server-owned set")
@@ -644,6 +793,10 @@ class RAGEngine:
                 # düşüldü. Bu zayıf bir seçimdir ve güven skorunu düşürmelidir.
                 if traversal is not None:
                     traversal["used_residual_fallback"] = True
+                record_selection_step(
+                    traversal, level, residuals[0], "RESIDUAL",
+                    selection.reasoning_points, applied_gir_keys, cited_chapter_notes,
+                )
                 return residuals[0], None, applied_gir_keys, cited_chapter_notes
 
         # Resmî kalıntı dalı da çözemediyse: NO_MATCH eskiden bir çıkmazdı.
@@ -655,7 +808,7 @@ class RAGEngine:
         # yapamadığıdır. Resmî kardeş dalları müşavire sormak, sessizce pes
         # etmekten hem daha doğru hem daha kullanışlıdır. Seçenek kümesi
         # sorulabilecek kadar küçükse soruya çevrilir.
-        if level != "CHAPTER" and 2 <= len(nodes) <= 4:
+        if recover_no_match and level != "CHAPTER" and 2 <= len(nodes) <= 4:
             fallback_question = cls._question(session_id, level, nodes, selection)
             if fallback_question:
                 logger.info(
@@ -705,8 +858,14 @@ class RAGEngine:
         raw_text: str = "",
         precedents: Optional[Sequence[Any]] = None,
         deadline: Optional[float] = None,
+        routed_headings: Optional[Sequence[str]] = None,
     ) -> HierarchicalSearchResult:
-        """Traverse chapter → heading → subheading → leaf with model choices."""
+        """Traverse chapter → heading → subheading → leaf with model choices.
+
+        `routed_headings` verilirse CHAPTER seçimi atlanır ve HEADING seçimi
+        yalnız bu adaylar arasında yapılır. Model adaylardan birini seçemezse
+        boş sonuç döner; tam dolaşıma dönüş kararı çağırana (workflow) aittir.
+        """
         del applied_gir_rules  # Compatibility only; no product-routing rules remain.
         product_text = self._product_text(
             features, raw_text if settings.SELECTION_USE_RAW_TEXT else ""
@@ -728,6 +887,35 @@ class RAGEngine:
 
         if not locked_chapter and allowed_chapters:
             locked_chapter = _digits(allowed_chapters[0]).zfill(2)
+
+        routed_nodes = (
+            self._routed_heading_nodes(routed_headings)
+            if routed_headings and not locked_chapter and not locked_heading
+            else []
+        )
+        if routed_nodes:
+            routed_codes = [_digits(node["gtip_code"]) for node in routed_nodes]
+            traversal.update({
+                "routing": "BTB_HEADINGS",
+                "routed_headings": routed_codes,
+                # Güven skorundaki "zor fasıl" cezası faslın pozisyon sayısıyla
+                # kalibre edildi; yönlendirmede de aynı anlamı taşımalı.
+                "heading_option_count": len(self._heading_nodes(routed_codes[0][:2])),
+            })
+            node, question, g_keys, c_notes = self._select_node(
+                session_id, product_text, "HEADING", routed_nodes,
+                traversal=traversal, precedents=precedents, deadline=deadline,
+                recover_no_match=False, always_ask_model=True,
+            )
+            _merge_rules(g_keys, c_notes)
+            if question:
+                traversal.update({"pending_level": "HEADING", "branches": self._question_branches(question)})
+                return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
+            if not node:
+                traversal["routing_rejected"] = True
+                return HierarchicalSearchResult(traversal_state=traversal)
+            locked_heading = _digits(node["gtip_code"])
+            locked_chapter = locked_heading[:2]
 
         # Fasıl seçimi tek yönlüydü: CHAPTER seviyesinde model SELECT etmek
         # zorunda (prompt orada INSUFFICIENT_INFORMATION'ı yasaklar), yanlış
@@ -760,9 +948,17 @@ class RAGEngine:
 
             heading_nodes = self._heading_nodes(locked_chapter)
             traversal["heading_option_count"] = len(heading_nodes)
+            # Faslın hiçbir pozisyonu uymuyorsa asıl sinyal "fasıl yanlış"tır.
+            # Geri alma hakkı varken daraltma denemesi yapılmaz: model yanlış
+            # fasılda "en yakın" pozisyonu seçip dolaşımı yanlış dala sokuyordu
+            # (canlıda ahşap sandalye: 44 -> 4419), sorular da yanlış faslın
+            # pozisyonları arasında soruluyordu. Daraltma ve soru son fasla kalır.
+            can_backtrack = attempt + 1 < max_chapter_attempts
             node, question, g_keys, c_notes = self._select_node(
                 session_id, product_text, "HEADING", heading_nodes,
                 traversal=traversal, precedents=precedents, deadline=deadline,
+                recover_no_match=not can_backtrack,
+                no_match_retries=0 if can_backtrack else None,
             )
             _merge_rules(g_keys, c_notes)
             if question:
