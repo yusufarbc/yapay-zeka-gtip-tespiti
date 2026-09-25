@@ -744,7 +744,36 @@ dalgalanmadır ve yönlendirmeye atfedilmemelidir. Yönlendirmenin gerçek katk�
 ve trafiğin beşte birinde fasıl çağrısının atlanmasıdır. Bu, çevrimdışı deneyin öngörüsüyle (en fazla ~3 numune)
 uyumludur.
 
-### 10.6. Benchmark yorumu
+### 10.6. Ürüne özel kuralların kaldırılması ve fasıl düzeltmeleri (2026-09-25)
+Seçim promptundaki cam balkon kuralı kaldırıldı; model bu kuralı resmî Fasıl 70 notunda bulunmayan bir hüküm olarak
+"fasıl notları uyarınca" diye aktarıyordu. Ardından canlıda görülen hatalar genel kurallarla düzeltildi:
+
+* **Fasıl seçimi:** "İşlev malzemeden önce gelir" ilkesi (GYK 1 / 3(a)) ve yalnız CHAPTER'a 512 token düşünme payı.
+  Model "ahşap sandalye"yi mobilya yerine ahşap eşya faslına gönderiyordu. 12 ürünlük işlev/malzeme kümesinde
+  yalnız ilke 9/12, yalnız bütçe 10/12, ikisi birlikte 12/12.
+* **Geri alma sırası:** İlk faslın hiçbir pozisyonu uymazsa daraltma denemesi yapılmadan fasıl geri alınır.
+  Reddedilen dal harf kimliğiyle bildirilir ("AR (44)"); yeniden seçilirse bir kez daha sorulur.
+* **Emsal süzgeci:** Çok kelimeli sorguda emsal en az iki kelime paylaşmalıdır. Yalnız "ahşap"ı paylaşan kararlar
+  "emsal" sayılıp modeli yanlış fasla itiyordu.
+* **Atıf:** Talimatlar numarasızdır; model "12. madde"yi "GYK 12" diye yazıyordu. HITL devamında önceki seviyelerin
+  GİR atıfları korunur.
+
+Aynı 120 numune (`105959Z` kurallı, `170124Z` kuralsız, `193204Z` tüm düzeltmeler):
+
+| Metrik (%) | Kurallı | Kuralsız | Tüm düzeltmeler |
+| :--- | ---: | ---: | ---: |
+| `chapter_acc` | 59.17 | 60.00 | 65.83 |
+| `heading_acc` | 55.00 | 54.17 | 57.50 |
+| `leaf_acc` | 43.33 | 37.50 | 47.50 |
+| `manual_review_rate` | 8.33 | 5.83 | 3.33 |
+| `leaf_acc_with_expert` | 45.00 | 40.83 | 51.67 |
+| p95 gecikme (sn) | 29.9 | 33.6 | 26.9 |
+
+Kuralsız koşudaki düşüş (13 kayıp / 6 kazanç) 12 farklı fasla dağılmıştır ve cam/alüminyum ürünü içermez; aynı
+kod yolunda iki koşu arasında ±5–8 numunelik salınım ölçüldüğünden tek başına anlamlı sayılmamalıdır. Tek koşuya
+dayanarak karar verilmemesi için değişiklikler önce/sonra ve gerekirse tekrar ölçülmelidir.
+
+### 10.7. Benchmark yorumu
 * Kanıt zinciri (ham beyan, emsaller, fasıl notları) yaprak doğruluğunu %5'ten %22.5'e çıkardı. Kurtarma mekanizmaları,
   katalog yeniden çıkarımı ve harf kimlikleri %35'e taşıdı. Ölü uç oranı %35.8'den %1.7–10 aralığına indi.
 * Sistem bu doğruluk seviyesinde **müşavirin yerini alamaz**. Karar destek aracıdır. Tamamlanan kararların yaklaşık yarısı
@@ -763,7 +792,6 @@ uyumludur.
 | :--- | :--- | :--- |
 | **Görsel girdisi** | Görsel GCS'e yüklenir ve `image_uri` saklanır. Özellik çıkarımı yalnız metni modele gönderir; görsel yalnız kısa yolu devre dışı bırakır. | Sistem fiilen multimodal değildir. Görsel ya modele verilmeli ya da arayüzde bu beklenti kaldırılmalı. |
 | **Ticaret tedbirleri** | `get_customs_trade_measures` faslı esas alan sabit bir tablodur (KDV %20, belirli fasıllarda İGV %20, TAREKS, gözetim). | Resmî İthalat Rejimi verisine dayanmaz. Hukuki karar için kullanılmamalı; kaynak bağlanana kadar arayüzde "gösterge" olarak etiketlenmeli. |
-| **Ürüne özel kuralların kaldırılması ölçülmedi** | Seçim promptundaki ve özellik çıkarıcıdaki cam balkon kuralları (76.10 / 73.08 / 39.25 yönlendirmesi) kaldırıldı. Bu kurallar modele resmî Fasıl 70 notunda bulunmayan bir hükmü "fasıl notları uyarınca" diye aktarttırıyordu. | Cam balkon türü ürünlerde sonuç değişebilir; benchmark ile ölçülmeli. Ayrım resmî not ve emsallerle yapılamıyorsa kural değil, veri eksikliği olarak ele alınmalı. |
 | **Kullanılmayan altyapı** | Embedding sütunları, HNSW indeksleri, `hybrid_search_headings_and_gtip`/RRF, `USE_CONTEXT_CACHE`, `gtip_rules`, `generation_config` karar yolunda yok. | Bakım yükü ve yanıltıcı dokümantasyon riski var. Kaldırılmalı ya da ölçülerek yeniden devreye alınmalı. |
 | **Arayüz güven bantları** | `GTIPResultCard` %80 ve üstünü yeşil, %60–79'u sarı, %60 altını kırmızı gösterir. Sunucu eşiği 0.50'dir ve emsalsiz tipik skor yaklaşık 0.46'dır. | Bantlar kalibre skorla uyumlu değil. Arayüz `legal_validation_status` ve `evidence_summary` değerlerini esas almalı. |
 | **PDF'in veri kaynağı** | Oturum durumundan yeniden kurulan kararda `legal_justification` ve `applied_gir_rules` saklanmadığı için PDF'te boş kalabilir. Durum yoksa sabit metin kullanılır. | Kararın tamamı oturumda saklanmalı. |
