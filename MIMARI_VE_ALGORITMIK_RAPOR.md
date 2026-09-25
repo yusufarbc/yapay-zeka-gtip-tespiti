@@ -203,8 +203,8 @@ Sistem ürün metnini LLM'e verip "GTİP nedir?" diye sormaz. Akış aşağıdak
   1. *Regex ön çıkarımı:* Voltaj (`220V`), güç (`1500W`), ağırlık (`kg/gr`) ve pamuk/polyester yüzdesi ayrıştırılır.
   2. *Deterministik kısa yol:* Metin kısa ve tek ürünlükse model çağrılmaz. Koşullar: en fazla 240 karakter ve 24 kelime,
      fatura işaretleri yok, en fazla 1 satır sonu ve 2 iki nokta. Görsel yüklendiyse kısa yol kullanılmaz. Özellikler
-     açık malzeme sözlüğünden (`_EXPLICIT_MATERIALS`) kurulur. Cam balkon, duşakabin gibi mimari sistem terimlerinde
-     çerçeve malzemesi öne alınır ve set/demonte bayrakları açılır.
+     açık malzeme sözlüğünden (`_EXPLICIT_MATERIALS`) kurulur; yalnız kullanıcının yazdığı malzeme alınır. Ürüne özel
+     varsayım yapılmaz (önceki "cam balkon → alüminyum / mimari sistem" kuralı kaldırıldı).
   3. *LLM çıkarımı:* Uzun veya belge benzeri girdide `gemini-2.5-flash-lite` çağrılır. Ayarlar `thinking_budget=0`,
      `temperature=0.0`, `response_mime_type=application/json`. Regex bulguları modelin teknik özelliklerinin üzerine yazılır.
   4. *Yedek yol:* Model başarısız olursa ilk satır ürün adı olur, malzeme Türkçe stop-word süzgeciyle token'lardan türetilir.
@@ -289,7 +289,9 @@ Tek seçenekli seviyede model çağrılmaz; düğüm doğrudan seçilir (`GIR_1`
 
 #### 3.3. Seçim promptu
 `select_tariff_node` tek bir prompt kurar. Prompt önbelleklemesine uygun olsun diye sabit bloklar değişken bloklardan önce gelir:
-1. **Kurallar:** Yeni kod yazmama, kapalı küme, GİR 1 dışlama notları, GİR 2(a), 3(a), 3(b). Dar/istisnai dallar ancak olumlu
+1. **Kurallar:** Yeni kod yazmama, kapalı küme, GİR 1 dışlama notları, GİR 2(a), 3(a), 3(b). Yalnız genel yorum kuralları
+   yazılır; belirli ürün veya kod için kural yazılmaz. **Atıf dürüstlüğü:** Model yalnız promptta kendisine verilen resmî
+   metne, nota veya emsale atıf yapabilir; verilmeyen bir hükmü "fasıl notları uyarınca" diye yazamaz. Dar/istisnai dallar ancak olumlu
    kanıtla seçilir, aksi halde "diğerleri" dalı seçilir. Soru yalnız kullanıcının gözlemleyebileceği bir fiziksel/teknik
    özellik için sorulur. `CHAPTER` seviyesinde `INSUFFICIENT_INFORMATION` yasaktır.
 2. **Resmî kapalı seçenekler:** `option_id`, `official_code`, `official_description` (≤1800 karakter, en fazla 250 düğüm).
@@ -761,7 +763,7 @@ uyumludur.
 | :--- | :--- | :--- |
 | **Görsel girdisi** | Görsel GCS'e yüklenir ve `image_uri` saklanır. Özellik çıkarımı yalnız metni modele gönderir; görsel yalnız kısa yolu devre dışı bırakır. | Sistem fiilen multimodal değildir. Görsel ya modele verilmeli ya da arayüzde bu beklenti kaldırılmalı. |
 | **Ticaret tedbirleri** | `get_customs_trade_measures` faslı esas alan sabit bir tablodur (KDV %20, belirli fasıllarda İGV %20, TAREKS, gözetim). | Resmî İthalat Rejimi verisine dayanmaz. Hukuki karar için kullanılmamalı; kaynak bağlanana kadar arayüzde "gösterge" olarak etiketlenmeli. |
-| **Prompttaki ürüne özel kural** | Seçim promptunda cam balkon ve mimari doğrama sistemleri için 76.10 / 73.08 / 39.25 yönlendirmesi sabit kodludur. | Genel ilkeyle (GİR 3) çelişmez ama ürüne özel kural büyüdükçe prompt kırılganlaşır. Fasıl notları ve emsallerle çözülmeli. |
+| **Ürüne özel kuralların kaldırılması ölçülmedi** | Seçim promptundaki ve özellik çıkarıcıdaki cam balkon kuralları (76.10 / 73.08 / 39.25 yönlendirmesi) kaldırıldı. Bu kurallar modele resmî Fasıl 70 notunda bulunmayan bir hükmü "fasıl notları uyarınca" diye aktarttırıyordu. | Cam balkon türü ürünlerde sonuç değişebilir; benchmark ile ölçülmeli. Ayrım resmî not ve emsallerle yapılamıyorsa kural değil, veri eksikliği olarak ele alınmalı. |
 | **Kullanılmayan altyapı** | Embedding sütunları, HNSW indeksleri, `hybrid_search_headings_and_gtip`/RRF, `USE_CONTEXT_CACHE`, `gtip_rules`, `generation_config` karar yolunda yok. | Bakım yükü ve yanıltıcı dokümantasyon riski var. Kaldırılmalı ya da ölçülerek yeniden devreye alınmalı. |
 | **Arayüz güven bantları** | `GTIPResultCard` %80 ve üstünü yeşil, %60–79'u sarı, %60 altını kırmızı gösterir. Sunucu eşiği 0.50'dir ve emsalsiz tipik skor yaklaşık 0.46'dır. | Bantlar kalibre skorla uyumlu değil. Arayüz `legal_validation_status` ve `evidence_summary` değerlerini esas almalı. |
 | **PDF'in veri kaynağı** | Oturum durumundan yeniden kurulan kararda `legal_justification` ve `applied_gir_rules` saklanmadığı için PDF'te boş kalabilir. Durum yoksa sabit metin kullanılır. | Kararın tamamı oturumda saklanmalı. |

@@ -489,19 +489,55 @@ def test_canonical_chapter_titles_accuracy():
     assert chapters.get("85") == "Fasıl 85: Elektrikli makine ve cihazlar, ses ve görüntü kaydetme/çoğaltma cihazları, bunların aksam ve parçaları"
 
 
-def test_feature_extractor_cam_balkon_architectural_composite():
+def test_feature_extractor_has_no_product_specific_overrides():
+    """Özellik çıkarıcı yalnız kullanıcının yazdığını çıkarır; ürüne özel kural yoktur.
+
+    Önceki sürüm "cam balkon" geçince malzemeyi "alüminyum / cam (mimari sistem)"
+    yapıyor, işlevi sabit metinle değiştiriyor ve set/demonte bayraklarını açıyordu.
+    Kullanıcı alüminyum yazmasa da alüminyum varsayılıyordu.
+    """
     from api.modules.feature_extractor import FeatureExtractor
 
     fe = FeatureExtractor()
     features = fe.extract_features("cam balkon sistemi")
-    assert "alüminyum" in features.primary_material.lower()
-    assert "cam" in features.primary_material.lower()
-    assert features.is_set_or_kit is True
-    assert features.is_disassembled is True
+    assert features.primary_material == "cam"
+    assert "alüminyum" not in features.primary_material
+    assert features.function == "cam balkon sistemi"
+    assert features.is_set_or_kit is False
+    assert features.is_disassembled is False
 
-    steel_features = fe.extract_features("çelik profilli cam balkon")
-    assert "çelik" in steel_features.primary_material.lower()
-    assert "cam" in steel_features.primary_material.lower()
+    explicit = fe.extract_features("aluminyum doğrama cam balkon sistemi")
+    assert explicit.primary_material == "alüminyum / cam"
+
+
+def test_selection_prompt_contains_no_product_specific_rules(monkeypatch):
+    """Seçim promptu yalnız genel yorum kurallarını içermeli.
+
+    Ürüne özel kural ("cam balkon -> 76.10, asla Fasıl 70") modele resmî Fasıl 70
+    notunda bulunmayan bir hükmü "fasıl notları uyarınca" diye aktarttı.
+    """
+    from api.modules import llm_verifier as verifier_module
+
+    captured = {}
+
+    class Models:
+        def generate_content(self, **kwargs):
+            captured["prompt"] = kwargs["contents"]
+            return SimpleNamespace(text='{"status":"SELECT","selected_candidate_id":"A"}')
+
+    monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr("api.modules.vertex_client.get_genai_client",
+                        lambda: SimpleNamespace(models=Models()))
+
+    verifier_module.llm_verifier.select_tariff_node(
+        "x", "HEADING",
+        [{"gtip_code": "8471", "description": "a"}, {"gtip_code": "8517", "description": "b"}],
+    )
+    rules = captured["prompt"][: captured["prompt"].index("SEVİYE:")].casefold()
+    for forbidden in ("balkon", "76.10", "7610", "70.05", "73.08", "39.25", "kış bahçesi"):
+        assert forbidden not in rules, f"promptta ürüne özel kural: {forbidden}"
+    assert "atif dürüstlüğü" in rules  # "ATIF" casefold ile "atif" olur
 
 
 
