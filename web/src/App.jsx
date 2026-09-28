@@ -49,12 +49,12 @@ export function App() {
     if (AUDIT_LOGS_ENABLED) fetchLogs();
   }, []);
 
-  const handleStartAnalysis = async (description) => {
+  const handleStartAnalysis = async (dossierFields, files) => {
     setIsAnalyzing(true);
     setDecision(null);
 
     try {
-      const result = await analyzeProduct(description);
+      const result = await analyzeProduct(dossierFields, files);
       setDecision(result);
     } catch (err) {
       console.error(err);
@@ -104,6 +104,7 @@ export function App() {
                 <HITLQuestionModal
                   key={`${decision.session_id}:${decision.hitl_question?.question_id}`}
                   question={decision.hitl_question}
+                  isProfileQuestion={decision.state_machine_stage === 'PROFILE_QUESTION'}
                   onRespond={handleHITLRespond}
                   isSubmitting={isSubmittingHITL}
                 />

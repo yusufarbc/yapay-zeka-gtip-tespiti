@@ -90,6 +90,35 @@ class LLMFactVerifier:
             return max(settings.THINKING_BUDGET_CHAPTER, settings.THINKING_BUDGET_EXCLUSION if narrowing else 0)
         return settings.THINKING_BUDGET_EXCLUSION if narrowing else 0
 
+    @staticmethod
+    def _reconcile_id_with_code(selection: CandidateSelection, option_map: Dict[str, Dict[str, Any]], level: str) -> None:
+        """Seçenek kimliği ile modelin yazdığı resmî kodu çapraz kontrol eder.
+
+        Canlıda "cam balkon" için model gerekçesinde "Fasıl 76, 7610 en uygun
+        fasıldır" yazıp kimlik olarak Fasıl 73'ün `BU`'sunu döndürdü (76 = `BX`).
+        97 seçenekli listede iki harfli kimlik kayabiliyor; resmî kod ise modelin
+        asıl düşündüğü şeydir. Kod sunulan seçeneklerden birine denk geliyorsa ve
+        kimlikle uyuşmuyorsa kod esas alınır. Kapalı küme korunur: kod da ancak
+        sunucunun verdiği bir seçenekse kabul edilir.
+        """
+        if selection.status != CandidateSelectionStatus.SELECT or not selection.selected_code:
+            return
+        wanted = re.sub(r"\D", "", str(selection.selected_code))
+        if not wanted:
+            return
+        by_code = [
+            oid for oid, node in option_map.items()
+            if re.sub(r"\D", "", str(node.get("gtip_code") or "")) == wanted
+        ]
+        picked = option_map.get(selection.selected_candidate_id or "") or {}
+        picked_code = re.sub(r"\D", "", str(picked.get("gtip_code") or ""))
+        if len(by_code) == 1 and picked_code != wanted:
+            logger.warning(
+                "Seçenek kimliği ile kod uyuşmuyor level=%s id=%s(%s) kod=%s; kod esas alındı (%s)",
+                level, selection.selected_candidate_id, picked_code or "-", wanted, by_code[0],
+            )
+            selection.selected_candidate_id = by_code[0]
+
     _LEVEL_PREFIX = {"CHAPTER": 2, "HEADING": 4, "SUBHEADING": 6, "GTIP": 8}
 
     @classmethod
@@ -266,7 +295,8 @@ class LLMFactVerifier:
             "Aşağıda verilen fasıl notlarındaki dışlama hükümlerine uy.\n"
             "- ATIF DÜRÜSTLÜĞÜ: Yalnız bu promptta sana verilen resmî seçenek metnine, fasıl notuna veya emsale atıf yap. "
             "Sana verilmeyen bir not hükmünü 'fasıl notları uyarınca' diye yazma; notta açıkça geçmeyen bir kuralı notun "
-            "hükmüymüş gibi sunma.\n"
+            "hükmüymüş gibi sunma. Ürün profilinde '(model varsayımı, teyit edilmedi)' diye işaretli bilgiyi gerekçede "
+            "beyan edilmiş gibi yazma; kullanırsan 'varsayılan' olduğunu belirt.\n"
             "- GYK 2(a): Eksik, bitmemiş, demonte veya sökülmüş halde sunulan eşya, tamamlanmış eşyanın esas niteliğini "
             "taşıyorsa tamamlanmış eşyanın pozisyonunda sınıflandırılır.\n"
             "- GYK 3(a): Eşyayı en özel şekilde tanımlayan pozisyon, daha genel tanımlayan pozisyona tercih edilir.\n"
@@ -290,15 +320,21 @@ class LLMFactVerifier:
             f"{rejection_block}"
             f"{narrowing_block}"
             f"<product_data>{raw_text}</product_data>\n"
-            "Yalnız şu JSON biçimini döndür: "
-            "{\"status\":\"SELECT|INSUFFICIENT_INFORMATION|NO_MATCH\","
-            "\"selected_candidate_id\":\"A veya null\","
-            "\"alternative_candidate_ids\":[\"A\",\"B\"],"
-            "\"question_text\":\"Türkçe soru veya null\","
-            "\"reasoning_points\":[\"1-3 kısa Türkçe cümle: seçimi belirleyen ürün özelliği ve "
-            "dayandığın GİR kuralı veya fasıl notu\"],"
+            # Alan sırası bilinçlidir: ÖNCE gerekçe, SONRA karar. Karar önce
+            # yazılınca model bir seçeneğe bağlanıp gerekçeyi sonradan yazıyordu;
+            # canlıda gerekçe "Fasıl 76, 7610 en uygun fasıldır" derken seçim
+            # Fasıl 73 çıktı ve müşaviriye çelişkili bir açıklama gösterildi.
+            "Yalnız şu JSON biçimini, ALANLARI BU SIRAYLA yazarak döndür. Önce gerekçeni yaz, sonra kararı; "
+            "karar gerekçenin vardığı sonuçla AYNI olmalı: "
+            "{\"reasoning_points\":[\"1-3 kısa Türkçe cümle: seçimi belirleyen ürün özelliği ve "
+            "dayandığın GİR kuralı veya fasıl notu; son cümle vardığın seçeneği söylesin\"],"
             "\"applied_gir_keys\":[\"GIR_1\",\"GIR_3A\",\"GIR_3B\",\"GIR_6\"],"
-            "\"cited_chapter_notes\":[\"70\",\"76\"]}"
+            "\"cited_chapter_notes\":[\"70\",\"76\"],"
+            "\"status\":\"SELECT|INSUFFICIENT_INFORMATION|NO_MATCH\","
+            "\"selected_code\":\"gerekçede vardığın seçeneğin official_code değeri, birebir kopya veya null\","
+            "\"selected_candidate_id\":\"aynı seçeneğin option_id değeri veya null\","
+            "\"alternative_candidate_ids\":[\"A\",\"B\"],"
+            "\"question_text\":\"Türkçe soru veya null\"}"
         )
 
         try:
@@ -374,6 +410,7 @@ class LLMFactVerifier:
                     data["cited_chapter_notes"].append(ch_z)
 
             selection = CandidateSelection(**data)
+            self._reconcile_id_with_code(selection, option_map, level)
             valid_ids = set(option_map)
             if rejected_codes and selection.status == CandidateSelectionStatus.SELECT:
                 picked = option_map.get(selection.selected_candidate_id) or {}

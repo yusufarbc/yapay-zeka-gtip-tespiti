@@ -20,7 +20,17 @@ from api.config import settings
 from api.db.database import SessionLocal, validate_leaf_gtip
 from api.db.gcp_emulator import local_state_store
 from api.modules.discriminator_engine import DiscriminatorQuestion
+from api.modules import evidence_pool
 from api.modules.feature_extractor import feature_extractor
+from api.modules.product_profile import (
+    UNKNOWN_OPTION,
+    apply_answer,
+    build_profile,
+    confirmation_question,
+    has_unconfirmed_decisive_fact,
+    profile_to_features,
+)
+from api.schemas.dossier import ProductDossier, ProductProfile
 from api.modules.rag_engine import (
     HierarchicalSearchResult,
     rag_engine,
@@ -76,6 +86,10 @@ REVIEW_REASONS = {
     "used_chapter_backtrack": (
         "İlk fasıl seçimi hiçbir pozisyonla eşleşmedi ve geri alındı; "
         "varılan sonuç modelin ikinci tercihidir."
+    ),
+    "unconfirmed_profile": (
+        "Karar, teyit edilmemiş bir ürün bilgisi varsayımına dayanıyor "
+        "(eşyanın türü veya esas malzemesi beyan edilmedi)."
     ),
 }
 
@@ -358,6 +372,7 @@ class GTIPWorkflowEngine:
         image_uri: Optional[str],
         features: ProductFeatures,
         tree_result: Any,
+        extra_state: Optional[Dict[str, Any]] = None,
     ) -> GTIPDecision:
         question = _as_hitl_question(tree_result.discriminator_question)
         traversal = dict(tree_result.traversal_state or {})
@@ -385,6 +400,7 @@ class GTIPWorkflowEngine:
             "hitl_question": question.model_dump(),
             "discriminator_traversal": traversal,
             "audit_notes": decision.audit_notes,
+            **(extra_state or {}),
         })
         return decision
 
@@ -395,6 +411,7 @@ class GTIPWorkflowEngine:
         image_uri: Optional[str],
         features: ProductFeatures,
         tree_result: Any,
+        extra_state: Optional[Dict[str, Any]] = None,
     ) -> GTIPDecision:
         traversal = dict(tree_result.traversal_state or {})
         locked_digits = re.sub(r"\D", "", str(traversal.get("locked_gtip") or ""))
@@ -596,6 +613,7 @@ class GTIPWorkflowEngine:
             "hitl_question": None,
             "discriminator_traversal": traversal,
             "audit_notes": decision.audit_notes,
+            **(extra_state or {}),
         })
         return decision
 
@@ -613,6 +631,7 @@ class GTIPWorkflowEngine:
         locked_gtip: Optional[str] = None,
         query_vector: Optional[List[float]] = None,
         routed_headings: Optional[List[str]] = None,
+        profile_text: Optional[str] = None,
     ) -> Any:
         return rag_engine.search_candidates_hierarchical(
             session_id=session_id,
@@ -628,6 +647,7 @@ class GTIPWorkflowEngine:
             precedents=precedents,
             deadline=deadline,
             routed_headings=routed_headings,
+            profile_text=profile_text,
         )
 
     def start_analysis(
@@ -635,21 +655,185 @@ class GTIPWorkflowEngine:
         raw_text: str,
         image_uri: str = None,
         exclude_btb_refs: Optional[Set[str]] = None,
+        dossier: Optional[ProductDossier] = None,
     ) -> GTIPDecision:
         """`exclude_btb_refs` yalnız benchmark içindir; üretim yolunda None'dır."""
         session_id = str(uuid.uuid4())
         started = time.perf_counter()
-        features = feature_extractor.extract_features(raw_text, image_uri)
+        if dossier is not None:
+            raw_text = dossier.to_raw_text()
+
+        if not settings.PRODUCT_PROFILE_ENABLED:
+            features = feature_extractor.extract_features(raw_text, image_uri)
+            return self._classify(
+                session_id, raw_text, image_uri, features, None, dossier, exclude_btb_refs, started,
+            )
+
+        # Delil havuzu: form alanları + ekler + kullanıcının verdiği ürün sayfası.
+        if dossier is None and image_uri:
+            pool = evidence_pool.collect(
+                ProductDossier(product_name=(raw_text[:300] or "Ürün"), attachment_uris=[image_uri])
+            )
+        else:
+            pool = evidence_pool.collect(dossier) if dossier is not None else None
+        profile = build_profile(raw_text, dossier, pool)
+        features = profile_to_features(profile, raw_text)
+
+        if settings.PROFILE_CONFIRMATION_ENABLED:
+            question = confirmation_question(profile)
+            if question:
+                return self._pause_profile(
+                    session_id, raw_text, image_uri, features, profile, question, dossier,
+                    exclude_btb_refs, asked=[question["key"]],
+                )
+        return self._classify(
+            session_id, raw_text, image_uri, features, profile, dossier, exclude_btb_refs, started,
+        )
+
+    @staticmethod
+    def _precedent_query(raw_text: str, dossier: Optional[ProductDossier], profile: Optional[ProductProfile]) -> str:
+        """Emsal araması için sorgu.
+
+        Dosyadan gelen etiketli metin ("EŞYA ADI: …") emsal aramasına verilmez:
+        etiket kelimeleri iki-kelime eşleşme süzgecini anlamsızlaştırır. Eşya adı
+        ve BEYAN ya da TEYİT edilmiş malzeme kullanılır; teyit edilmemiş varsayım
+        emsal aramasını yönlendirmez.
+        """
+        confirmed_material = None
+        if profile and profile.essential_material and profile.essential_material.source in {"USER", "BROKER"}:
+            confirmed_material = profile.essential_material.value
+        if dossier is not None:
+            material = None if dossier.is_machine else (dossier.material or confirmed_material)
+            return " ".join(p for p in (dossier.product_name, material) if p)
+        if confirmed_material and confirmed_material.casefold() not in raw_text.casefold():
+            return f"{raw_text} {confirmed_material}"
+        return raw_text
+
+    def _pause_profile(
+        self,
+        session_id: str,
+        raw_text: str,
+        image_uri: Optional[str],
+        features: ProductFeatures,
+        profile: ProductProfile,
+        question: Dict[str, Any],
+        dossier: Optional[ProductDossier],
+        exclude_btb_refs: Optional[Set[str]],
+        asked: List[str],
+    ) -> GTIPDecision:
+        """Sınıflandırma başlamadan ürün bilgisini teyit ettirir.
+
+        Seçenekler tarife dalı değil ürün bilgisidir (malzeme veya eşya türü).
+        "Bilinmiyor" seçilirse model varsayımıyla devam edilir ve karar müşavir
+        incelemesine işaretlenir.
+        """
+        attribute = question["attribute"]
+        options = [
+            HITLOption(
+                option_id=f"PROF_{index}",
+                text=value,
+                impact_data={
+                    "attribute": attribute,
+                    "value": value,
+                    "inferred": "true" if value == question.get("inferred_value") else "false",
+                    "part": str(question.get("part") or ""),
+                },
+            )
+            for index, value in enumerate(question["values"])
+        ]
+        options.append(HITLOption(
+            option_id=f"PROF_{len(options)}",
+            text=UNKNOWN_OPTION,
+            impact_data={"attribute": attribute, "value": "", "inferred": "false", "part": ""},
+        ))
+        hitl = HITLQuestion(
+            question_id=f"profile_{attribute}_{session_id[:8]}",
+            question_text=question["question_text"][:1000],
+            missing_parameter=attribute,
+            options=options,
+        )
+        decision = GTIPDecision(
+            session_id=session_id,
+            status="WAITING_FOR_USER",
+            confidence_score=0.0,
+            hitl_question=hitl,
+            product_profile=profile,
+            state_machine_stage="PROFILE_QUESTION",
+            audit_notes=[
+                "Sınıflandırmayı etkileyen ürün bilgisi beyan edilmedi; model varsayımı kullanıcıya teyit ettiriliyor."
+            ],
+        )
+        local_state_store.save_state(session_id, {
+            "session_id": session_id,
+            "routing_mode": "MODEL_CLOSED_SET",
+            "raw_text": raw_text,
+            "image_uri": image_uri,
+            "product_features": features.model_dump(),
+            "product_profile": profile.model_dump(),
+            "dossier": dossier.model_dump() if dossier is not None else None,
+            "exclude_btb_refs": sorted(exclude_btb_refs or []),
+            "asked_profile_attributes": list(asked),
+            "status": decision.status,
+            "hitl_question": hitl.model_dump(),
+            "discriminator_traversal": {"pending_level": "PROFILE"},
+            "audit_notes": decision.audit_notes,
+        })
+        return decision
+
+    def _resume_profile(self, session_id: str, state: Dict[str, Any], option: Dict[str, Any]) -> GTIPDecision:
+        impact = option.get("impact_data") or {}
+        raw_text = state.get("raw_text", "")
+        profile = ProductProfile(**state["product_profile"])
+        dossier = ProductDossier(**state["dossier"]) if state.get("dossier") else None
+        apply_answer(
+            profile, str(impact.get("attribute") or ""), str(impact.get("value") or ""), impact.get("part") or None,
+        )
+        features = profile_to_features(profile, raw_text)
+        exclude = set(state.get("exclude_btb_refs") or []) or None
+        asked = list(state.get("asked_profile_attributes") or [])
+
+        # Eşya türü teyit edildikten sonra malzeme hâlâ varsayımsa o da sorulur.
+        # Aynı bilgi iki kez sorulmaz ("Bilinmiyor" yanıtı döngü yaratmamalı).
+        if settings.PROFILE_CONFIRMATION_ENABLED:
+            question = confirmation_question(profile, skip=set(asked))
+            if question:
+                return self._pause_profile(
+                    session_id, raw_text, state.get("image_uri"), features, profile, question, dossier,
+                    exclude, asked=[*asked, question["key"]],
+                )
+        return self._classify(
+            session_id, raw_text, state.get("image_uri"), features, profile, dossier, exclude,
+            time.perf_counter(),
+        )
+
+    def _classify(
+        self,
+        session_id: str,
+        raw_text: str,
+        image_uri: Optional[str],
+        features: ProductFeatures,
+        profile: Optional[ProductProfile],
+        dossier: Optional[ProductDossier],
+        exclude_btb_refs: Optional[Set[str]],
+        started: float,
+    ) -> GTIPDecision:
+        """Emsal araması, yönlendirme, kapalı küme dolaşım ve doğrulama."""
+        profile_text = profile.as_prompt_text() if profile is not None else None
+        extra_state = {
+            "product_profile": profile.model_dump() if profile is not None else None,
+            "dossier": dossier.model_dump() if dossier is not None else None,
+        }
+        precedent_query = self._precedent_query(raw_text, dossier, profile)
         # Yönlendirme pozisyon oylaması için geniş küme (deneyde 20) kullanır;
         # modele ve karara giden emsaller önceki gibi en iyi 5'tir. Sonuçlar
         # benzerliğe göre sıralı olduğundan ilk 5 aynı kalır.
         btb_pool = rag_engine.search_btb_precedents(
-            raw_text, top_k=20, exclude_refs=exclude_btb_refs
+            precedent_query, top_k=20, exclude_refs=exclude_btb_refs
         )
         btb_precedents = btb_pool[:5]
         # EBTI araması: BTB aramasından bağımsız çalışır, hata durumunda boş liste döner
         try:
-            ebti_precedents = rag_engine.search_ebti_precedents(raw_text)
+            ebti_precedents = rag_engine.search_ebti_precedents(precedent_query)
         except Exception as exc_ebti:
             logger.warning("EBTI emsal araması atlandı: %s", exc_ebti)
             ebti_precedents = []
@@ -675,7 +859,14 @@ class GTIPWorkflowEngine:
             # Bütçe saati TRAVERSAL başlarken kurulur. İstek başlangıcından
             # saymak, öncesindeki emsal aramalarının bütçeyi yemesine ve
             # traversal'ın hiç çalışmamasına yol açıyordu.
-            deadline = time.monotonic() + settings.ANALYSIS_BUDGET_MS / 1000.0
+            # Profil adımı istemcinin toplam süresinden yer; dolaşım bütçesi
+            # kalan süreyi aşmamalı.
+            elapsed_s = time.perf_counter() - started
+            budget_s = min(
+                settings.ANALYSIS_BUDGET_MS / 1000.0,
+                max(8.0, settings.CLIENT_REQUEST_BUDGET_MS / 1000.0 - elapsed_s),
+            )
+            deadline = time.monotonic() + budget_s
             routed = (
                 route_headings_from_precedents(
                     btb_pool,
@@ -691,6 +882,7 @@ class GTIPWorkflowEngine:
                 precedents=[*btb_precedents, *ebti_precedents],
                 deadline=deadline,
                 routed_headings=routed or None,
+                profile_text=profile_text,
             )
             # Yönlendirme yalnız hızlandırıcıdır; doğruluğu düşürmemeli. Model
             # adaylardan birine bağlanamazsa tam dolaşım aynı bütçeyle denenir.
@@ -707,6 +899,7 @@ class GTIPWorkflowEngine:
                     raw_text=raw_text,
                     precedents=[*btb_precedents, *ebti_precedents],
                     deadline=deadline,
+                    profile_text=profile_text,
                 )
                 tree_result.traversal_state.update({
                     "routing": "BTB_HEADINGS_FALLBACK",
@@ -719,11 +912,14 @@ class GTIPWorkflowEngine:
             tree_result.traversal_state["ebti_precedents"] = [
                 item.model_dump() for item in ebti_precedents
             ]
+        if profile is not None and has_unconfirmed_decisive_fact(profile):
+            tree_result.traversal_state["unconfirmed_profile"] = True
         duration_ms = (time.perf_counter() - started) * 1000
         if tree_result.discriminator_question:
-            decision = self._pause(session_id, raw_text, image_uri, features, tree_result)
+            decision = self._pause(session_id, raw_text, image_uri, features, tree_result, extra_state)
         else:
-            decision = self._complete(session_id, raw_text, image_uri, features, tree_result)
+            decision = self._complete(session_id, raw_text, image_uri, features, tree_result, extra_state)
+        decision.product_profile = profile
 
         # Yapılandırılmış alanlar: log-based metric'ler metin ayrıştırmadan
         # doğrudan jsonPayload üzerinden türetilebilir (api/logging_config.py).
@@ -749,8 +945,9 @@ class GTIPWorkflowEngine:
         self,
         raw_text: str,
         image_uri: str = None,
+        dossier: Optional[ProductDossier] = None,
     ) -> GTIPDecision:
-        return await asyncio.to_thread(self.start_analysis, raw_text, image_uri)
+        return await asyncio.to_thread(self.start_analysis, raw_text, image_uri, None, dossier)
 
     async def start_analysis_stream(
         self,
@@ -790,6 +987,9 @@ class GTIPWorkflowEngine:
         )
         if not option:
             raise LookupError("Seçilen yanıt güncel soru seçenekleri arasında değil.")
+        # Ürün bilgisi teyidi (malzeme / eşya türü): tarife dalı değil, profili günceller.
+        if (state.get("discriminator_traversal") or {}).get("pending_level") == "PROFILE":
+            return self._resume_profile(session_id, state, option)
         selected_branch = str((option.get("impact_data") or {}).get("selected_branch") or "")
         if not selected_branch:
             # Bu vaka geri bildirim için değerlidir: müşavir ayrımı bilmiyorsa
@@ -826,6 +1026,8 @@ class GTIPWorkflowEngine:
             raise LookupError("Tarife ağacındaki bekleyen seviye geçersiz.")
 
         features = ProductFeatures(**state.get("product_features", {}))
+        profile = ProductProfile(**state["product_profile"]) if state.get("product_profile") else None
+        extra_state = {"product_profile": state.get("product_profile"), "dossier": state.get("dossier")}
         tree_result = self._search(
             session_id,
             features,
@@ -837,6 +1039,7 @@ class GTIPWorkflowEngine:
             locked_subheading=locked_subheading,
             locked_gtip=locked_gtip,
             query_vector=traversal.get("query_vector"),
+            profile_text=profile.as_prompt_text() if profile is not None else None,
         )
         # Yalnız btb_precedents'i geri yüklemek, HITL'den geçen kararların
         # doğrudan tamamlananlardan farklı hukuki dayanakla sonuçlanmasına yol
@@ -860,6 +1063,7 @@ class GTIPWorkflowEngine:
             "routed_headings",
             "used_routing_fallback",
             "heading_option_count",
+            "unconfirmed_profile",
         ):
             if carried_key in traversal:
                 tree_result.traversal_state.setdefault(carried_key, traversal[carried_key])
@@ -884,20 +1088,25 @@ class GTIPWorkflowEngine:
         )
 
         if tree_result.discriminator_question:
-            return self._pause(
+            decision = self._pause(
                 session_id,
                 state.get("raw_text", ""),
                 state.get("image_uri"),
                 features,
                 tree_result,
+                extra_state,
             )
-        return self._complete(
-            session_id,
-            state.get("raw_text", ""),
-            state.get("image_uri"),
-            features,
-            tree_result,
-        )
+        else:
+            decision = self._complete(
+                session_id,
+                state.get("raw_text", ""),
+                state.get("image_uri"),
+                features,
+                tree_result,
+                extra_state,
+            )
+        decision.product_profile = profile
+        return decision
 
 
 workflow_engine = GTIPWorkflowEngine()

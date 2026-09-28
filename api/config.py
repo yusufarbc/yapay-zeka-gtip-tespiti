@@ -131,6 +131,16 @@ class Settings(BaseSettings):
     #
     # Aramayla fasıl adımını TAMAMEN atlamak ölçümde reddedildi: en iyi füzyon
     # bile doğru pozisyonu numunelerin %41'inde ilk 3'ün dışında bıraktı.
+    # Sınıflandırmadan önce ürün profili: eşya ne, ne işe yarar, neyden yapılmış;
+    # her bilgi kaynağıyla (beyan / doküman / fotoğraf / sayfa / varsayım).
+    # Kararı etkileyen bilgi yalnız varsayımsa kullanıcıya tek soru sorulur.
+    # Müşavir geri bildirimi: "cam balkon sistemi" yazılınca alüminyumdan hiç
+    # bahsedilmiyordu; kullanıcı malzemeyi yazmamıştı ve model sormuyordu.
+    PRODUCT_PROFILE_ENABLED: bool = os.getenv("PRODUCT_PROFILE_ENABLED", "true").lower() == "true"
+    PROFILE_CONFIRMATION_ENABLED: bool = os.getenv("PROFILE_CONFIRMATION_ENABLED", "true").lower() == "true"
+    PROFILE_LLM_MODEL: str = os.getenv("PROFILE_LLM_MODEL", "gemini-2.5-flash")
+    PROFILE_TIMEOUT_MS: int = int(os.getenv("PROFILE_TIMEOUT_MS", "12000"))
+
     HEADING_ROUTING_ENABLED: bool = os.getenv("HEADING_ROUTING_ENABLED", "true").lower() == "true"
     HEADING_ROUTING_MIN_BTB: float = float(os.getenv("HEADING_ROUTING_MIN_BTB", "0.80"))
     HEADING_ROUTING_MAX_HEADINGS: int = int(os.getenv("HEADING_ROUTING_MAX_HEADINGS", "3"))

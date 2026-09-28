@@ -3,6 +3,8 @@ from __future__ import annotations
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, List, Any
 
+from api.schemas.dossier import ProductProfile
+
 
 class LegalSource(BaseModel):
     """GTİP kararında gerçekten sorgulanan ve kullanıcıya gösterilebilen hukuki kaynak."""
@@ -164,6 +166,10 @@ class GTIPDecision(BaseModel):
             "korelasyonu bu alanlar üzerinden kalibre edilir; skorun kendisi "
             "tek başına ayırt etmiyordu."
         ),
+    )
+    product_profile: Optional[ProductProfile] = Field(
+        default=None,
+        description="Sınıflandırmadan önce çıkarılan ürün profili; her bilgi kaynağıyla.",
     )
     evidence_summary: Optional[str] = Field(
         default=None,

@@ -612,3 +612,30 @@ def test_rejection_names_the_option_id_and_reselection_is_retried(monkeypatch):
     assert "A (44)" in prompts[0]
     assert len(prompts) == 2, "reddedilen dal yeniden seçilince tekrar sorulmadı"
     assert selection.selected_candidate_id == "B"
+
+
+def test_option_id_that_disagrees_with_the_written_code_follows_the_code(monkeypatch):
+    """Canlıda model gerekçede Fasıl 76 derken kimlik olarak Fasıl 73'ünkini yazdı.
+    Kod sunulan seçeneklerden biriyse ve kimlikle uyuşmuyorsa kod esas alınır."""
+    class Models:
+        def generate_content(self, **kwargs):
+            return SimpleNamespace(text='{"status":"SELECT","selected_candidate_id":"A","selected_code":"76"}')
+
+    monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr("api.modules.vertex_client.get_genai_client", lambda: SimpleNamespace(models=Models()))
+    nodes = [{"gtip_code": "73", "description": "Demir çelik eşya"}, {"gtip_code": "76", "description": "Alüminyum eşya"}]
+    assert verifier_module.llm_verifier.select_tariff_node("x", "CHAPTER", nodes).selected_candidate_id == "B"
+
+
+def test_code_outside_the_offered_set_is_ignored(monkeypatch):
+    """Kapalı küme korunur: sunulmayan bir kod kimliği değiştiremez."""
+    class Models:
+        def generate_content(self, **kwargs):
+            return SimpleNamespace(text='{"status":"SELECT","selected_candidate_id":"A","selected_code":"99"}')
+
+    monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr("api.modules.vertex_client.get_genai_client", lambda: SimpleNamespace(models=Models()))
+    nodes = [{"gtip_code": "73", "description": "a"}, {"gtip_code": "76", "description": "b"}]
+    assert verifier_module.llm_verifier.select_tariff_node("x", "CHAPTER", nodes).selected_candidate_id == "A"

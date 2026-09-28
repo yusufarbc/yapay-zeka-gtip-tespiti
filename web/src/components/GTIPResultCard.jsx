@@ -1,5 +1,5 @@
 import React from 'react';
-import { Download, Copy, CheckCircle2, AlertTriangle, BookOpen, ChevronRight, Users } from 'lucide-react';
+import { Download, Copy, CheckCircle2, AlertTriangle, BookOpen, ChevronRight, Users, Package } from 'lucide-react';
 import { getPDFReportUrl } from '../api/client';
 import { useToast } from './ToastContext';
 
@@ -16,6 +16,62 @@ const SOURCE_BADGES = {
   BROKER: { text: 'Müşavir seçimi', color: 'var(--accent-blue)' },
   RESIDUAL: { text: 'Kalıntı dalı', color: 'var(--status-amber)' },
   BTB_EXACT: { text: 'Birebir BTB', color: 'var(--status-emerald)' },
+};
+
+// Profildeki her bilginin kaynağı: kullanıcı neyi söyledi, sistem neyi varsaydı.
+const FACT_SOURCES = {
+  USER: { text: 'Beyan', color: 'var(--status-emerald)' },
+  DOCUMENT: { text: 'Doküman', color: 'var(--accent-blue)' },
+  IMAGE: { text: 'Fotoğraf', color: 'var(--accent-blue)' },
+  URL: { text: 'Ürün sayfası', color: 'var(--accent-blue)' },
+  INFERRED: { text: 'Varsayım', color: 'var(--status-amber)' },
+  BROKER: { text: 'Müşavir teyidi', color: 'var(--status-emerald)' },
+};
+
+const SourceBadge = ({ source }) => {
+  const meta = FACT_SOURCES[source] || { text: source, color: 'var(--text-muted)' };
+  return (
+    <span style={{ fontSize: '0.68rem', fontWeight: 700, color: meta.color, border: `1px solid ${meta.color}`, borderRadius: '6px', padding: '1px 6px', whiteSpace: 'nowrap' }}>
+      {meta.text}
+    </span>
+  );
+};
+
+const ProductProfile = ({ profile }) => {
+  if (!profile) return null;
+  const rows = [
+    ['Eşya', profile.product_type],
+    ['İşlev', profile.function],
+    ['Kullanım yeri', profile.use_place],
+  ].filter(([, fact]) => fact?.value);
+  return (
+    <div style={{ marginBottom: '24px' }}>
+      <h4 style={sectionTitle}><Package size={18} color="var(--accent-blue)" />Ürün profili</h4>
+      <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '6px 14px', margin: 0, fontSize: '0.86rem' }}>
+        {rows.map(([label, fact]) => (
+          <React.Fragment key={label}>
+            <dt style={muted}>{label}</dt>
+            <dd style={{ margin: 0, display: 'flex', gap: '8px', alignItems: 'baseline', flexWrap: 'wrap', color: 'var(--text-primary)' }}>
+              {fact.value}<SourceBadge source={fact.source} />
+            </dd>
+          </React.Fragment>
+        ))}
+        <dt style={muted}>Nitelik</dt>
+        <dd style={{ margin: 0, color: 'var(--text-primary)' }}>{profile.is_machine ? 'Makine veya cihaz' : 'Makine veya cihaz değil'}</dd>
+        {!profile.is_machine && (profile.materials || []).map((m, idx) => (
+          <React.Fragment key={`m${idx}`}>
+            <dt style={muted}>{m.part ? `Malzeme (${m.part})` : 'Malzeme'}</dt>
+            <dd style={{ margin: 0, display: 'flex', gap: '8px', alignItems: 'baseline', flexWrap: 'wrap', color: 'var(--text-primary)' }}>
+              {m.value}<SourceBadge source={m.source} />
+            </dd>
+          </React.Fragment>
+        ))}
+      </dl>
+      {(profile.evidence_notes || []).map((note, idx) => (
+        <p key={idx} style={{ ...muted, margin: '8px 0 0' }}>{note}</p>
+      ))}
+    </div>
+  );
 };
 
 const formatCode = (code) => {
@@ -100,6 +156,8 @@ export const GTIPResultCard = ({ decision }) => {
           </div>
         )}
       </div>
+
+      <ProductProfile profile={decision.product_profile} />
 
       {/* Neden bu kod? */}
       <div style={{ marginBottom: '24px' }}>

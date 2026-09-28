@@ -258,7 +258,10 @@ try {
     $BackendEnv = [ordered]@{
         GCP_PROJECT_ID = $ProjectId
         GCP_REGION = $Region
-        VERTEX_AI_LOCATION = $Region
+        # Gemini çağrıları global uç noktadan yapılır: us-central1 paylaşımlı
+        # kapasitesi yoğun saatlerde 429 RESOURCE_EXHAUSTED veriyor, analiz bütçe
+        # dolup manuel incelemeye düşüyordu. Embedding ayrı olarak GCP_REGION'da kalır.
+        VERTEX_AI_LOCATION = "global"
         ENVIRONMENT = "production"
         USE_GCP_EMULATOR = "false"
         GCS_BUCKET_NAME = $Bucket

@@ -207,10 +207,16 @@ class RAGEngine:
     """Thin catalog adapter retained under the old name for API compatibility."""
 
     @staticmethod
-    def _product_text(features: ProductFeatures, raw_text: str = "") -> str:
+    def _product_text(features: ProductFeatures, raw_text: str = "", profile_text: Optional[str] = None) -> str:
         # Özellik çıkarıcı ham metni dokuz alana damıtır ve gerisini atar; ölçü,
         # kullanım koşulu veya kompozisyon detayı gibi ayrımlar tarife seçimine
         # hiç ulaşmıyordu. Orijinal beyan en başta korunur.
+        # Ürün profili varsa her bilgi kaynağıyla verilir; model varsayımı ile
+        # kullanıcı beyanı ayırt edilebilir kalır.
+        if profile_text:
+            beyan = f"ORİJİNAL BEYAN: {raw_text}".strip() if str(raw_text or "").strip() else ""
+            specs = " ".join(f"{k}: {v}" for k, v in (features.technical_specifications or {}).items())
+            return "\n".join(p for p in (beyan, "ÜRÜN PROFİLİ (kaynak etiketli):", profile_text, specs) if p)
         parts = [
             f"ORİJİNAL BEYAN: {raw_text}".strip() if str(raw_text or "").strip() else "",
             features.product_name,
@@ -859,6 +865,7 @@ class RAGEngine:
         precedents: Optional[Sequence[Any]] = None,
         deadline: Optional[float] = None,
         routed_headings: Optional[Sequence[str]] = None,
+        profile_text: Optional[str] = None,
     ) -> HierarchicalSearchResult:
         """Traverse chapter → heading → subheading → leaf with model choices.
 
@@ -868,7 +875,7 @@ class RAGEngine:
         """
         del applied_gir_rules  # Compatibility only; no product-routing rules remain.
         product_text = self._product_text(
-            features, raw_text if settings.SELECTION_USE_RAW_TEXT else ""
+            features, raw_text if settings.SELECTION_USE_RAW_TEXT else "", profile_text
         )
         traversal: Dict[str, Any] = {"query_vector": query_vector}
 

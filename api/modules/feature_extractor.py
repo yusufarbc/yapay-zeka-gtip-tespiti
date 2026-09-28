@@ -2,7 +2,7 @@ import json
 import re
 import os
 import logging
-from typing import Dict, Any
+from typing import Any, Dict, Optional, Tuple
 from api.schemas.product import ProductFeatures
 from api.config import settings
 
@@ -37,6 +37,36 @@ _DOCUMENT_MARKERS = (
 
 def _contains_term(text: str, term: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text, re.IGNORECASE) is not None
+
+def regex_specs(text_lower: str) -> Tuple[Dict[str, str], Optional[Dict[str, float]]]:
+    """Metindeki açık teknik ölçüler (voltaj, güç, ağırlık) ve pamuk/polyester oranı."""
+    specs = {}
+    # Teknik parametre tespiti: Voltaj, Güç, Ağırlık, Frekans
+    volt_match = re.search(r'(\d+)\s*(?:v|volt)', text_lower)
+    if volt_match:
+        specs["voltage"] = f"{volt_match.group(1)}V"
+
+    watt_match = re.search(r'(\d+)\s*(?:w|watt)', text_lower)
+    if watt_match:
+        specs["power"] = f"{watt_match.group(1)}W"
+
+    weight_match = re.search(r'(\d+(?:[.,]\d+)?)\s*(?:kg|kilo|gr|gram)', text_lower)
+    if weight_match:
+        specs["weight"] = weight_match.group(0)
+
+    # Karışım tespiti
+    composition = None
+    if "pamuk" in text_lower or "cotton" in text_lower:
+        cotton_match = re.search(r'%?\s*(\d{2})\s*(?:pamuk|cotton)', text_lower)
+        poly_match = re.search(r'%?\s*(\d{2})\s*(?:polyester|sentetik)', text_lower)
+        if cotton_match:
+            c_val = float(cotton_match.group(1)) / 100.0
+            p_val = float(poly_match.group(1))/100.0 if poly_match else (1.0 - c_val)
+            composition = {"cotton": c_val, "polyester": p_val}
+        else:
+            composition = {"cotton": 1.0}
+    return specs, composition
+
 
 class FeatureExtractor:
     """
@@ -113,31 +143,7 @@ class FeatureExtractor:
 
     def extract_features(self, raw_text: str, image_uri: str = None) -> ProductFeatures:
         text_lower = str(raw_text or "").lower()
-        specs = {}
-        # Teknik parametre tespiti: Voltaj, Güç, Ağırlık, Frekans
-        volt_match = re.search(r'(\d+)\s*(?:v|volt)', text_lower)
-        if volt_match:
-            specs["voltage"] = f"{volt_match.group(1)}V"
-        
-        watt_match = re.search(r'(\d+)\s*(?:w|watt)', text_lower)
-        if watt_match:
-            specs["power"] = f"{watt_match.group(1)}W"
-
-        weight_match = re.search(r'(\d+(?:[.,]\d+)?)\s*(?:kg|kilo|gr|gram)', text_lower)
-        if weight_match:
-            specs["weight"] = weight_match.group(0)
-
-        # Karışım tespiti
-        composition = None
-        if "pamuk" in text_lower or "cotton" in text_lower:
-            cotton_match = re.search(r'%?\s*(\d{2})\s*(?:pamuk|cotton)', text_lower)
-            poly_match = re.search(r'%?\s*(\d{2})\s*(?:polyester|sentetik)', text_lower)
-            if cotton_match:
-                c_val = float(cotton_match.group(1)) / 100.0
-                p_val = float(poly_match.group(1))/100.0 if poly_match else (1.0 - c_val)
-                composition = {"cotton": c_val, "polyester": p_val}
-            else:
-                composition = {"cotton": 1.0}
+        specs, composition = regex_specs(text_lower)
 
         # Açık ve kısa ürün tanımında deterministik hızlı yol
         if self._is_simple_explicit_description(raw_text, image_uri):

@@ -5,6 +5,7 @@ modelin yazdığı gerekçe hiç saklanmıyor, ekranda sabit bir cümle çıkıy
 """
 
 import os
+from types import SimpleNamespace
 
 os.environ.setdefault("ENVIRONMENT", "testing")
 os.environ.setdefault("USE_GCP_EMULATOR", "true")
@@ -110,7 +111,7 @@ def test_resume_puts_the_broker_choice_between_earlier_and_later_steps(monkeypat
     ))
     captured = {}
     monkeypatch.setattr(wf.GTIPWorkflowEngine, "_complete",
-                        lambda self, sid, raw, img, feats, tree: captured.setdefault("trail", tree.traversal_state["selection_trail"]))
+                        lambda self, sid, raw, img, feats, tree, *rest: (captured.setdefault("trail", tree.traversal_state["selection_trail"]), SimpleNamespace())[1])
 
     wf.workflow_engine.resume_analysis("rationale-s1", "DISC_0", "q1")
 
@@ -152,7 +153,7 @@ def test_resume_keeps_rule_citations_from_levels_before_the_question(monkeypatch
     ))
     captured = {}
     monkeypatch.setattr(wf.GTIPWorkflowEngine, "_complete",
-                        lambda self, sid, raw, img, feats, tree: captured.setdefault("state", tree.traversal_state))
+                        lambda self, sid, raw, img, feats, tree, *rest: (captured.setdefault("state", tree.traversal_state), SimpleNamespace())[1])
 
     wf.workflow_engine.resume_analysis("rationale-gir", "DISC_0", "q1")
 
