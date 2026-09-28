@@ -143,7 +143,8 @@ from fastapi.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 import re
-from pydantic import BaseModel, Field, StringConstraints, field_validator
+from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
+from api.schemas.dossier import ProductDossier
 
 from api.security.rate_limit import demo_rate_limiter
 
@@ -152,19 +153,33 @@ MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
 
 ProductDescription = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=5000)]
 
+def _validate_upload_uri(value: str) -> str:
+    expected_prefix = f"gs://{settings.GCS_BUCKET_NAME}/uploads/"
+    if not value.startswith(expected_prefix):
+        raise ValueError("Dosyalar yalnızca uygulamanın güvenli yükleme alanından seçilebilir.")
+    return value
+
+
 class AnalyzeJSONRequest(BaseModel):
-    product_description: ProductDescription = Field(..., description="Ürün tanımı veya fatura metni")
+    product_description: Optional[ProductDescription] = Field(default=None, description="Ürün tanımı veya fatura metni")
     image_uri: Optional[str] = Field(default=None, max_length=1000)
+    # Yapılandırılmış ürün dosyası: eşya adı, kullanım yeri/işlevi, malzeme,
+    # ekler ve ürün sayfası. Yalnız eşya adı doğru karar için çoğu zaman yetersiz.
+    dossier: Optional[ProductDossier] = None
 
     @field_validator("image_uri")
     @classmethod
     def validate_image_uri(cls, value: Optional[str]) -> Optional[str]:
-        if value is None:
-            return None
-        expected_prefix = f"gs://{settings.GCS_BUCKET_NAME}/uploads/"
-        if not value.startswith(expected_prefix):
-            raise ValueError("Görsel yalnızca uygulamanın güvenli yükleme alanından seçilebilir.")
-        return value
+        return None if value is None else _validate_upload_uri(value)
+
+    @model_validator(mode="after")
+    def require_input(self) -> "AnalyzeJSONRequest":
+        if self.dossier is None and not self.product_description:
+            raise ValueError("Ürün tanımı veya ürün dosyası gönderilmelidir.")
+        if self.dossier is not None:
+            for uri in self.dossier.attachment_uris:
+                _validate_upload_uri(uri)
+        return self
 
 class BatchAnalyzeRequest(BaseModel):
     product_descriptions: List[ProductDescription] = Field(
@@ -380,11 +395,21 @@ async def analyze_product_json(payload: AnalyzeJSONRequest, request: Request, ba
             "analysis",
             settings.PUBLIC_DEMO_RATE_LIMIT_PER_MINUTE,
         )
-        # Vertex AI Model Armor Güvenlik Duvarı Denetimi
-        clean_desc, _ = model_armor.inspect_and_sanitize(payload.product_description)
+        # Vertex AI Model Armor Güvenlik Duvarı Denetimi: dosyanın her metin alanı dahil.
+        dossier = payload.dossier
+        if dossier is not None:
+            cleaned = {}
+            for field_name in ("product_name", "use_and_function", "material", "extra_description"):
+                value = getattr(dossier, field_name)
+                cleaned[field_name] = model_armor.inspect_and_sanitize(value)[0] if value else value
+            dossier = dossier.model_copy(update=cleaned)
+            clean_desc = dossier.to_raw_text()
+        else:
+            clean_desc, _ = model_armor.inspect_and_sanitize(payload.product_description)
         decision = await workflow_engine.start_analysis_async(
             raw_text=clean_desc,
             image_uri=payload.image_uri,
+            dossier=dossier,
         )
         execution_ms = (time.time() - start_time) * 1000
 
@@ -393,7 +418,7 @@ async def analyze_product_json(payload: AnalyzeJSONRequest, request: Request, ba
                 session_id=decision.session_id,
                 user_email=user_session.email,
                 user_role=user_session.role,
-                product_name=payload.product_description[:50],
+                product_name=(dossier.product_name if dossier is not None else clean_desc)[:50],
                 initial_gtip_proposed=decision.gtip_code,
                 final_gtip_approved=decision.gtip_code,
                 confidence_score=decision.confidence_score,

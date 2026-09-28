@@ -201,7 +201,15 @@ def answer_as_expert(decision: Any, expected_gtip: str, workflow_engine: Any) ->
             return decision
 
         chosen = None
-        for option in decision.hitl_question.options:
+        # Ürün bilgisi teyidi (PROFILE): BTB kaydı malzemeyi ayrıca etiketlemez,
+        # bu yüzden uzman modelin varsayımını kabul eder. Bu, profil sorusunun
+        # kendisini değil, sorudan sonraki sınıflandırmayı ölçer.
+        if getattr(decision, "state_machine_stage", None) == "PROFILE_QUESTION":
+            chosen = next(
+                (o for o in decision.hitl_question.options if (o.impact_data or {}).get("inferred") == "true"),
+                None,
+            )
+        for option in ([] if chosen else decision.hitl_question.options):
             branch = _digits((option.impact_data or {}).get("selected_branch"))
             if branch and expected_gtip.startswith(branch):
                 chosen = option
@@ -229,6 +237,8 @@ ABLATION_FLAGS = (
 )
 # Kanıt değil dolaşım biçimi: baseline'a dahil değildir, ayrıca kapatılır.
 ROUTING_FLAGS = ("HEADING_ROUTING_ENABLED",)
+# Ürün profili ve teyit sorusu; kanıt değil giriş biçimidir, ayrıca kapatılır.
+PROFILE_FLAGS = ("PRODUCT_PROFILE_ENABLED", "PROFILE_CONFIRMATION_ENABLED")
 
 
 def run_benchmark(
@@ -243,12 +253,12 @@ def run_benchmark(
     # Ablasyon: kanıt enjeksiyonunu kapatarak her maddenin katkısını tek tek ölç.
     # Hepsi kapalıyken alınan ölçüm baseline'dır.
     for flag in (ablate or []):
-        if flag not in ABLATION_FLAGS + ROUTING_FLAGS:
+        if flag not in ABLATION_FLAGS + ROUTING_FLAGS + PROFILE_FLAGS:
             raise SystemExit(
-                f"Bilinmeyen ablasyon bayrağı: {flag} (geçerli: {ABLATION_FLAGS + ROUTING_FLAGS})"
+                f"Bilinmeyen ablasyon bayrağı: {flag} (geçerli: {ABLATION_FLAGS + ROUTING_FLAGS + PROFILE_FLAGS})"
             )
         setattr(settings, flag, False)
-    active_flags = {flag: bool(getattr(settings, flag)) for flag in ABLATION_FLAGS + ROUTING_FLAGS}
+    active_flags = {flag: bool(getattr(settings, flag)) for flag in ABLATION_FLAGS + ROUTING_FLAGS + PROFILE_FLAGS}
     logger.info("Kanıt bayrakları: %s", active_flags)
 
     test_set = dataset or build_holdout(sample_size, seed)
@@ -259,6 +269,7 @@ def run_benchmark(
     expert_completed = 0
     statuses: collections.Counter = collections.Counter()
     residual_fallbacks = 0
+    profile_questions = 0
     latencies: List[float] = []
     failures: List[Dict[str, Any]] = []
     samples: List[Dict[str, Any]] = []
@@ -286,6 +297,8 @@ def run_benchmark(
         latencies.append((time.perf_counter() - started) * 1000)
 
         statuses[decision.status] += 1
+        if getattr(decision, "state_machine_stage", None) == "PROFILE_QUESTION":
+            profile_questions += 1
         predicted = _digits(decision.gtip_code)
 
         matched = {
@@ -372,6 +385,8 @@ def run_benchmark(
             "manual_review_rate": pct(statuses.get("MANUAL_REVIEW_REQUIRED", 0)),
             "exception_rate": pct(statuses.get("EXCEPTION", 0)),
             "residual_fallback_rate": pct(residual_fallbacks),
+            # Sınıflandırmadan önce ürün bilgisi (malzeme / eşya türü) sorulan oran.
+            "profile_question_rate": pct(profile_questions),
             # Uzman müşavir teknik ayrımları yanıtlasa ulaşılabilir sonuç.
             # Çıkmazı soruya çevirmenin değeri yalnız burada görünür: ölü uç
             # cevaplanamaz, bekleyen soru cevaplanabilir.
