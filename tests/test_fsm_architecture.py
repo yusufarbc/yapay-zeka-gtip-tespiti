@@ -654,3 +654,25 @@ def test_prompt_instructions_are_unnumbered(monkeypatch):
     )
     rules = captured["prompt"][: captured["prompt"].index("SEVİYE:")]
     assert not re.search(r"^\d+\. ", rules, flags=re.M), "talimatlar numaralı"
+
+
+def test_reasoning_is_written_before_the_decision(monkeypatch):
+    """Karar önce yazılınca model gerekçede "Fasıl 76 en uygun" deyip Fasıl 73'ü
+    seçebiliyordu (15 denemede 1 açık çelişki). Gerekçe önce: 0/15."""
+    from api.modules import llm_verifier as verifier_module
+
+    captured = {}
+
+    class Models:
+        def generate_content(self, **kwargs):
+            captured["prompt"] = kwargs["contents"]
+            return SimpleNamespace(text='{"status":"SELECT","selected_candidate_id":"A"}')
+
+    monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr("api.modules.vertex_client.get_genai_client", lambda: SimpleNamespace(models=Models()))
+    verifier_module.llm_verifier.select_tariff_node(
+        "x", "HEADING", [{"gtip_code": "7610", "description": "a"}, {"gtip_code": "7007", "description": "b"}],
+    )
+    template = captured["prompt"][captured["prompt"].index("JSON biçimini"):]
+    assert template.index('"reasoning_points"') < template.index('"status"') < template.index('"selected_candidate_id"')

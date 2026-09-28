@@ -320,19 +320,21 @@ class LLMFactVerifier:
             f"{rejection_block}"
             f"{narrowing_block}"
             f"<product_data>{raw_text}</product_data>\n"
-            # Not: "önce gerekçe, sonra karar" alan sırası denendi; küçük örnekte
-            # sonuç karışıktı (cam balkon 70/70/76, ahşap sandalye 44). Benchmark
-            # ile ölçülmeden değiştirilmemeli.
-            "Yalnız şu JSON biçimini döndür: "
-            "{\"status\":\"SELECT|INSUFFICIENT_INFORMATION|NO_MATCH\","
-            "\"selected_candidate_id\":\"A veya null\","
-            "\"selected_code\":\"seçtiğin seçeneğin official_code değeri, birebir kopya veya null\","
-            "\"alternative_candidate_ids\":[\"A\",\"B\"],"
-            "\"question_text\":\"Türkçe soru veya null\","
-            "\"reasoning_points\":[\"1-3 kısa Türkçe cümle: seçimi belirleyen ürün özelliği ve "
-            "dayandığın GİR kuralı veya fasıl notu\"],"
+            # Alan sırası bilinçlidir: ÖNCE gerekçe, SONRA karar. Karar önce
+            # yazılınca model bir seçeneğe bağlanıp gerekçeyi sonradan yazıyordu;
+            # canlıda gerekçe "Fasıl 76, 7610 en uygun fasıldır" derken seçim
+            # Fasıl 73 çıktı ve müşaviriye çelişkili bir açıklama gösterildi.
+            "Yalnız şu JSON biçimini, ALANLARI BU SIRAYLA yazarak döndür. Önce gerekçeni yaz, sonra kararı; "
+            "karar gerekçenin vardığı sonuçla AYNI olmalı: "
+            "{\"reasoning_points\":[\"1-3 kısa Türkçe cümle: seçimi belirleyen ürün özelliği ve "
+            "dayandığın GİR kuralı veya fasıl notu; son cümle vardığın seçeneği söylesin\"],"
             "\"applied_gir_keys\":[\"GIR_1\",\"GIR_3A\",\"GIR_3B\",\"GIR_6\"],"
-            "\"cited_chapter_notes\":[\"70\",\"76\"]}"
+            "\"cited_chapter_notes\":[\"70\",\"76\"],"
+            "\"status\":\"SELECT|INSUFFICIENT_INFORMATION|NO_MATCH\","
+            "\"selected_code\":\"gerekçede vardığın seçeneğin official_code değeri, birebir kopya veya null\","
+            "\"selected_candidate_id\":\"aynı seçeneğin option_id değeri veya null\","
+            "\"alternative_candidate_ids\":[\"A\",\"B\"],"
+            "\"question_text\":\"Türkçe soru veya null\"}"
         )
 
         try:
