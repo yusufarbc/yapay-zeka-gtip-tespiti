@@ -264,10 +264,20 @@ async def generate_upload_url(
         client = gcs.Client(project=settings.GCP_PROJECT_ID)
         bucket = client.bucket(settings.GCS_BUCKET_NAME)
         blob = bucket.blob(destination)
+        # Cloud Run kimlik bilgisinde özel anahtar yoktur; imza IAM signBlob ile
+        # servis hesabı adına atılır (hesabın kendi üzerinde Token Creator rolü
+        # vardır). Önceki çağrı anahtar aradığı için canlıda hep 503 dönüyordu.
+        import google.auth
+        from google.auth.transport import requests as google_requests
+
+        credentials, _ = google.auth.default()
+        credentials.refresh(google_requests.Request())
         url = blob.generate_signed_url(
             version="v4",
             expiration=datetime.timedelta(minutes=15),
-            method="PUT"
+            method="PUT",
+            service_account_email=getattr(credentials, "service_account_email", None),
+            access_token=credentials.token,
         )
         return {"upload_url": url, "destination": f"gs://{settings.GCS_BUCKET_NAME}/{destination}"}
     except Exception:

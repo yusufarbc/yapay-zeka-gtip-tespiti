@@ -90,6 +90,35 @@ class LLMFactVerifier:
             return max(settings.THINKING_BUDGET_CHAPTER, settings.THINKING_BUDGET_EXCLUSION if narrowing else 0)
         return settings.THINKING_BUDGET_EXCLUSION if narrowing else 0
 
+    @staticmethod
+    def _reconcile_id_with_code(selection: CandidateSelection, option_map: Dict[str, Dict[str, Any]], level: str) -> None:
+        """Seçenek kimliği ile modelin yazdığı resmî kodu çapraz kontrol eder.
+
+        Canlıda "cam balkon" için model gerekçesinde "Fasıl 76, 7610 en uygun
+        fasıldır" yazıp kimlik olarak Fasıl 73'ün `BU`'sunu döndürdü (76 = `BX`).
+        97 seçenekli listede iki harfli kimlik kayabiliyor; resmî kod ise modelin
+        asıl düşündüğü şeydir. Kod sunulan seçeneklerden birine denk geliyorsa ve
+        kimlikle uyuşmuyorsa kod esas alınır. Kapalı küme korunur: kod da ancak
+        sunucunun verdiği bir seçenekse kabul edilir.
+        """
+        if selection.status != CandidateSelectionStatus.SELECT or not selection.selected_code:
+            return
+        wanted = re.sub(r"\D", "", str(selection.selected_code))
+        if not wanted:
+            return
+        by_code = [
+            oid for oid, node in option_map.items()
+            if re.sub(r"\D", "", str(node.get("gtip_code") or "")) == wanted
+        ]
+        picked = option_map.get(selection.selected_candidate_id or "") or {}
+        picked_code = re.sub(r"\D", "", str(picked.get("gtip_code") or ""))
+        if len(by_code) == 1 and picked_code != wanted:
+            logger.warning(
+                "Seçenek kimliği ile kod uyuşmuyor level=%s id=%s(%s) kod=%s; kod esas alındı (%s)",
+                level, selection.selected_candidate_id, picked_code or "-", wanted, by_code[0],
+            )
+            selection.selected_candidate_id = by_code[0]
+
     _LEVEL_PREFIX = {"CHAPTER": 2, "HEADING": 4, "SUBHEADING": 6, "GTIP": 8}
 
     @classmethod
@@ -291,9 +320,13 @@ class LLMFactVerifier:
             f"{rejection_block}"
             f"{narrowing_block}"
             f"<product_data>{raw_text}</product_data>\n"
+            # Not: "önce gerekçe, sonra karar" alan sırası denendi; küçük örnekte
+            # sonuç karışıktı (cam balkon 70/70/76, ahşap sandalye 44). Benchmark
+            # ile ölçülmeden değiştirilmemeli.
             "Yalnız şu JSON biçimini döndür: "
             "{\"status\":\"SELECT|INSUFFICIENT_INFORMATION|NO_MATCH\","
             "\"selected_candidate_id\":\"A veya null\","
+            "\"selected_code\":\"seçtiğin seçeneğin official_code değeri, birebir kopya veya null\","
             "\"alternative_candidate_ids\":[\"A\",\"B\"],"
             "\"question_text\":\"Türkçe soru veya null\","
             "\"reasoning_points\":[\"1-3 kısa Türkçe cümle: seçimi belirleyen ürün özelliği ve "
@@ -375,6 +408,7 @@ class LLMFactVerifier:
                     data["cited_chapter_notes"].append(ch_z)
 
             selection = CandidateSelection(**data)
+            self._reconcile_id_with_code(selection, option_map, level)
             valid_ids = set(option_map)
             if rejected_codes and selection.status == CandidateSelectionStatus.SELECT:
                 picked = option_map.get(selection.selected_candidate_id) or {}
