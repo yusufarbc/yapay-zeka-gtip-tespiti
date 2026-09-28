@@ -32,23 +32,20 @@ export const uploadFileDirectlyToGCS = async (file, uploadUrl) => {
   });
 };
 
-export const analyzeProduct = async (productDescription, imageFile = null) => {
-  let imageUri = null;
-  
-  if (imageFile) {
-    const { upload_url, destination } = await getUploadUrl(imageFile.name);
-    if (upload_url.includes('mock-upload')) {
-      // Emulator mode / local fallback - let the backend handle it or ignore
-    } else {
-      await uploadFileDirectlyToGCS(imageFile, upload_url);
-      imageUri = destination;
+// Ürün dosyası: form alanları + GCS'e doğrudan yüklenen ekler. Emülatörde
+// yükleme adresi sahtedir; ekler atlanır ve analiz yalnız alanlarla yapılır.
+export const analyzeProduct = async (dossierFields, files = []) => {
+  const attachmentUris = [];
+  for (const file of files) {
+    const { upload_url, destination } = await getUploadUrl(file.name);
+    if (!upload_url.includes('mock-upload')) {
+      await uploadFileDirectlyToGCS(file, upload_url);
+      attachmentUris.push(destination);
     }
   }
 
-  // Use the JSON endpoint which accepts image_uri instead of multipart file
   const response = await axios.post(`${API_BASE_URL}/analyze-json`, {
-    product_description: productDescription,
-    image_uri: imageUri
+    dossier: { ...dossierFields, attachment_uris: attachmentUris },
   }, {
     timeout: 45000
   });

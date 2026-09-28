@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { HelpCircle, ArrowRight, CheckCircle, ShieldAlert } from 'lucide-react';
 
-export const HITLQuestionModal = ({ question, onRespond, isSubmitting }) => {
+export const HITLQuestionModal = ({ question, onRespond, isSubmitting, isProfileQuestion = false }) => {
   const [selectedOpt, setSelectedOpt] = useState('');
 
   if (!question) return null;
@@ -49,7 +49,7 @@ export const HITLQuestionModal = ({ question, onRespond, isSubmitting }) => {
         </div>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-            <span className="badge badge-warning">İnsan Onayı Bekleniyor (Müşavir Netleştirmesi)</span>
+            <span className="badge badge-warning">{isProfileQuestion ? 'Ürün Bilgisi Teyidi' : 'Tarife Ayrımı'}</span>
           </div>
           <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.4 }}>
             {question.question_text}
@@ -58,7 +58,9 @@ export const HITLQuestionModal = ({ question, onRespond, isSubmitting }) => {
       </div>
 
       <p style={{ fontSize: '0.86rem', color: 'var(--text-secondary)', marginBottom: '18px', lineHeight: 1.5 }}>
-        Denetçi Ajan (Auditor Agent) seçilen GTİP tarife pozisyonunu kesinleştirmek için aşağıdaki teknik seçeneği teyit etmenizi bekliyor:
+        {isProfileQuestion
+          ? 'Sınıflandırmayı etkileyen bu bilgi girilmedi; sistem bir varsayımda bulundu. Doğru olanı seçin. Bilmiyorsanız varsayımla devam edilir ve karar müşavir incelemesine işaretlenir.'
+          : 'Ürünün hangi resmî tarife tanımına uyduğunu seçin. Seçenekler yalnız resmî tarife dallarıdır.'}
       </p>
 
       {/* Seçenek Listesi */}
@@ -67,7 +69,9 @@ export const HITLQuestionModal = ({ question, onRespond, isSubmitting }) => {
           const isSelected = selectedOpt === opt.option_id;
           const letter = String.fromCharCode(65 + idx); // A, B, C...
           const displayText = cleanOptionText(opt.text);
-          const badge = getOptionBadge(displayText);
+          const badge = opt.impact_data?.inferred === 'true'
+            ? <span className="badge badge-warning" style={{ padding: '2px 8px' }}>Sistemin varsayımı</span>
+            : getOptionBadge(displayText);
 
           return (
             <button
@@ -133,7 +137,7 @@ export const HITLQuestionModal = ({ question, onRespond, isSubmitting }) => {
           boxShadow: selectedOpt ? '0 4px 14px rgba(0, 0, 0, 0.2)' : 'none'
         }}
       >
-        <span>{isSubmitting ? 'Yanıt İletiliyor...' : 'Yanıtı Gönder ve GTİP Kodu Al'}</span>
+        <span>{isSubmitting ? 'Yanıt İletiliyor...' : (isProfileQuestion ? 'Yanıtı Gönder ve Analize Devam Et' : 'Yanıtı Gönder ve GTİP Kodu Al')}</span>
         <ArrowRight size={18} />
       </button>
     </div>
