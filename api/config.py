@@ -141,6 +141,14 @@ class Settings(BaseSettings):
     PROFILE_LLM_MODEL: str = os.getenv("PROFILE_LLM_MODEL", "gemini-2.5-flash")
     PROFILE_TIMEOUT_MS: int = int(os.getenv("PROFILE_TIMEOUT_MS", "12000"))
 
+    # Bölüm + fasıl notları için prompt bütçesi (karakter). Uzun notlar madde
+    # bazında kısaltılır: önce dışlama hükümleri, sonra tanımlar.
+    NOTES_BUDGET_CHARS: int = int(os.getenv("NOTES_BUDGET_CHARS", "9000"))
+    # Fasıl seçildikten sonra, faslın ve bölümünün dışlama hükümlerine karşı
+    # kısa bir kontrol. Fasıl seçimi notsuz yapıldığı için yanlış fasıl ancak
+    # pozisyon seviyesinde anlaşılıyor ve bir tur kaybediliyordu.
+    CHAPTER_EXCLUSION_CHECK_ENABLED: bool = os.getenv("CHAPTER_EXCLUSION_CHECK_ENABLED", "true").lower() == "true"
+
     HEADING_ROUTING_ENABLED: bool = os.getenv("HEADING_ROUTING_ENABLED", "true").lower() == "true"
     HEADING_ROUTING_MIN_BTB: float = float(os.getenv("HEADING_ROUTING_MIN_BTB", "0.80"))
     HEADING_ROUTING_MAX_HEADINGS: int = int(os.getenv("HEADING_ROUTING_MAX_HEADINGS", "3"))

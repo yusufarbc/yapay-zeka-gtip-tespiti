@@ -236,7 +236,7 @@ ABLATION_FLAGS = (
     "SELECTION_USE_CHAPTER_NOTES",
 )
 # Kanıt değil dolaşım biçimi: baseline'a dahil değildir, ayrıca kapatılır.
-ROUTING_FLAGS = ("HEADING_ROUTING_ENABLED",)
+ROUTING_FLAGS = ("HEADING_ROUTING_ENABLED", "CHAPTER_EXCLUSION_CHECK_ENABLED")
 # Ürün profili ve teyit sorusu; kanıt değil giriş biçimidir, ayrıca kapatılır.
 PROFILE_FLAGS = ("PRODUCT_PROFILE_ENABLED", "PROFILE_CONFIRMATION_ENABLED")
 
