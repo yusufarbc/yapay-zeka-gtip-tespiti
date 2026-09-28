@@ -48,9 +48,23 @@ def _stems(text: Any, min_len: int = 3) -> Set[str]:
     return {word[:5] for word in re.findall(r"[a-z]+", _fold(text)) if len(word) >= min_len}
 
 
-def _appears_in(value: str, source_text: str) -> bool:
+def _coverage(value: str, source_text: str) -> float:
+    """Bilginin kelimelerinin kaçta kaçı kaynak metinde geçiyor (0-1)."""
     value_stems = _stems(value)
-    return bool(value_stems) and bool(value_stems & _stems(source_text))
+    if not value_stems:
+        return 0.0
+    return len(value_stems & _stems(source_text)) / len(value_stems)
+
+
+def _appears_in(value: str, source_text: str) -> bool:
+    """Bilgi kaynak metinde gerçekten söylenmiş mi?
+
+    Tek ortak kelime yetmez: canlıda modelin tahmin ettiği "balkonları dış
+    etkenlerden korumak…" cümlesi, kullanıcı yalnız "cam balkon sistemi" yazdığı
+    halde "balkon" kelimesi yüzünden "beyan" sayıldı. Kelimelerin çoğu (en az
+    %60) metinde geçmelidir; tek kelimelik malzeme adları için bu tam eşleşmedir.
+    """
+    return _coverage(value, source_text) >= 0.6
 
 
 def _verify_sources(profile: ProductProfile, user_text: str, pool: Optional[EvidencePool]) -> ProductProfile:

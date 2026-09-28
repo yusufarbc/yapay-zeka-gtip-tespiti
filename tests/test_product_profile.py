@@ -256,3 +256,17 @@ def test_api_accepts_a_dossier_and_rejects_an_empty_request():
     foreign = client.post("/api/v1/analyze-json", json={"dossier": {
         "product_name": "x ürün", "attachment_uris": ["gs://baska-bucket/dosya.jpg"]}})
     assert foreign.status_code == 422
+
+
+def test_one_shared_word_does_not_make_a_guess_a_declaration(monkeypatch):
+    """Canlıda tahmin edilen işlev cümlesi, yalnız "balkon" kelimesi ortak diye
+    "Beyan" rozetiyle gösterildi. Kullanıcı yalnız "Cam balkon sistemi" yazmıştı."""
+    _model_profile(monkeypatch, {
+        **CAM_BALKON,
+        "function": {"value": "Balkonları dış etkenlerden korumak ve ısı yalıtımı sağlamak", "source": "USER"},
+        "use_place": {"value": "Binaların balkonlarında ve teraslarında", "source": "INFERRED"},
+    })
+    profile = pp.build_profile("Cam balkon sistemi")
+    assert profile.function.source == "INFERRED"
+    assert profile.use_place.source == "INFERRED"
+    assert profile.product_type.source == "USER"
