@@ -23,7 +23,6 @@ const FACT_SOURCES = {
   USER: { text: 'Beyan', color: 'var(--status-emerald)' },
   DOCUMENT: { text: 'Doküman', color: 'var(--accent-blue)' },
   IMAGE: { text: 'Fotoğraf', color: 'var(--accent-blue)' },
-  URL: { text: 'Ürün sayfası', color: 'var(--accent-blue)' },
   INFERRED: { text: 'Varsayım', color: 'var(--status-amber)' },
   BROKER: { text: 'Müşavir teyidi', color: 'var(--status-emerald)' },
 };

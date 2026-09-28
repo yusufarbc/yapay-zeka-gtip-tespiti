@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sparkles, FileSearch, Paperclip, X, Link2 } from 'lucide-react';
+import { Sparkles, FileSearch, Paperclip, X } from 'lucide-react';
 
 const MAX_FILES = 3;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -32,7 +32,6 @@ export const ProductInputForm = ({ onStartAnalysis, isLoading }) => {
   const [isMachine, setIsMachine] = useState(false);
   const [material, setMaterial] = useState('');
   const [files, setFiles] = useState([]);
-  const [productUrl, setProductUrl] = useState('');
   const [extra, setExtra] = useState('');
   const [fileError, setFileError] = useState('');
 
@@ -58,7 +57,6 @@ export const ProductInputForm = ({ onStartAnalysis, isLoading }) => {
       use_and_function: useAndFunction.trim() || null,
       is_machine: isMachine,
       material: isMachine ? null : (material.trim() || null),
-      product_url: productUrl.trim() || null,
       extra_description: extra.trim() || null,
     }, files);
   };
@@ -100,7 +98,7 @@ export const ProductInputForm = ({ onStartAnalysis, isLoading }) => {
           )}
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '14px', marginBottom: '14px' }}>
+        <div style={{ marginBottom: '14px' }}>
           <div>
             <span style={labelStyle}>
               Fotoğraf, katalog, broşür, teknik resim<span style={hintStyle}>en çok {MAX_FILES}; görsel veya PDF</span>
@@ -125,13 +123,6 @@ export const ProductInputForm = ({ onStartAnalysis, isLoading }) => {
               </ul>
             )}
             {fileError && <p style={{ fontSize: '0.78rem', color: 'var(--status-amber)', margin: '6px 0 0' }}>{fileError}</p>}
-          </div>
-          <div>
-            <label style={labelStyle} htmlFor="productUrl">
-              <Link2 size={13} style={{ verticalAlign: '-2px', marginRight: '4px' }} />Ürün sayfası linki
-            </label>
-            <input id="productUrl" type="url" maxLength={1000} value={productUrl}
-              onChange={(e) => setProductUrl(e.target.value)} placeholder="https://..." style={inputStyle} />
           </div>
         </div>
 
