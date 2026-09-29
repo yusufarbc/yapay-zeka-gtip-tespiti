@@ -500,7 +500,10 @@ def get_database_url() -> str:
     else:
         # Geliştirme / Test ortamı fallback
         import tempfile
-        db_file = os.path.join(tempfile.gettempdir(), "gtip_app_runtime_data", "cloud_sql_fallback.db")
+        # Ortam başına ayrı dosya: yerelde yüklenen gerçek BTB kararları
+        # (scripts.load_btb_export) test veritabanına karışıp testleri bozuyordu.
+        env_name = re.sub(r"[^a-z0-9]+", "_", str(os.getenv("ENVIRONMENT") or "development").lower())
+        db_file = os.path.join(tempfile.gettempdir(), "gtip_app_runtime_data", f"cloud_sql_fallback_{env_name}.db")
         os.makedirs(os.path.dirname(db_file), exist_ok=True)
         return f"sqlite:///{db_file}"
 

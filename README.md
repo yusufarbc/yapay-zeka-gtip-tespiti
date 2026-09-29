@@ -1,251 +1,153 @@
-# GTİP Tespit ve Karar Destek Sistemi
+# GTİP Karar Destek Sistemi
 
-FastAPI backend, React/Vite arayüz ve TGTC/BTB veri işleme araçları.
-Üretim mimarisi ve veri kaynakları için [mimari rapora](gcp_architecture_report.md) bakın.
+Bir eşyanın tanımından **12 haneli Türk GTİP kodunu** (Gümrük Tarife İstatistik Pozisyonu) bulan, kararını resmî tarife metnine, fasıl/bölüm notlarına ve gerçek Bağlayıcı Tarife Bilgisi (BTB) kararlarına dayandıran bir karar destek sistemi.
 
-## Yerel geliştirme (Windows / PowerShell)
+LLM'e "bu ürünün GTİP'i ne?" diye sormak kolay; zor olan, cevabın **var olan, yürürlükteki bir kod** olmasını, gerekçesinin resmî metne dayanmasını ve emin olunmadığında sistemin tahmin yürütmek yerine **doğru soruyu sormasını** sağlamak. Bu proje o kısmı ele alıyor.
 
-Proje kökünde Python sanal ortamını hazırlayın:
+![Sonuç ekranı](docs/screenshots/02-result.png)
 
-```powershell
+> Sistem Eylül 2026'ya kadar Google Cloud Run üzerinde canlı çalıştı. Servisler kapatıldı; aşağıdaki ekran görüntüleri canlı sürümden alındı. Proje yerelde çalıştırılabilir (bkz. [Yerelde çalıştırma](#yerelde-çalıştırma)).
+
+---
+
+## Ne yapıyor?
+
+| | |
+|---|---|
+| **Ürün dosyası** | Eşya adı, kullanım yeri/işlevi, malzeme ve serbest açıklama alınır. Eksik ama kararı etkileyen bilgi (ör. tencerenin gövde malzemesi) varsa sistem varsayımda bulunur ve **analize başlamadan kullanıcıya teyit ettirir**. |
+| **Kapalı küme seçim** | Model GTİP kodu *yazmaz*. Tarife ağacında Fasıl → Pozisyon → Alt pozisyon → 12 haneli yaprak sırasıyla, her seviyede sunucunun verdiği resmî seçenekler arasından seçim yapar. Uydurma kod üretmek yapısal olarak imkânsızdır. |
+| **Resmî dayanak** | Her seçimde ilgili fasıl ve bölüm notları (dışlama hükümleri öncelikli) ve Genel Yorum Kuralları modele verilir. Sonuç ekranındaki kural metinleri modelden değil, resmî kayıttan gelir. |
+| **Emsal (BTB)** | 2.355 gerçek BTB kararı arasından benzer olanlar bulunur; güçlü emsaller aday pozisyonları daraltır. |
+| **Soru sorma (HITL)** | Bilgi gerçekten yetersizse sistem, resmî tarife dallarından oluşan seçeneklerle müşavire soru sorar ve cevaba göre kaldığı yerden devam eder. |
+| **Denetim izi** | Her seviyede neden o dalın seçildiği, dayanılan kural ve notlar, emsaller ve güven skoru kaydedilir; karar PDF olarak indirilebilir. |
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/03-question.png" alt="Ürün bilgisi teyit sorusu"><br><sub>Malzeme girilmediğinde sistem varsayımını teyit ettirir.</sub></td>
+<td width="50%"><img src="docs/screenshots/04-library.png" alt="Tarife ve BTB kütüphanesi"><br><sub>2026 TGTC (97 fasıl, 19.704 GTİP) ve BTB emsal kütüphanesi.</sub></td>
+</tr>
+</table>
+
+## Nasıl çalışıyor?
+
+```mermaid
+flowchart LR
+    A[Ürün dosyası] --> B[Ürün profili<br/>ne, neyden, ne işe yarar<br/>+ kaynak etiketi]
+    B -->|kararı etkileyen bilgi<br/>yalnız tahmin| Q1[Teyit sorusu]
+    Q1 --> B
+    B --> C[BTB / EBTI<br/>emsal araması]
+    C --> D[Kapalı küme dolaşım<br/>Fasıl → Pozisyon →<br/>Alt pozisyon → GTİP]
+    N[Fasıl + bölüm notları<br/>GYK 1-6] --> D
+    D -->|fasıl dışlama ve<br/>uygunluk kontrolü| D
+    D -->|bilgi yetersiz| Q2[Tarife sorusu<br/>resmî dallar]
+    Q2 --> D
+    D --> E[Sunucu doğrulaması<br/>12 hane, ebeveyn yolu,<br/>yürürlük]
+    E --> F[Karar + gerekçe<br/>+ kaynaklar + PDF]
+```
+
+Tasarımın ana ilkesi: **model yalnız seçer, kodu sunucu üretir ve doğrular.** Model her seviyede önce gerekçesini, sonra kararını yazar (aksi halde gerekçe ile karar çelişebiliyordu). Ayrıntılı tasarım, veri katmanı ve her kararın ölçüm gerekçesi [mimari raporda](MIMARI_VE_ALGORITMIK_RAPOR.md).
+
+## Ölçüm
+
+Her önemli değişiklik aynı holdout üzerinde ölçüldü: **120 gerçek BTB kararı**, fasıllara dengeli dağıtılmış, tohum 42. Numunenin kendi kararı emsal havuzundan çıkarılır (sızıntı yok). Ham raporlar [`benchmark_results/`](benchmark_results/) altında.
+
+**Seçim modeli karşılaştırması** (aynı kod ve imaj, yalnız model değişti):
+
+| Model | Fasıl | Pozisyon | GTİP (12 hane) | Soru oranı | Ortanca süre |
+|---|---|---|---|---|---|
+| gemini-2.5-flash | %55.8 | %49.2 | %34.2 | %14.2 | 16.6 sn |
+| **gemini-3.5-flash-lite** (seçilen) | %65.0 | %56.7 | %40.0 | %10.0 | **9.1 sn** |
+| gemini-3.5-flash | %70.8 | %64.2 | %52.5 | %5.0 | 16.2 sn |
+
+3.5-flash en doğrusu, ancak token maliyeti flash-lite'ın yaklaşık 5 katı; maliyet/doğruluk dengesi için flash-lite seçildi.
+
+**Ölçümün yön değiştirdiği kararlar** (her biri ablasyonla doğrulandı):
+
+- **Ürün profili adımı ilk hâliyle doğruluğu düşürdü.** Tek tek kapatılan üç yeni adımdan (profil, fasıl dışlama, fasıl uygunluk) sorunun profilde olduğu görüldü: detaylı BTB tanımlarının %13'ünde gereksiz malzeme sorusu soruluyordu (melodika, çocuk kitabı, mum). Soru yalnız "malzeme tarife pozisyonunu değiştiriyor mu?" kontrolünden geçerse sorulacak şekilde değiştirildi: soru oranı %13.3 → %0.8, fasıl doğruluğu %54.2 → %62.5.
+- **"Gürültüyü azaltmak" için profilden çıkarılan tahmini işlev satırı doğruluğa katkı veriyormuş.** Çıkarılınca fasıl doğruluğu %62.5 → %55.8'e düştü (ör. airsoft bilyesi 9306 yerine 3926); geri eklendi.
+- **Benchmark numuneleri koşudan koşuya değişiyordu.** Veritabanı satırları sırasız geldiği için aynı tohum farklı numuneler seçiyordu; iki koşu 120 numunenin yalnız 60'ında örtüşüyordu. Düzeltilene kadar koşular karşılaştırılamazdı.
+- **Sıcaklık 0'da tekrar döngüsü.** Belirli bir girdide model aynı gerekçe cümlesini sonsuz tekrarladı ve istek her denemede zaman aşımına düştü. Çıktı tavanı ve kesilen yanıtta farklı örneklemeyle yeniden deneme eklendi.
+- **Ürüne özel kurallar kaldırıldı.** "Cam balkon için Fasıl 76" gibi sabit kurallar yerine genel ilkeler (işlev malzemeden önce gelir, dışlama notları) ve fasıl uygunluk kontrolü kullanıldı.
+
+## Teknoloji
+
+- **Backend:** Python, FastAPI, SQLAlchemy (PostgreSQL + pgvector; yerelde SQLite), Pydantic
+- **LLM:** Google Gemini (`google-genai`), Vertex AI veya Gemini API anahtarı
+- **Frontend:** React 18, Vite
+- **Altyapı (arşiv):** Cloud Run, Cloud SQL, Cloud Storage, Cloud Run Jobs (ETL ve benchmark), Cloud Build, GitHub Actions (pytest + frontend build). Dağıtım notları: [docs/GCP_DAGITIM.md](docs/GCP_DAGITIM.md)
+
+## Veri
+
+| Kaynak | Konum |
+|---|---|
+| 2026 Türk Gümrük Tarife Cetveli (97 fasıl, 964 pozisyon, 19.704 GTİP) ve fasıl/bölüm notları | `2026 TGTC/`, `api/data/` |
+| 2.355 BTB kararı (Ticaret Bakanlığı, kamuya açık) | `data/btb_kararlari_export_2026-09-29.json` |
+| Benchmark raporları | `benchmark_results/` |
+
+## Yerelde çalıştırma
+
+Gereksinimler: Python 3.11+, Node.js 20+, bir Gemini erişimi (Gemini API anahtarı veya Vertex AI yetkili bir Google Cloud projesi).
+
+```bash
+# 1. Backend bağımlılıkları
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r api/requirements.txt
+.venv/Scripts/python -m pip install -r api/requirements.txt      # Linux/macOS: .venv/bin/python
+
+# 2. Ortam
+export ENVIRONMENT=development
+export JWT_SECRET_KEY=local-development-only-change-me
+export USE_GCP_EMULATOR=false
+export GEMINI_API_KEY=<anahtarınız>          # veya: gcloud auth application-default login
+                                             #       + GCP_PROJECT_ID=<proje> VERTEX_AI_LOCATION=global
+
+# 3. BTB kararlarını yerel veritabanına yükle (DATABASE_URL yoksa SQLite kullanılır)
+.venv/Scripts/python -m scripts.load_btb_export
+
+# 4. API
+.venv/Scripts/python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
+
+# 5. Arayüz (ikinci terminal)
+cd web && npm ci && npm run dev              # http://localhost:5173
 ```
 
-Backend'i çevrimdışı geliştirme modunda başlatın:
+API'yi doğrudan denemek için:
 
-```powershell
-$env:ENVIRONMENT = 'development'
-$env:USE_GCP_EMULATOR = 'true'
-$env:GEMINI_API_KEY = 'local-emulator-placeholder'
-$env:JWT_SECRET_KEY = 'local-development-only'
-.\.venv\Scripts\python.exe -m uvicorn api.main:app --host 127.0.0.1 --port 8000
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/analyze-json \
+  -H "Content-Type: application/json" \
+  -d '{"dossier": {"product_name": "tencere seti", "material": "paslanmaz çelik gövde, cam kapak"}}'
 ```
 
-Bu değerler yalnızca yerel emülatör içindir. Gerçek model erişimi sağlamaz.
-Yerel veri/kanıt eksik olduğunda uygulamanın manuel inceleme istemesi beklenir.
-Canlı model ve Cloud SQL doğrulaması ayrıca yetkili GCP yapılandırması gerektirir.
+Model olmadan (ör. CI'da) çalıştırmak için `USE_GCP_EMULATOR=true` verin; bu modda seçimler deterministik yer tutuculardır ve gerçek sınıflandırma yapılmaz.
 
-İkinci terminalde arayüzü başlatın:
+## Testler
 
-```powershell
-cd web
-npm.cmd ci
-npm.cmd run dev
+```bash
+.venv/Scripts/python -m pytest tests        # 182 test, ağ gerektirmez
+npm --prefix web run build
 ```
 
-Arayüz: `http://localhost:5173`. API sağlık kontrolü: `http://127.0.0.1:8000/api/v1/health`.
-Geliştirme arayüzü varsayılan olarak `/api/v1` üzerinden yerel backend'e gider.
-Backend başka porttaysa `API_PROXY_TARGET=http://127.0.0.1:PORT` ayarlayın.
-`VITE_API_URL` ayarlanırsa tam API taban adresi olarak kullanılır (ör. `https://example.com/api/v1`).
-Üretimde tarayıcı `/api/v1` yolunu kullanır; web container'ındaki Nginx bu yolu
-`BACKEND_ORIGIN` değerine proxy eder. Böylece web imajına ortam URL'si gömülmez.
+## Sınırlar
 
-## Doğrulama
+- En iyi yapılandırmada bile 12 haneli tam kod doğruluğu %40–52 aralığında; sistem müşavirin yerine geçmek için değil, gerekçeli bir ilk öneri ve denetim izi üretmek için tasarlandı. Emsali olmayan kararlar ekranda "müşavir incelemesi önerilir" olarak işaretlenir.
+- Benchmark detaylı BTB tanımlarından oluşuyor; kullanıcıların yazdığı kısa, eksik girdilerdeki başarı ayrıca ölçülmedi.
+- Yalnız eşya adı girildiğinde bazı ürünlerde (ör. "cam balkon sistemi") flash-lite yanlış fasla gidebiliyor; malzeme girildiğinde doğru fasla gidiyor.
 
-Proje kökünde temel derleme kontrolleri:
+## Proje yapısı
 
-```powershell
-.\.venv\Scripts\python.exe -m compileall -q api scripts
-npm.cmd --prefix web run build
+```
+api/            FastAPI uygulaması
+  graph/        karar hattı ve durum makinesi (workflow.py)
+  modules/      kapalı küme seçici, emsal araması, ürün profili, fasıl notları
+  schemas/      Pydantic şemaları
+  db/           veri modeli ve TGTC bilgi tabanı
+web/            React arayüzü
+scripts/        ETL, benchmark, dağıtım ve veri yükleme betikleri
+tests/          pytest
+benchmark_results/  ölçüm raporları
+docs/           ekran görüntüleri ve GCP dağıtım notları
 ```
 
-## Doğruluk ölçümü (benchmark)
+## Lisans
 
-Prompt, retrieval veya model ayarı değiştiren her çalışma **önce ve sonra** ölçülmelidir.
-Ground truth elle yazılmış örnekler değil, Cloud SQL'deki gerçek Ticaret Bakanlığı BTB
-kararlarıdır; her kayıt bir (ürün açıklaması, resmî GTİP) çiftidir. Numunenin kendi
-kararı emsal havuzundan çıkarılarak sızıntı önlenir.
-
-Benchmark canlı Vertex AI ve Cloud SQL erişimi ister; bu yüzden CI kapısı **değildir**.
-Birincil yol, üretim imajıyla çalışan Cloud Run Job'udur:
-
-```powershell
-gcloud.cmd run jobs execute gtip-benchmark --region us-central1 --project gumruk-mevzuat --wait
-gcloud.cmd logging read 'resource.labels.job_name="gtip-benchmark"' --limit 80 --format='value(textPayload)'
-```
-
-Yerelde çalıştırmak için Cloud SQL Auth Proxy ve ADC gerekir:
-
-```powershell
-gcloud.cmd auth application-default login
-.\cloud-sql-proxy.exe gumruk-mevzuat:us-central1:gumruk-db --port 5432
-# ikinci terminalde
-$env:ENVIRONMENT = 'production'
-$env:DATABASE_URL = 'postgresql+psycopg2://postgres:<parola>@127.0.0.1:5432/gtip_db'
-.\.venv\Scripts\python.exe -m scripts.evaluate_gtip_benchmark --sample 300
-```
-
-Sonuç `benchmark_results/benchmark-<zaman>.json` altına yazılır. Bir önceki ölçümle
-karşılaştırmak için:
-
-```powershell
-.\.venv\Scripts\python.exe -m scripts.evaluate_gtip_benchmark --sample 300 `
-  --baseline benchmark_results/<baseline-dosyası>.json
-```
-
-Doğruluk (`leaf_acc`, `heading_acc`) ile kapsam (`coverage`, `hitl_rate`) ayrı
-raporlanır: modelin soru sorması bir sınıflandırma hatası değildir, kapsam kaybıdır.
-
-### Metrik grupları
-
-| grup | metrikler | ne söyler |
-|---|---|---|
-| otomatik doğruluk | `chapter_acc`, `heading_acc`, `subheading_acc`, `leaf_acc` | Hiç insan müdahalesi olmadan doğru kod |
-| kapsam | `coverage`, `hitl_rate`, `manual_review_rate` | Sistem ne sıklıkla karar veriyor, soruyor, pes ediyor |
-| ulaşılabilir doğruluk | `coverage_with_expert`, `heading_acc_with_expert`, `leaf_acc_with_expert` | Doğru cevabı bilen bir müşavir teknik ayrımları yanıtlasa nereye varılırdı |
-| kalite işaretleri | `residual_fallback_rate`, `leaf_acc_of_completed` | Zayıf seçim oranı; cevap verilenler içindeki isabet |
-
-Uzman izi gözetimsiz ölçümdeki bir boşluğu kapatır: bekleyen soru ile ölü uç
-aksi halde ayırt edilemez, ikisi de "kod üretmedi" görünür. Uzman her dallanmada
-beklenen GTİP ile ön-eki uyuşan resmî seçeneği işaretler; hiçbir resmî dal doğru
-cevabı içermiyorsa uzman da seçemez — bu, sorunun yanlış sorulduğu anlamına gelir
-ve başarısızlık sayılır. Ortalama kullanıcıyı değil, ulaşılabilir doğruluğun
-**üst sınırını** ölçer.
-
-### Kanıt bayrakları ve ablasyon ölçümü
-
-Seçim promptuna giren üç kanıt ayrı ayrı kapatılabilir:
-
-| Bayrak | Ne enjekte eder |
-|---|---|
-| `SELECTION_USE_RAW_TEXT` | Ham müşteri beyanı (özellik çıkarımıyla damıtılmadan) |
-| `SELECTION_USE_PRECEDENTS` | Seviyeyle eşleşen BTB/EBTI emsalleri |
-| `SELECTION_USE_CHAPTER_NOTES` | İlgili faslın resmî notları (GİR 1 dışlama hükümleri) |
-
-Kanıttan ayrı olarak `HEADING_ROUTING_ENABLED` emsal güdümlü pozisyon yönlendirmesini açar/kapatır
-(güçlü BTB emsali varken fasıl seçimi atlanır). Baseline'a dahil değildir; etkisi
-`--ablate HEADING_ROUTING_ENABLED` ile ölçülür. Çevrimdışı gerekçesi:
-`python -m scripts.evaluate_heading_routing --from-report <benchmark raporu>`.
-
-Bu, her maddenin doğruluk katkısını tek tek ölçmeyi sağlar; aynı zamanda bir madde
-üretimde doğruluğu düşürürse yeniden deploy etmeden kapatma imkânı verir.
-
-Ölçüm sırası — **önce baseline**, sonra maddeler tek tek eklenir. Bayraklar ortam
-değişkeni olduğu için job çalıştırmasında `--update-env-vars` ile geçici olarak
-kapatılabilir; job tanımı değişmez:
-
-```powershell
-$j = @('--region','us-central1','--project','gumruk-mevzuat','--wait')
-
-# 1. Baseline: tüm kanıt kapalı (kanıt zinciri öncesi davranış)
-gcloud.cmd run jobs execute gtip-benchmark @j --update-env-vars `
-  SELECTION_USE_RAW_TEXT=false,SELECTION_USE_PRECEDENTS=false,SELECTION_USE_CHAPTER_NOTES=false
-
-# 2. Yalnız ham beyan açık
-gcloud.cmd run jobs execute gtip-benchmark @j --update-env-vars `
-  SELECTION_USE_PRECEDENTS=false,SELECTION_USE_CHAPTER_NOTES=false
-
-# 3. Ham beyan + emsaller
-gcloud.cmd run jobs execute gtip-benchmark @j --update-env-vars SELECTION_USE_CHAPTER_NOTES=false
-
-# 4. Hepsi açık (varsayılan üretim davranışı)
-gcloud.cmd run jobs execute gtip-benchmark @j
-```
-
-Yerelde aynı ablasyon betiğin kendi bayraklarıyla yapılır:
-
-```powershell
-.\.venv\Scripts\python.exe -m scripts.evaluate_gtip_benchmark --sample 300 --baseline-run
-.\.venv\Scripts\python.exe -m scripts.evaluate_gtip_benchmark --sample 300 `
-  --ablate SELECTION_USE_CHAPTER_NOTES
-```
-
-Her rapor hangi bayrakların açık olduğunu `evidence_flags` alanında saklar; karşılaştırma
-çıktısı iki ölçümün bayrak farkını da yazar. Bir adım `leaf_acc` veya `heading_acc`
-değerini düşürürse o bayrak üretimde `false` bırakılır.
-
-## GCP üretim dağıtımı
-
-Dağıtım betikleri boş veritabanı oluşturmaz ve `latest` etiketiyle deploy etmez.
-Önce değişiklikleri commit edin; ana betik kirli çalışma ağacında varsayılan olarak durur.
-
-Silinen Cloud SQL'i FINAL backup'tan yeni, regional HA instance olarak geri yüklemek için:
-
-```powershell
-.\scripts\restore_cloud_sql.ps1 `
-  -BackupName 'projects/gumruk-mevzuat/backups/44b82d7b-85fe-4e5c-b30f-bc6fee0106e4'
-```
-
-Servisleri immutable image digest, candidate revision ve otomatik smoke test ile yayınlayın.
-Kimlik doğrulama henüz yapılandırılmadıysa public demo erişimi ancak açık bir parametreyle açılır:
-
-```powershell
-.\scripts\deploy_cloud_run.ps1 -AllowPublicDemo
-```
-
-Komut sonunda yazılan backend `@sha256:...` değerini dört job için aynen kullanın:
-
-```powershell
-$release = git rev-parse --short=12 HEAD
-$backendImage = '<deploy çıktısındaki backend @sha256 digest>'
-.\scripts\deploy_etl_jobs.ps1 -Image $backendImage -Release $release
-.\scripts\deploy_tgtc_seed_job.ps1 -Image $backendImage -Release $release
-.\scripts\verify_deployment.ps1
-```
-
-ETL betiği iki scheduler'ı güvenlik amacıyla `PAUSED` bırakır. Daily ve BTB job'ları
-elle başarılı çalıştırıldıktan sonra scheduler'ları resume edin ve son kontrolü çalıştırın:
-
-```powershell
-gcloud.cmd scheduler jobs resume resmi-gazete-daily-sync --location us-central1 --project gumruk-mevzuat
-gcloud.cmd scheduler jobs resume official-btb-daily-sync --location us-central1 --project gumruk-mevzuat
-.\scripts\verify_deployment.ps1 -RequireSchedulersEnabled
-```
-
-### Rollback
-
-Trafik önceki revizyona anında geri alınabilir; eski revizyonlar silinmez:
-
-```powershell
-gcloud.cmd run revisions list --service gtip-backend --region us-central1 --project gumruk-mevzuat
-gcloud.cmd run services update-traffic gtip-backend --region us-central1 --project gumruk-mevzuat `
-  --to-revisions '<önceki-revizyon-adı>=100'
-```
-
-Dağıtım betiği trafiği kaydırdıktan sonra eski `candidate-*` etiketlerini temizler.
-Etiketli revizyonlar `min-instances=1` ile adreslenebilir kaldığında trafik almasalar
-bile sürekli açık instance olarak faturalanır.
-
-Ayrıntılı geri yükleme, IAM, smoke test ve rollback kapıları için
-[GCP dağıtım planına](gcp_deploy_plan.md) bakın.
-
-## İzleme ve alarm
-
-Uygulama logları Cloud Logging'e yapılandırılmış JSON olarak gider (`api/logging_config.py`).
-Bu olmadan `severity` alanı boş kalıyor, `logger.error` ile `logger.info` aynı seviyede
-görünüyor ve hata üzerine alarm kurulamıyordu.
-
-Log-based metric'ler yapılandırılmış loglamayı içeren sürüm **deploy edildikten sonra**
-kurulur (filtreler `jsonPayload` alanlarına dayanır):
-
-```powershell
-.\scripts\setup_log_metrics.ps1
-```
-
-| Metrik | Ne izler |
-|---|---|
-| `gtip_analysis_errors` | `severity>=ERROR` uygulama hataları |
-| `gtip_manual_review` | Manuel incelemeye düşen kararlar |
-| `gtip_hitl_questions` | Müşavire teknik ayrım sorusu yöneltilen kararlar |
-| `gtip_fabricated_ruling_guard` | Uydurma emsal üretiminin geri gelmediğini doğrular — **sıfır kalmalı** |
-
-Analiz akışı her kararda yapılandırılmış alanlar basar: `session_id`, `decision_status`,
-`duration_ms`, `btb_hits`, `ebti_hits`, `gtip_code`, `confidence_score`. Metrikler bu
-alanlardan doğrudan türetilir; metin ayrıştırmaya gerek yoktur.
-
-Alarm eşikleri, metrikler gerçek dağılımı gösterecek kadar veri topladıktan sonra
-Cloud Monitoring üzerinden tanımlanmalıdır.
-
-## Git bağlantısı
-
-Depo: https://github.com/yusufarbc/yapay-zeka-gtip-tespiti
-
-```powershell
-git status --short --branch
-git remote -v
-git fsck --full
-```
-
-8 Eylül 2026'da kayıp `.git` metadata'sı GitHub geçmişinden geri yüklendi;
-`main` dalı `origin/main` dalını izliyor. Çalışma dosyaları korunarak kurtarma yapıldı.
+[MIT](LICENSE)

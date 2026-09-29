@@ -28,7 +28,15 @@ def get_genai_client():
     try:
         from google import genai
 
-        # 1. Öncelik: Vertex AI (GCP Cloud Run / ADC)
+        # 1. Açıkça verilmiş Gemini API anahtarı (yerel kurulum). Önceden Vertex
+        # modu her zaman önce denendiğinden anahtar hiç kullanılmıyordu; Cloud
+        # Run'da anahtar tanımlı değildir, orada davranış değişmez.
+        if settings.GEMINI_API_KEY and not settings.USE_GCP_EMULATOR:
+            _genai_client = genai.Client(api_key=settings.GEMINI_API_KEY)
+            logger.info("[GenAI] İstemci Gemini API anahtarı ile başlatıldı.")
+            return _genai_client
+
+        # 2. Vertex AI (GCP Cloud Run / ADC)
         if not settings.USE_GCP_EMULATOR:
             try:
                 _genai_client = genai.Client(
@@ -44,13 +52,13 @@ def get_genai_client():
             except Exception as e_vertex:
                 logger.warning(f"[Vertex AI] Vertex modunda başlatma uyarısı: {e_vertex}. API Key fallback deneniyor...")
 
-        # 2. Yedek: Gemini API Key
+        # 3. Yedek: Gemini API Key
         if settings.GEMINI_API_KEY:
             _genai_client = genai.Client(api_key=settings.GEMINI_API_KEY)
             logger.info("[Vertex AI / GenAI] İstemci API Key ile başlatıldı.")
             return _genai_client
 
-        # 3. Son Çare: Parametresiz (Ortam değişkenlerinden ADC veya GEMINI_API_KEY okur)
+        # 4. Son Çare: Parametresiz (Ortam değişkenlerinden ADC veya GEMINI_API_KEY okur)
         _genai_client = genai.Client()
         return _genai_client
 
