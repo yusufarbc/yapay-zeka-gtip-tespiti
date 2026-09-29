@@ -45,7 +45,7 @@ flowchart LR
     E --> F[Karar + gerekçe<br/>+ kaynaklar + PDF]
 ```
 
-Tasarımın ana ilkesi: **model yalnız seçer, kodu sunucu üretir ve doğrular.** Model her seviyede önce gerekçesini, sonra kararını yazar (aksi halde gerekçe ile karar çelişebiliyordu). Ayrıntılı tasarım, veri katmanı ve her kararın ölçüm gerekçesi [mimari raporda](docs/MIMARI_VE_ALGORITMIK_RAPOR.md).
+Tasarımın ana ilkesi: **model yalnız seçer, kodu sunucu üretir ve doğrular.** Model her seviyede önce gerekçesini, sonra kararını yazar (aksi halde gerekçe ile karar çelişebiliyordu). Ayrıntılı tasarım, veri katmanı ve her kararın ölçüm gerekçesi [mimari raporda](docs/MIMARI.md).
 
 ## Ölçüm
 
@@ -122,7 +122,7 @@ Model olmadan (ör. CI'da) çalıştırmak için `USE_GCP_EMULATOR=true` verin; 
 ## Testler
 
 ```bash
-.venv/Scripts/python -m pytest tests        # 182 test, ağ gerektirmez
+.venv/Scripts/python -m pytest tests        # ağ ve model erişimi gerektirmez
 npm --prefix web run build
 ```
 
