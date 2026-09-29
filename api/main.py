@@ -499,7 +499,12 @@ async def respond_hitl(response_data: HITLResponse, request: Request, background
     start_time = time.time()
     try:
         user_session = get_current_user_session(request)
-        decision = workflow_engine.resume_analysis(
+        # Devam tam bir tarife taraması çalıştırır (onlarca saniye). Olay
+        # döngüsünde senkron çalıştırılınca sağlık kontrolü yanıt veremiyor ve
+        # Cloud Run liveness probe'u örneği öldürüyordu; analiz gibi iş
+        # parçacığında çalıştırılır.
+        decision = await asyncio.to_thread(
+            workflow_engine.resume_analysis,
             session_id=response_data.session_id,
             selected_option_id=response_data.selected_option_id,
             question_id=response_data.question_id,
