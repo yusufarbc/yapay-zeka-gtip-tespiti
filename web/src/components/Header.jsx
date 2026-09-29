@@ -1,5 +1,5 @@
 import React from 'react';
-import { Building2, Sun, Moon, ShieldCheck } from 'lucide-react';
+import { Building2, Sun, Moon } from 'lucide-react';
 
 export const Header = ({ theme, onToggleTheme, activeNav, onSelectNav }) => {
   return (
@@ -30,14 +30,9 @@ export const Header = ({ theme, onToggleTheme, activeNav, onSelectNav }) => {
             <Building2 size={22} color="#ffffff" />
           </div>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <h1 style={{ fontSize: '1.2rem', fontWeight: 800, letterSpacing: '-0.3px', color: 'var(--text-primary)' }}>
-                GTİP Karar Destek Portalı
-              </h1>
-              <span className="badge badge-success" style={{ fontSize: '0.7rem', padding: '2px 8px' }}>
-                <ShieldCheck size={12} /> Live
-              </span>
-            </div>
+            <h1 style={{ fontSize: '1.2rem', fontWeight: 800, letterSpacing: '-0.3px', color: 'var(--text-primary)' }}>
+              GTİP Karar Destek Portalı
+            </h1>
             <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '2px' }}>
               Türk Gümrük Tarife Cetveli (TGTC) & Emsal BTB Sistemi
             </p>

@@ -385,6 +385,78 @@ Kalibrasyonla AUC 0.729'dan **0.753**'e çıktı.
 `evidence_summary`, kararın hangi kanıta dayandığını düz Türkçe yazar ("Karar 2 BTB emsaliyle destekleniyor (en yüksek
 benzerlik %83)…"). Ham sinyaller kalibrasyon için `decision_signals` alanında dışarı verilir.
 
+### 3.A. Ürün dosyası, ürün profili ve fasıl kontrolleri (26–29 Eylül)
+
+Müşavir geri bildirimi: yalnız "cam balkon sistemi" yazıldığında sistem taşıyıcı alüminyum profilden hiç
+bahsetmeden cam faslına gidiyordu. Aşağıdaki adımlar, eksik girdide eşyanın ne olduğunu, neyden yapıldığını
+ve ne işe yaradığını sınıflandırmadan önce netleştirmek ve yanlış fasılda soru sormayı önlemek için eklendi.
+
+**Ürün dosyası (giriş).** Serbest metin kutusunun yerine `ProductDossier` alındı ([dossier.py](../api/schemas/dossier.py)):
+eşya adı (zorunlu), kullanım yeri ve işlevi, malzeme, ek açıklama ve API üzerinden en çok 3 ek (görsel/PDF).
+Dosya etiketli bir metne (`EŞYA ADI: …`, `MALZEME: …`) çevrilir. Emsal araması etiketli metinle değil, eşya
+adı + beyan veya teyit edilmiş malzeme ile yapılır; etiket kelimeleri emsal süzgecini bozuyordu.
+Eşyanın makine/cihaz olup olmadığı kullanıcıya sorulmaz, profil modeli çıkarır.
+
+**Ürün profili** ([product_profile.py](../api/modules/product_profile.py), `PRODUCT_PROFILE_ENABLED`):
+
+* Model (`PROFILE_LLM_MODEL = gemini-2.5-flash`, düşünme 0, 12 sn) yalnız olguları toplar: eşya türü, işlev,
+  kullanım yeri, makine/cihaz mı, parça parça malzemeler (ana parça / yardımcı parça). Tarife hükmü vermez.
+* Her bilginin kaynağı etiketlenir: `USER`, `DOCUMENT`, `IMAGE`, `INFERRED`, `BROKER`. Kaynak sunucuda
+  doğrulanır: kullanıcı metninde kelimelerinin en az %60'ı geçmeyen "beyan" varsayıma indirilir, açıkça
+  yazılmış "varsayım" beyana yükseltilir. Tek ortak kelime yetmez (canlıda "balkon" kelimesi yüzünden bir
+  tahmin beyan sayılmıştı).
+* Ad, işlev ve malzeme alanlarının hepsi doluysa ve ek yoksa model çağrılmaz; profil yalnız beyandan kurulur.
+* Eşyanın içinde satıldığı ambalaj parça sayılmaz (GYK 5(b)).
+* Seçim promptuna profilin kaynak etiketli hâli gider. Modelin yazdığı özet cümlesi ve yardımcı parçaların
+  tahmini malzemeleri gönderilmez: özet cümlesi bir girdide seçiciyi tekrar döngüsüne soktu. Tahmini işlev ve
+  kullanım yeri gönderilir; çıkarılınca fasıl doğruluğu 6.7 puan düştü.
+
+**Teyit sorusu (PROFILE seviyesi, HITL).** Kararı etkileyen bilgi yalnız varsayıma dayanıyorsa analiz
+başlamadan tek bir soru sorulur (`PROFILE_CONFIRMATION_ENABLED`):
+
+1. Eşyanın ne olduğu anlaşılmıyorsa (yalnız ticari kod/model) önce eşya türü sorulur.
+2. Makine/cihaz değilse, malzemesi varsayılan ilk ana parça sorulur. Sormadan hemen önce ayrı, kısa gerekçeli
+   bir kontrol yapılır (`REASONING_LLM_MODEL`, düşünme 512): "Parça alternatif malzemelerden yapılsaydı eşya
+   aynı 6 haneli alt pozisyona mı girerdi?" Girerse soru sorulmaz. Bu kontrol olmadan detaylı BTB
+   tanımlarının %13'ünde gereksiz soru soruluyordu (melodika, çocuk kitabı, mum); kontrolle %0.8.
+3. Bir analizde en çok bir malzeme sorusu sorulur. Cevap profile `BROKER` kaynağıyla yazılır ve dolaşım
+   başlar. "Bilinmiyor" seçilirse varsayımla devam edilir ve karar `unconfirmed_profile` gerekçesiyle müşavir
+   incelemesine işaretlenir.
+
+**Bölüm notları ve not bütçesi** ([tariff_notes.py](../api/modules/tariff_notes.py)). Resmî kaynakta bölüm
+notları bölümün ilk faslının notuna gömülüydü; ayrıştırılıp o bölümdeki her fasla uygulanır. Notlar
+`NOTES_BUDGET_CHARS = 9000` karakterlik bütçeye madde bazında sığdırılır: önce dışlama hükümleri, sonra
+tanımlar, sonra diğer maddeler. Dışlama maddesi hiçbir zaman tümden düşmez. Modelin serbest biçimli not
+atıfları ("XV_1f", "BÖLÜM XV NOTLARI 3") yalnız açıkça fasıl veya bölüm bildiriyorsa kaynağa bağlanır.
+
+**Fasıl dışlama kontrolü** (`CHAPTER_EXCLUSION_CHECK_ENABLED`, `check_chapter_exclusion`). CHAPTER seçimi 97
+seçenekle ve notsuz yapılır. Seçilen faslın ve bölümünün yalnız dışlama maddeleri ayrı bir çağrıyla okunur;
+ürün bir maddede açıkça dışlanıyorsa (alıntıyla doğrulanır) fasıl reddedilir ve gerekçesiyle yeniden seçilir.
+Tutucudur: şüphede ve hata durumunda fasıl korunur.
+
+**Fasıl uygunluk kontrolü** (`CHAPTER_FIT_CHECK_ENABLED`, `confirm_chapter_fit`). Model, kendi seçtiği ilk
+fasılda pozisyonlar arasında soru sormak üzereyken faslın tüm pozisyon metinleri gösterilip ürünün kendisinin
+(yalnız bir bileşeni veya hammaddesi değil) bunlardan birine girip girmediği sorulur. Girmiyorsa fasıl geri
+alınır ve soru gösterilmez. Canlıda "cam balkon" için Fasıl 70'te "float cam mı, temperli cam mı?" sorusu bu
+şekilde önlendi. Müşavirin seçtiği fasıl sorgulanmaz.
+
+**Fasılda "bilgi yetersiz".** CHAPTER seviyesinde `INSUFFICIENT_INFORMATION` yasaktır; model yine de verir ve
+seçenek önerirse iki daraltma denemesi (~5 sn/deneme) yerine ilk geçerli öneriyle devam edilir.
+
+**Süre bütçeleri ve dayanıklılık.**
+
+| Ayar | Değer | Not |
+| :--- | :--- | :--- |
+| `CLIENT_REQUEST_BUDGET_MS` | 65 sn | İstemcinin toplam süresi; arayüz 75 sn bekler. Profil adımı bu süreden yer. |
+| `ANALYSIS_BUDGET_MS` | 50 sn | Dolaşım bütçesi, en çok `CLIENT_REQUEST_BUDGET_MS − geçen süre`. HITL devamında yeniden kurulur. |
+| `SELECTION_MAX_OUTPUT_TOKENS` | 2048 (+ düşünme payı) | Sıcaklık 0'da model bir gerekçe cümlesini sonsuz tekrarladı ve çağrı her denemede süre sınırına kadar asılı kaldı. Tavan döngüyü birkaç saniyede keser; `MAX_TOKENS` ile kesilen yanıt sıcaklık 0.4 ile yeniden denenir. Promptta gerekçe maddesi en çok 2 cümle ve cümle tekrarı yok. |
+
+HITL devamı (`/hitl/respond`) tam bir tarife taraması çalıştırdığı için iş parçacığında yürütülür; olay
+döngüsünde senkron çalıştığında sağlık kontrolü yanıt veremiyor ve Cloud Run örneği kapatıyordu.
+
+**Ölçüm.** Bu adımlar eklendiğinde doğruluk düştü; tek tek kapatılarak sorumlu adım (ürün profili) bulundu
+ve düzeltildi. Aynı 120 numunede ayrıntılar: [BENCHMARK_SONUCLARI.md](BENCHMARK_SONUCLARI.md), tablo 3.
+
 ---
 
 <a id="bolum-4"></a>
@@ -785,6 +857,20 @@ dayanarak karar verilmemesi için değişiklikler önce/sonra ve gerekirse tekra
 * Son iki ölçüm arasındaki küçük düşüş model yanıtlarındaki dalgalanma aralığındadır. Tek bir ölçümle karar verilmemeli,
   değişiklikler önce/sonra ölçümüyle karşılaştırılmalıdır.
 
+### 10.8. Ürün profili ablasyonu ve model geçişi (2026-09-29)
+
+29 Eylül'den itibaren numuneler veritabanı satır sırasından bağımsız seçilir; önceki koşularda aynı tohum
+farklı numuneler seçebiliyordu (iki koşu 120 numunenin yalnız 60'ında örtüştü). Aynı 120 numunede:
+
+| Seçim modeli | Fasıl | Pozisyon | GTİP | Soru | p50 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `gemini-2.5-flash` | %55.8 | %49.2 | %34.2 | %14.2 | 16.6 sn |
+| `gemini-3.5-flash-lite` (seçilen) | %65.0 | %56.7 | %40.0 | %10.0 | 9.1 sn |
+| `gemini-3.5-flash` | %70.8 | %64.2 | %52.5 | %5.0 | 16.2 sn |
+
+3.5-flash en doğrusu, ancak token maliyeti flash-lite'ın yaklaşık 5 katı olduğu için flash-lite seçildi.
+Profil ablasyonu ve tüm koşular: [BENCHMARK_SONUCLARI.md](BENCHMARK_SONUCLARI.md).
+
 ---
 
 <a id="bolum-11"></a>
@@ -793,14 +879,15 @@ dayanarak karar verilmemesi için değişiklikler önce/sonra ve gerekirse tekra
 
 | Konu | Mevcut durum | Etki / öneri |
 | :--- | :--- | :--- |
-| **Görsel girdisi** | Görsel GCS'e yüklenir ve `image_uri` saklanır. Özellik çıkarımı yalnız metni modele gönderir; görsel yalnız kısa yolu devre dışı bırakır. | Sistem fiilen multimodal değildir. Görsel ya modele verilmeli ya da arayüzde bu beklenti kaldırılmalı. |
+| **Görsel/PDF girdisi** | API `attachment_uris` ile en çok 3 ek kabul eder ve ürün profili bunları modele verir; arayüzden dosya ekleme kaldırıldı. | Ek kullanan akış arayüzde yok; yeniden açılırsa ölçülmeli. |
 | **Ticaret tedbirleri** | `get_customs_trade_measures` faslı esas alan sabit bir tablodur (KDV %20, belirli fasıllarda İGV %20, TAREKS, gözetim). | Resmî İthalat Rejimi verisine dayanmaz. Hukuki karar için kullanılmamalı; kaynak bağlanana kadar arayüzde "gösterge" olarak etiketlenmeli. |
 | **Kullanılmayan altyapı** | Embedding sütunları, HNSW indeksleri, `hybrid_search_headings_and_gtip`/RRF, `USE_CONTEXT_CACHE`, `gtip_rules`, `generation_config` karar yolunda yok. | Bakım yükü ve yanıltıcı dokümantasyon riski var. Kaldırılmalı ya da ölçülerek yeniden devreye alınmalı. |
 | **Arayüz güven bantları** | `GTIPResultCard` %80 ve üstünü yeşil, %60–79'u sarı, %60 altını kırmızı gösterir. Sunucu eşiği 0.50'dir ve emsalsiz tipik skor yaklaşık 0.46'dır. | Bantlar kalibre skorla uyumlu değil. Arayüz `legal_validation_status` ve `evidence_summary` değerlerini esas almalı. |
 | **PDF'in veri kaynağı** | Oturum durumundan yeniden kurulan kararda `legal_justification` ve `applied_gir_rules` saklanmadığı için PDF'te boş kalabilir. Durum yoksa sabit metin kullanılır. | Kararın tamamı oturumda saklanmalı. |
 | **Denetim kaydı kapsamı** | `audit_logs` yalnız `COMPLETED` kararları ve 50 karakterlik ürün adını tutar. | Tam iz `classification_run` tablosundadır. Denetim raporları o tablodan beslenmeli. |
 | **SSE akışı** | Yalnız başlangıç ve sonuç olayı gönderilir; seviye bazında ara ilerleme yok. | Canlı ilerleme için seviye olayları eklenebilir. |
-| **Gecikme** | p95 35.5 sn. Fasıl geri alması ek bir CHAPTER çağrısı (~11k token) ekler. | `gtip_slow_analysis` ve `gtip_chapter_backtrack` metrikleriyle izlenmeli. |
+| **Gecikme** | `gemini-3.5-flash-lite` ile ortanca 9.1 sn, p95 16.9 sn. Profil, dışlama ve uygunluk kontrolleri ile fasıl geri alması ek çağrılar ekler. | Soru öncesi kontroller yalnız gerektiğinde çalışır; bütçeler 3.A'daki tabloda. |
+| **Kısa girdi** | Benchmark detaylı BTB tanımlarından oluşuyor. Yalnız eşya adı girildiğinde bazı ürünlerde (ör. "cam balkon sistemi") flash-lite yanlış fasla gidebiliyor; malzeme girildiğinde doğru fasla gidiyor. | Kısa, eksik girdilerden oluşan ayrı bir değerlendirme seti gerekir. |
 | **Eski log metriği** | `gtip_intl_search_failures` kurulum betiğinden çıkarıldı; ancak GCP'de daha önce oluşturulmuşsa orada durur. | Cloud Logging'den elle silinebilir. |
 | **Rate limit** | Süreç içi bellekte tutulur. Cloud Run'da örnek başına ayrı sayılır. | Çok örnekli dağıtımda sınır gevşer. Gerekirse paylaşılan bir depo (Redis/Memorystore) kullanılmalı. |
 
