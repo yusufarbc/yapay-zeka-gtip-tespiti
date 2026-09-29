@@ -69,3 +69,6 @@ dist/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Benchmark çıktıları (scripts/evaluate_gtip_benchmark.py yazar; repoda tutulmaz)
+benchmark_results/
