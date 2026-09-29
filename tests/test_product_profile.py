@@ -313,3 +313,10 @@ def test_one_shared_word_does_not_make_a_guess_a_declaration(monkeypatch):
     assert profile.function.source == "INFERRED"
     assert profile.use_place.source == "INFERRED"
     assert profile.product_type.source == "USER"
+
+
+def test_old_clients_sending_is_machine_are_not_rejected():
+    """is_machine artık kullanıcıdan alınmıyor (profil modeli çıkarıyor); eski istemci bozulmamalı."""
+    dossier = ProductDossier(product_name="güç filtresi modülü", is_machine=True)
+    assert not hasattr(dossier, "is_machine")
+    assert "NİTELİK" not in dossier.to_raw_text()

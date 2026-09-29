@@ -228,12 +228,10 @@ def _deterministic_profile(user_text: str, dossier: Optional[ProductDossier]) ->
     from api.modules.feature_extractor import feature_extractor
 
     if dossier:
-        material_text = None if dossier.is_machine else dossier.material
-        materials = [MaterialFact(value=material_text, source="USER")] if material_text else []
+        materials = [MaterialFact(value=dossier.material, source="USER")] if dossier.material else []
         return ProductProfile(
             product_type=ProfileFact(value=dossier.product_name, source="USER"),
             function=ProfileFact(value=dossier.use_and_function, source="USER") if dossier.use_and_function else None,
-            is_machine=dossier.is_machine,
             materials=materials,
         )
 
@@ -253,8 +251,9 @@ def build_profile(
 ) -> ProductProfile:
     notes = list(pool.notes) if pool else []
 
+    # Makine/cihaz olup olmadığını kullanıcı beyan etmez; profil modeli çıkarır.
     complete_declaration = bool(
-        dossier and dossier.use_and_function and (dossier.is_machine or dossier.material)
+        dossier and dossier.use_and_function and dossier.material
         and not dossier.has_evidence_attachments()
     )
     if complete_declaration or settings.USE_GCP_EMULATOR or settings.ENVIRONMENT == "testing":
@@ -271,13 +270,11 @@ def build_profile(
 
     # Formdaki malzeme alanı açık beyandır: modelin tahminlerinin önüne geçer ve
     # kullanıcıya ayrıca malzeme sorulmaz.
-    if dossier and dossier.material and not dossier.is_machine:
+    if dossier and dossier.material:
         declared = MaterialFact(value=dossier.material, source="USER")
         profile.materials = [declared] + [
             m for m in profile.materials if m.source != "INFERRED" and not _appears_in(m.value, dossier.material)
         ]
-    if dossier and dossier.is_machine:
-        profile.is_machine = True
     profile.essential_material = _primary_material(profile)
     profile.evidence_notes = notes
     return profile

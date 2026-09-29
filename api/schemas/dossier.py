@@ -31,9 +31,8 @@ class ProductDossier(BaseModel):
     use_and_function: Optional[str] = Field(default=None, max_length=1000, description="Kullanım yeri ve işlevi")
     material: Optional[str] = Field(
         default=None, max_length=500,
-        description="Makine/cihaz değilse mamul edildiği madde (plastik, çelik, kauçuk vb.)",
+        description="Mamul edildiği madde (plastik, çelik, kauçuk vb.)",
     )
-    is_machine: bool = Field(default=False, description="Makine veya cihaz mı?")
     extra_description: Optional[str] = Field(default=None, max_length=5000, description="Ek açıklama")
     attachment_uris: List[str] = Field(
         default_factory=list, max_length=MAX_ATTACHMENTS,
@@ -53,9 +52,7 @@ class ProductDossier(BaseModel):
         lines = [f"EŞYA ADI: {self.product_name}"]
         if self.use_and_function:
             lines.append(f"KULLANIM YERİ VE İŞLEVİ: {self.use_and_function}")
-        if self.is_machine:
-            lines.append("NİTELİK: Makine veya cihaz")
-        elif self.material:
+        if self.material:
             lines.append(f"MALZEME: {self.material}")
         if self.extra_description:
             lines.append(f"EK AÇIKLAMA: {self.extra_description}")

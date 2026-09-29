@@ -26,7 +26,6 @@ const inputStyle = {
 export const ProductInputForm = ({ onStartAnalysis, isLoading }) => {
   const [productName, setProductName] = useState('');
   const [useAndFunction, setUseAndFunction] = useState('');
-  const [isMachine, setIsMachine] = useState(false);
   const [material, setMaterial] = useState('');
   const [extra, setExtra] = useState('');
 
@@ -38,8 +37,7 @@ export const ProductInputForm = ({ onStartAnalysis, isLoading }) => {
     onStartAnalysis({
       product_name: productName.trim(),
       use_and_function: useAndFunction.trim() || null,
-      is_machine: isMachine,
-      material: isMachine ? null : (material.trim() || null),
+      material: material.trim() || null,
       extra_description: extra.trim() || null,
     });
   };
@@ -66,19 +64,11 @@ export const ProductInputForm = ({ onStartAnalysis, isLoading }) => {
         </div>
 
         <div style={{ marginBottom: '14px' }}>
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontSize: '0.86rem', color: 'var(--text-primary)', cursor: 'pointer', marginBottom: '10px' }}>
-            <input type="checkbox" checked={isMachine} onChange={(e) => setIsMachine(e.target.checked)} />
-            <span>Makine veya cihaz (elektrikli/elektronik alet ve parçaları dahil)</span>
+          <label style={labelStyle} htmlFor="material">
+            Yapıldığı malzeme<span style={hintStyle}>plastik, çelik, kauçuk vb.; parçalı ise hepsini yazın</span>
           </label>
-          {!isMachine && (
-            <div>
-              <label style={labelStyle} htmlFor="material">
-                Yapıldığı malzeme<span style={hintStyle}>plastik, çelik, kauçuk vb.; parçalı ise hepsini yazın</span>
-              </label>
-              <input id="material" maxLength={500} value={material} onChange={(e) => setMaterial(e.target.value)}
-                placeholder="ör. Paslanmaz çelik gövde, cam kapak" style={inputStyle} />
-            </div>
-          )}
+          <input id="material" maxLength={500} value={material} onChange={(e) => setMaterial(e.target.value)}
+            placeholder="ör. Paslanmaz çelik gövde, cam kapak" style={inputStyle} />
         </div>
 
         <div style={{ marginBottom: '16px' }}>
