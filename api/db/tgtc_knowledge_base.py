@@ -869,13 +869,34 @@ def get_official_statute_records(
         logger.warning("[Statute Records] DB alt pozisyon/yaprak sorgu uyarısı: %s", exc)
 
     # 3. İlgili Fasıl ve Dışlama Notları (Veritabanı Orijinal Not Metinleri)
-    rules_notes = load_tgtc_rules_and_notes()
-    all_fasil_notlari = rules_notes.get("fasil_notlari", {})
+    from api.modules import tariff_notes
+
     chapters_to_cite = list(dict.fromkeys(list(cited_chapters or []) + ([clean_code[:2]] if clean_code else [])))
+
+    # Bölüm notları kaynakta yalnız bölümün ilk faslında gömülüydü; ayrı kaynak
+    # olarak gösterilir ve bölümdeki her fasıl için geçerlidir.
+    cited_sections = []
+    for c in chapters_to_cite:
+        roman = tariff_notes.section_of(str(c))
+        if roman and roman not in cited_sections and tariff_notes.section_notes(roman):
+            cited_sections.append(roman)
+    for roman in cited_sections:
+        records.append(
+            LegalSource(
+                source_type="BOLUM_NOTU",
+                reference_no=f"Bölüm {roman} Notları",
+                title=f"Bölüm {roman} Resmi Notları",
+                excerpt=tariff_notes.condense(tariff_notes.section_notes(roman) or "", 1800),
+                legal_role="NORMATIVE",
+                authority_level=1,
+                effective_from="2026-01-01",
+                is_binding=True,
+            )
+        )
 
     for c in chapters_to_cite:
         c_str = str(c).zfill(2)
-        raw_note = all_fasil_notlari.get(c_str, "")
+        raw_note = tariff_notes.chapter_notes(c_str) if c_str.isdigit() else ""
         if raw_note:
             c_title = OFFICIAL_CHAPTER_TITLES.get(c_str, f"Fasıl {c_str}")
             is_exclusion = "dahil değildir" in raw_note.lower() or (clean_code and c_str != clean_code[:2])
@@ -887,7 +908,7 @@ def get_official_statute_records(
                     source_type="FASIL_NOTU",
                     reference_no=ref_prefix,
                     title=title_prefix,
-                    excerpt=raw_note[:1800].strip(),
+                    excerpt=tariff_notes.condense(raw_note, 1800),
                     legal_role="INTERPRETIVE" if is_exclusion else "NORMATIVE",
                     authority_level=1,
                     effective_from="2026-01-01",

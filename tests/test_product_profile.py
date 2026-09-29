@@ -117,7 +117,7 @@ def test_complete_declaration_skips_the_model(monkeypatch):
 def test_declared_material_always_wins_over_the_model(monkeypatch):
     """Formdaki malzeme alanı açık beyandır; modelin tahminleri atılır, ayrıca sorulmaz."""
     _model_profile(monkeypatch, CAM_BALKON)
-    dossier = ProductDossier(product_name="cam balkon sistemi", material="PVC", product_url="https://ornek.com")
+    dossier = ProductDossier(product_name="cam balkon sistemi", material="PVC", attachment_uris=["gs://b/uploads/a/foto.jpg"])
     profile = pp.build_profile(dossier.to_raw_text(), dossier)
     assert profile.materials[0].value == "PVC" and profile.materials[0].source == "USER"
     assert all(m.source != "INFERRED" for m in profile.materials)

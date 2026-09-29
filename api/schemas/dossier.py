@@ -9,18 +9,16 @@ kararı etkiliyorsa kullanıcıya teyit ettirilir.
 
 from __future__ import annotations
 
-import re
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-FactSource = Literal["USER", "DOCUMENT", "IMAGE", "URL", "INFERRED", "BROKER"]
+FactSource = Literal["USER", "DOCUMENT", "IMAGE", "INFERRED", "BROKER"]
 
 SOURCE_LABELS_TR = {
     "USER": "kullanıcı beyanı",
     "DOCUMENT": "yüklenen doküman",
     "IMAGE": "ürün fotoğrafı",
-    "URL": "ürün sayfası",
     "INFERRED": "model varsayımı, teyit edilmedi",
     "BROKER": "müşavir teyidi",
 }
@@ -41,7 +39,6 @@ class ProductDossier(BaseModel):
         default_factory=list, max_length=MAX_ATTACHMENTS,
         description="Fotoğraf, katalog, broşür, teknik resim (gs://…/uploads/)",
     )
-    product_url: Optional[str] = Field(default=None, max_length=1000, description="Ürünü gösteren web sayfası")
 
     @field_validator("product_name", "use_and_function", "material", "extra_description", mode="before")
     @classmethod
@@ -50,16 +47,6 @@ class ProductDossier(BaseModel):
             return None
         text = " ".join(str(value).split())
         return text or None
-
-    @field_validator("product_url")
-    @classmethod
-    def validate_url(cls, value: Optional[str]) -> Optional[str]:
-        if not value:
-            return None
-        value = value.strip()
-        if not re.match(r"^https?://[^\s/]+", value, flags=re.IGNORECASE):
-            raise ValueError("Ürün sayfası bağlantısı http:// veya https:// ile başlamalıdır.")
-        return value
 
     def to_raw_text(self) -> str:
         """Denetim kaydı, emsal araması ve geriye uyumluluk için etiketli metin."""
@@ -75,7 +62,7 @@ class ProductDossier(BaseModel):
         return "\n".join(lines)
 
     def has_evidence_attachments(self) -> bool:
-        return bool(self.attachment_uris or self.product_url)
+        return bool(self.attachment_uris)
 
 
 class ProfileFact(BaseModel):

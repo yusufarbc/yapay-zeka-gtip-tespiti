@@ -88,6 +88,10 @@ class LLMFactVerifier:
         """CHAPTER yönlendirmesi düşünme payı ister; alt seviyelerde ilk deneme 0'dır."""
         if level == "CHAPTER":
             return max(settings.THINKING_BUDGET_CHAPTER, settings.THINKING_BUDGET_EXCLUSION if narrowing else 0)
+        if level == "EXCLUSION":
+            # Bölüm XV'in 20+ maddelik dışlama listesinde "(k) 94. fasıla giren
+            # eşya (mobilyalar…)" hükmü bütçe 0 ile atlanıyordu (metal masa -> 73).
+            return settings.THINKING_BUDGET_EXCLUSION
         return settings.THINKING_BUDGET_EXCLUSION if narrowing else 0
 
     @staticmethod
@@ -176,6 +180,7 @@ class LLMFactVerifier:
         narrowing: bool = False,
         rejected_codes: Optional[List[str]] = None,
         deadline: Optional[float] = None,
+        rejection_reason: Optional[str] = None,
     ) -> CandidateSelection:
         """Select one server-owned node without accepting a model-written code."""
         bounded_nodes = nodes[:250]
@@ -226,7 +231,7 @@ class LLMFactVerifier:
             "İLGİLİ FASIL NOTLARI (RESMÎ METİN — GİR 1 uyarınca pozisyon metinleriyle "
             "birlikte BAĞLAYICIDIR). Özellikle 'bu fasıla dahil değildir' biçimindeki "
             "dışlama hükümlerine uy:\n"
-            f"{str(chapter_notes)[:6000]}\n\n"
+            f"{str(chapter_notes)[:settings.NOTES_BUDGET_CHARS + 600]}\n\n"
         ) if chapter_notes else ""
 
         # Daraltma denemesi: NO_MATCH bir çıkmazdır. Model tam eşleşme bulamasa
@@ -254,12 +259,15 @@ class LLMFactVerifier:
             if re.sub(r"\D", "", str(node.get("gtip_code") or "")) in set(rejected_codes or [])
         ] or list(rejected_codes or [])
         rejection_block = (
-            "ÖNCEKİ DENEME BAŞARISIZ: {codes} seçeneğini seçtin, fakat o dalın "
-            "altında ürüne uyan hiçbir alt dal bulunamadı.{nl}"
+            "ÖNCEKİ DENEME BAŞARISIZ: {codes} seçeneğini seçtin, fakat {why}.{nl}"
             "- Bu dal(lar)ı TEKRAR SEÇME.{nl}"
             "- Ürünün esas niteliğini yeniden değerlendir ve FARKLI bir dal seç.{nl}"
             "- Komşu numaraya kaymak yerine ürünün işlevine göre karar ver.{nl}{nl}"
-        ).format(codes=", ".join(rejected_labels), nl=chr(10)) if rejected_codes else ""
+        ).format(
+            codes=", ".join(rejected_labels),
+            why=rejection_reason or "o dalın altında ürüne uyan hiçbir alt dal bulunamadı",
+            nl=chr(10),
+        ) if rejected_codes else ""
 
         level_rule = (
             "- CHAPTER bir yönlendirme seviyesidir: ürünün esas niteliği, adı ve işlevine göre en uygun faslı mutlaka "
@@ -431,6 +439,7 @@ class LLMFactVerifier:
                             chapter_notes=chapter_notes,
                             narrowing=True,
                             rejected_codes=rejected_codes,
+                            rejection_reason=rejection_reason,
                             deadline=deadline,
                         )
                     return CandidateSelection(
@@ -475,6 +484,7 @@ class LLMFactVerifier:
                     # dalları istemek, çıkmazı sorulabilir bir soruya çevirir.
                     narrowing=True,
                     rejected_codes=rejected_codes,
+                    rejection_reason=rejection_reason,
                     deadline=deadline,
                 )
             return selection
@@ -484,6 +494,66 @@ class LLMFactVerifier:
                 status=CandidateSelectionStatus.NO_MATCH,
                 reasoning_points=["Model yanıtı kapalı seçenek sözleşmesine bağlanamadı."],
             )
+
+
+    def check_chapter_exclusion(
+        self,
+        product_text: str,
+        chapter: str,
+        chapter_title: str,
+        exclusion_text: str,
+        deadline: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Seçilen faslın ve bölümünün dışlama hükümleri ürünü açıkça dışlıyor mu?
+
+        Fasıl seçimi 97 seçenekle ve notsuz yapılır (notlar prompta sığmaz).
+        Yanlış fasıl eskiden ancak pozisyon seviyesinde anlaşılıyor ve bir tur
+        kaybediliyordu. Bu kontrol yalnız seçilen faslın dışlama maddelerini
+        okur (birkaç bin karakter). Tutucudur: yalnız hüküm metninde AÇIKÇA
+        yazan dışlama sayılır; şüphede dışlanmaz. Hata olursa dışlanmaz (mevcut
+        davranış korunur).
+        """
+        verdict = {"excluded": False, "clause": None, "redirect": None}
+        if not exclusion_text.strip() or settings.USE_GCP_EMULATOR or settings.ENVIRONMENT == "testing":
+            return verdict
+        if deadline is not None and time.monotonic() >= deadline:
+            return verdict
+        prompt = (
+            "Sen Türk Gümrük Tarife Cetveli uzmanısın. Bir ürün için Fasıl "
+            f"{chapter} ({chapter_title}) seçildi. Aşağıda bu faslın ve bölümünün RESMÎ DIŞLAMA "
+            "HÜKÜMLERİ var.\n"
+            "Görev: Ürün bu hükümlerden biriyle bu fasıldan AÇIKÇA dışlanıyor mu?\n"
+            "- Yalnız hüküm metninde açıkça yazan dışlamaya göre karar ver; yorumla genişletme.\n"
+            "- Hüküm ürünün türünü, malzemesini veya kullanımını açıkça kapsamıyorsa excluded=false.\n"
+            "- Şüphedeysen excluded=false.\n\n"
+            f"DIŞLAMA HÜKÜMLERİ:\n{exclusion_text}\n\n"
+            f"<product_data>{product_text}</product_data>\n"
+            "Yalnız şu JSON'u döndür (önce gerekçe): "
+            "{\"reason\":\"kısa Türkçe gerekçe\",\"clause\":\"dışlayan hükmün birebir alıntısı veya null\","
+            "\"redirect\":\"hükmün yönlendirdiği fasıl/pozisyon (ör. 64, 94.01) veya null\","
+            "\"excluded\":false}"
+        )
+        try:
+            from api.modules.vertex_client import get_genai_client
+
+            response = get_genai_client().models.generate_content(
+                model=settings.REASONING_LLM_MODEL,
+                contents=prompt,
+                config=self._config(False, min(8000, self._call_timeout_ms(deadline)), "EXCLUSION"),
+            )
+            match = re.search(r"\{.*\}", response.text or "", re.DOTALL)
+            data = json.loads(match.group(0) if match else (response.text or "{}"))
+            clause = str(data.get("clause") or "").strip()
+            # Alıntı hüküm metninde gerçekten yoksa dışlama kabul edilmez.
+            quoted = bool(clause) and re.sub(r"\s+", " ", clause)[:60].lower() in re.sub(r"\s+", " ", exclusion_text).lower()
+            verdict.update({
+                "excluded": bool(data.get("excluded")) and quoted,
+                "clause": clause or None,
+                "redirect": (str(data.get("redirect")).strip() or None) if data.get("redirect") else None,
+            })
+        except Exception as exc:
+            logger.warning("Fasıl dışlama kontrolü yapılamadı (fasıl=%s): %s", chapter, exc)
+        return verdict
 
 
 llm_verifier = LLMFactVerifier()

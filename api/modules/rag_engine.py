@@ -695,18 +695,10 @@ class RAGEngine:
         chapters = sorted({_digits(node.get("gtip_code"))[:2] for node in nodes} - {""})
         if not chapters or len(chapters) > 3:
             return None
-        from api.db.tgtc_knowledge_base import load_tgtc_rules_and_notes
-        all_notes = load_tgtc_rules_and_notes().get("fasil_notlari", {})
-        if len(chapters) == 1:
-            note = str(all_notes.get(chapters[0]) or "").strip()
-            return note or None
-        share = 6000 // len(chapters)
-        parts = [
-            f"FASIL {chapter} NOTLARI:\n{str(all_notes.get(chapter) or '').strip()[:share]}"
-            for chapter in chapters
-            if str(all_notes.get(chapter) or "").strip()
-        ]
-        return "\n\n".join(parts) or None
+        # Bölüm notları da verilir (kaynakta yalnız bölümün ilk faslında
+        # duruyordu); uzun notlar madde bazında kısaltılır.
+        from api.modules import tariff_notes
+        return tariff_notes.notes_for_prompt(chapters, settings.NOTES_BUDGET_CHARS)
 
     @classmethod
     def _select_node(
@@ -723,6 +715,7 @@ class RAGEngine:
         recover_no_match: bool = True,
         always_ask_model: bool = False,
         no_match_retries: Optional[int] = None,
+        rejection_reason: Optional[str] = None,
     ) -> Tuple[Optional[Dict[str, Any]], Optional[DiscriminatorQuestion], List[str], List[str]]:
         """`recover_no_match=False`: NO_MATCH soruya çevrilmez, çağıran geri döner.
         `always_ask_model=True`: tek seçenek de modele onaylatılır. Emsal
@@ -752,6 +745,7 @@ class RAGEngine:
             rejected_codes=list(rejected_codes or []) or None,
             deadline=deadline,
             **({"_no_match_retries": no_match_retries} if no_match_retries is not None else {}),
+            **({"rejection_reason": rejection_reason} if rejection_reason else {}),
         )
         applied_gir_keys = list(getattr(selection, "applied_gir_keys", []) or [])
         cited_chapter_notes = list(getattr(selection, "cited_chapter_notes", []) or [])
@@ -850,6 +844,17 @@ class RAGEngine:
             consulted_sources=["TGTC_2026", "GIR_1_6"],
         )
 
+    @staticmethod
+    def _chapter_exclusion(product_text: str, chapter: str, deadline: Optional[float]) -> Dict[str, Any]:
+        """Seçilen faslın ve bölümünün dışlama hükümleriyle kısa kontrol."""
+        from api.modules import tariff_notes
+
+        clauses = tariff_notes.exclusion_clauses(chapter)
+        if not clauses:
+            return {"excluded": False, "clause": None, "redirect": None}
+        title = load_tgtc_chapters().get(chapter, f"Fasıl {chapter}")
+        return llm_verifier.check_chapter_exclusion(product_text, chapter, title, clauses, deadline)
+
     def search_candidates_hierarchical(
         self,
         session_id: str,
@@ -931,6 +936,7 @@ class RAGEngine:
         # bir kez yeniden seçilir.
         rejected_chapters: List[str] = []
         max_chapter_attempts = 2
+        exclusion_checked = False
 
         for attempt in range(max_chapter_attempts):
             if not locked_chapter:
@@ -948,6 +954,38 @@ class RAGEngine:
                 if not node:
                     return HierarchicalSearchResult(traversal_state=traversal)
                 locked_chapter = _digits(node["gtip_code"]).zfill(2)
+
+                # Fasıl notsuz seçildi; dışlama hükümleri ürünü AÇIKÇA dışlıyorsa
+                # pozisyon seviyesine inmeden geri al. Her analizde en çok bir kez.
+                if settings.CHAPTER_EXCLUSION_CHECK_ENABLED and not exclusion_checked:
+                    exclusion_checked = True
+                    verdict = self._chapter_exclusion(product_text, locked_chapter, deadline)
+                    if verdict.get("excluded"):
+                        excluded = locked_chapter
+                        clause = str(verdict.get("clause") or "")[:300]
+                        logger.info("Fasıl %s notla dışlandı; yeniden seçiliyor: %s", excluded, clause)
+                        rejected_chapters.append(excluded)
+                        traversal["rejected_chapters"] = list(rejected_chapters)
+                        traversal["chapter_excluded_by_note"] = {"chapter": excluded, "clause": clause}
+                        node, question, g_keys, c_notes = self._select_node(
+                            session_id, product_text, "CHAPTER", self._chapter_nodes(),
+                            traversal=traversal, precedents=precedents,
+                            rejected_codes=rejected_chapters, deadline=deadline,
+                            rejection_reason=f"Fasıl {excluded} notu bu ürünü dışlıyor: \"{clause}\"",
+                        )
+                        _merge_rules(g_keys, c_notes + [excluded])
+                        if question:
+                            traversal.update({"pending_level": "CHAPTER", "branches": self._question_branches(question)})
+                            return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
+                        if not node:
+                            return HierarchicalSearchResult(traversal_state=traversal)
+                        locked_chapter = _digits(node["gtip_code"]).zfill(2)
+                        # Gerekçe izinde neden fasıl değiştiği görünsün.
+                        trail = traversal.get("selection_trail") or []
+                        if trail and trail[-1].get("level") == "CHAPTER":
+                            trail[-1].setdefault("reasoning_points", []).insert(
+                                0, f"İlk seçilen Fasıl {excluded}, resmî notuyla dışlandı: \"{clause}\""
+                            )
             traversal.update({"locked_chapter": locked_chapter, "retained_chapters": [locked_chapter]})
 
             if locked_heading:

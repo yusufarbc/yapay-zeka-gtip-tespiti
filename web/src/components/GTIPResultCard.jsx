@@ -23,7 +23,6 @@ const FACT_SOURCES = {
   USER: { text: 'Beyan', color: 'var(--status-emerald)' },
   DOCUMENT: { text: 'Doküman', color: 'var(--accent-blue)' },
   IMAGE: { text: 'Fotoğraf', color: 'var(--accent-blue)' },
-  URL: { text: 'Ürün sayfası', color: 'var(--accent-blue)' },
   INFERRED: { text: 'Varsayım', color: 'var(--status-amber)' },
   BROKER: { text: 'Müşavir teyidi', color: 'var(--status-emerald)' },
 };
@@ -104,7 +103,7 @@ export const GTIPResultCard = ({ decision }) => {
     .join(' > ');
   const steps = decision.selection_rationale || [];
   const sources = decision.legal_sources || [];
-  const rules = sources.filter((s) => s.source_type === 'GIR' || s.source_type === 'FASIL_NOTU');
+  const rules = sources.filter((s) => ['GIR', 'BOLUM_NOTU', 'FASIL_NOTU'].includes(s.source_type));
   const precedents = [
     ...(decision.precedent_btbs || []).map((p) => ({ ref: p.btb_no, code: p.gtip_code, text: p.product_description, sim: p.similarity_score, kind: 'BTB' })),
     ...(decision.precedent_ebtis || []).map((p) => ({ ref: p.reference_no, code: p.cn_code, text: p.product_description, sim: p.similarity_score, kind: `EBTI ${p.country}` })),

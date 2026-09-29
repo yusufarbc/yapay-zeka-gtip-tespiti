@@ -72,21 +72,18 @@ def _verify_sources(profile: ProductProfile, user_text: str, pool: Optional[Evid
 
     - Model tahmini "kullanıcı beyanı" diye işaretlerse ekranda ve promptta beyan
       gibi görünür, teyit sorusu da sorulmaz: kullanıcı metninde geçmeyen USER
-      bilgisi varsayıma (INFERRED) indirilir. Ürün sayfası için aynısı yapılır;
-      doküman/fotoğraf kaynağı ancak gerçekten ek varsa kabul edilir.
+      bilgisi varsayıma (INFERRED) indirilir. Doküman/fotoğraf kaynağı ancak
+      gerçekten ek varsa kabul edilir.
     - Tersine, kullanıcının açıkça yazdığı bilgi varsayım diye işaretlenmişse
       beyana yükseltilir; aksi halde kullanıcıya kendi yazdığı sorulurdu
       ("alüminyum doğrama cam balkon" -> "çerçeve hangi malzemeden?").
     """
-    url_text = (pool.url_text if pool else None) or ""
     has_attachments = bool(pool and pool.attachments)
 
     def check(fact: Optional[ProfileFact]) -> None:
         if fact is None:
             return
         if fact.source == "USER" and not _appears_in(fact.value, user_text):
-            fact.source = "INFERRED"
-        elif fact.source == "URL" and not _appears_in(fact.value, url_text):
             fact.source = "INFERRED"
         elif fact.source in {"DOCUMENT", "IMAGE"} and not has_attachments:
             fact.source = "INFERRED"
@@ -110,9 +107,8 @@ KAYNAK KURALI — her bilgi için "source" alanını dürüstçe doldur:
 - USER: kullanıcı beyanında açıkça yazıyor.
 - DOCUMENT: yüklenen katalog, broşür veya teknik resimde görülüyor.
 - IMAGE: ürün fotoğrafında görülüyor.
-- URL: ürün sayfası metninde yazıyor.
 - INFERRED: hiçbir delilde yok; bu tür ürünlerde tipik olduğu için tahmin ediyorsun.
-Tahmin yapmalısın, ama tahmini ASLA USER/DOCUMENT/IMAGE/URL diye işaretleme.
+Tahmin yapmalısın, ama tahmini ASLA USER/DOCUMENT/IMAGE diye işaretleme.
 
 MAKİNE/CİHAZ: Makine, mekanik veya elektrikli cihaz, elektronik alet, bunların modülleri ve aksam-parçaları
 için is_machine=true. Bu eşyalarda malzeme sınıflandırmayı çoğu zaman belirlemez; materials boş kalabilir.
@@ -141,8 +137,6 @@ Yalnız şu JSON'u döndür:
 
 def _evidence_block(user_text: str, pool: Optional[EvidencePool]) -> str:
     parts = [f"<kullanici_beyani>\n{user_text}\n</kullanici_beyani>"]
-    if pool and pool.url_text:
-        parts.append(f"<urun_sayfasi>\n{pool.url_text}\n</urun_sayfasi>")
     if pool and pool.attachments:
         kinds = ", ".join("doküman (PDF)" if mime == "application/pdf" else "görsel" for _, mime in pool.attachments)
         parts.append(f"Ekli dosyalar: {kinds}. Görseller ürün fotoğrafı (IMAGE) veya teknik resim/katalog (DOCUMENT) olabilir.")
@@ -182,7 +176,7 @@ def _fact(raw: Any, cls=ProfileFact) -> Optional[ProfileFact]:
     if not isinstance(raw, dict) or not str(raw.get("value") or "").strip():
         return None
     source = str(raw.get("source") or "INFERRED").upper()
-    if source not in {"USER", "DOCUMENT", "IMAGE", "URL", "INFERRED"}:
+    if source not in {"USER", "DOCUMENT", "IMAGE", "INFERRED"}:
         source = "INFERRED"
     data: Dict[str, Any] = {
         "value": str(raw["value"]).strip()[:500],

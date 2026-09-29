@@ -17,35 +17,11 @@ export const getAPIErrorMessage = (error, fallback) => {
   return error.message || fallback;
 };
 
-export const getUploadUrl = async (filename) => {
-  const response = await axios.get(`${API_BASE_URL}/generate-upload-url`, {
-    params: { filename }
-  });
-  return response.data; // { upload_url, destination }
-};
-
-export const uploadFileDirectlyToGCS = async (file, uploadUrl) => {
-  await axios.put(uploadUrl, file, {
-    headers: {
-      'Content-Type': file.type || 'application/octet-stream'
-    }
-  });
-};
-
-// Ürün dosyası: form alanları + GCS'e doğrudan yüklenen ekler. Emülatörde
-// yükleme adresi sahtedir; ekler atlanır ve analiz yalnız alanlarla yapılır.
-export const analyzeProduct = async (dossierFields, files = []) => {
-  const attachmentUris = [];
-  for (const file of files) {
-    const { upload_url, destination } = await getUploadUrl(file.name);
-    if (!upload_url.includes('mock-upload')) {
-      await uploadFileDirectlyToGCS(file, upload_url);
-      attachmentUris.push(destination);
-    }
-  }
-
+// Ürün dosyası: yalnız form alanları. Fotoğraf/katalog ekleme arayüzden
+// kaldırıldı; API ek kabul etmeye devam eder (attachment_uris).
+export const analyzeProduct = async (dossierFields) => {
   const response = await axios.post(`${API_BASE_URL}/analyze-json`, {
-    dossier: { ...dossierFields, attachment_uris: attachmentUris },
+    dossier: dossierFields,
   }, {
     timeout: 45000
   });
