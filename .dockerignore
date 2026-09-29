@@ -58,7 +58,3 @@ scripts/setup_*
 **/*.pdf
 
 # Ham TGTC çalışma dosyaları; runtime yalnız üretilmiş iki JSON'u kullanır
-2026 TGTC/2026 TGTC/
-2026 TGTC/2026 FASIL NOTLARI/
-2026 TGTC/*.xls
-2026 TGTC/*.csv

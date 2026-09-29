@@ -65,7 +65,7 @@ from api.modules.rag_engine import aggregate_precedents_by_heading  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("HeadingRouting")
 
-CATALOG_PATH = os.path.join(root_dir, "2026 TGTC", "tgtc_2026_full_database.json")
+CATALOG_PATH = os.path.join(root_dir, "data", "tgtc_2026_full_database.json")
 RECALL_KS = (1, 3, 5, 10)
 RRF_K = 60
 # Embedding modeli belge başına ~2048 token kabul eder; pozisyon belgeleri

@@ -150,9 +150,9 @@ def get_local_tgtc_headings() -> Dict[str, str]:
     res = {}
     try:
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        db_path = os.path.join(base_dir, "2026 TGTC", "tgtc_2026_full_database.json")
+        db_path = os.path.join(base_dir, "data", "tgtc_2026_full_database.json")
         if not os.path.exists(db_path):
-            db_path = "/app/2026 TGTC/tgtc_2026_full_database.json"
+            db_path = "/app/data/tgtc_2026_full_database.json"
         if os.path.exists(db_path):
             with open(db_path, "r", encoding="utf-8") as f:
                 raw_data = json.load(f)
@@ -546,7 +546,7 @@ def load_btb_catalog() -> List[Dict[str, Any]]:
     # 1. Öncelikli ve Temel Katman: Yerel 2026 TGTC Kütüphanesi (Hiyerarşik Sıralı 216.000+ Kayıt)
     try:
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        tgtc_path = os.path.join(base_dir, "2026 TGTC", "tgtc_2026_full_database.json")
+        tgtc_path = os.path.join(base_dir, "data", "tgtc_2026_full_database.json")
         if os.path.exists(tgtc_path):
             with open(tgtc_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -658,9 +658,9 @@ def load_tgtc_rules_and_notes() -> Dict[str, Any]:
         return _RULES_AND_NOTES_CACHE
     try:
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        rules_path = os.path.join(base_dir, "2026 TGTC", "tgtc_2026_rules_and_notes.json")
+        rules_path = os.path.join(base_dir, "data", "tgtc_2026_rules_and_notes.json")
         if not os.path.exists(rules_path):
-            rules_path = "/app/2026 TGTC/tgtc_2026_rules_and_notes.json"
+            rules_path = "/app/data/tgtc_2026_rules_and_notes.json"
         if os.path.exists(rules_path):
             with open(rules_path, "r", encoding="utf-8") as f:
                 _RULES_AND_NOTES_CACHE = json.load(f)

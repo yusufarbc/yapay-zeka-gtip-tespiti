@@ -1,6 +1,9 @@
 """
 2026 TGTC kataloğunu ham Excel'den hiyerarşisi korunarak yeniden çıkarır.
 
+Ham Excel dosyaları repoda tutulmaz. Bu betiği çalıştırmak için Ticaret Bakanlığı'nın
+yayımladığı 2026 TGTC fasıl dosyalarını (*.xls) 'data/tgtc_xls/' dizinine indirin.
+
 SORUN
 -----
 Mevcut katalog, ham cetveldeki iki satır türünü atmış:
@@ -59,8 +62,8 @@ if root_dir not in sys.path:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("RebuildTGTC")
 
-SOURCE_DIR = os.path.join(root_dir, "2026 TGTC", "2026 TGTC")
-CURRENT_CATALOG = os.path.join(root_dir, "2026 TGTC", "tgtc_2026_full_database.json")
+SOURCE_DIR = os.path.join(root_dir, "data", "tgtc_xls")
+CURRENT_CATALOG = os.path.join(root_dir, "data", "tgtc_2026_full_database.json")
 
 # Bir açıklamanın kaç "- " öneki taşıdığı hiyerarşi derinliğini verir.
 _DASH_PREFIX = re.compile(r"^((?:\s*-)+)\s*")

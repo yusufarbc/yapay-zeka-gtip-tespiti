@@ -1,6 +1,9 @@
 """
 TGTC kataloğu metin kalitesi teşhisi.
 
+Ham Excel dosyaları repoda tutulmaz. Bu betiği çalıştırmak için Ticaret Bakanlığı'nın
+yayımladığı 2026 TGTC fasıl dosyalarını (*.xls) 'data/tgtc_xls/' dizinine indirin.
+
 Sınıflandırmanın tavanını model değil, modelin okuduğu metin belirler. Bu araç
 kataloğun seçim yapılabilir olup olmadığını ölçer ve ham Excel kaynağıyla
 karşılaştırarak ne kadar ayırt edici metnin çıkarım sırasında kaybolduğunu
@@ -31,8 +34,8 @@ root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
-CATALOG = os.path.join(root_dir, "2026 TGTC", "tgtc_2026_full_database.json")
-SOURCE_DIR = os.path.join(root_dir, "2026 TGTC", "2026 TGTC")
+CATALOG = os.path.join(root_dir, "data", "tgtc_2026_full_database.json")
+SOURCE_DIR = os.path.join(root_dir, "data", "tgtc_xls")
 
 
 def _digits(value) -> str:

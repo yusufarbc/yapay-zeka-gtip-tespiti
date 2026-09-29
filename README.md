@@ -80,7 +80,7 @@ Her önemli değişiklik aynı holdout üzerinde ölçüldü: **120 gerçek BTB 
 
 | Kaynak | Konum |
 |---|---|
-| 2026 Türk Gümrük Tarife Cetveli (97 fasıl, 964 pozisyon, 19.704 GTİP) ve fasıl/bölüm notları | `2026 TGTC/`, `api/data/` |
+| 2026 Türk Gümrük Tarife Cetveli (97 fasıl, 964 pozisyon, 19.704 GTİP) ve fasıl/bölüm notları; Ticaret Bakanlığı'nın Excel dosyalarından dönüştürüldü | `data/tgtc_2026_*.json`, `api/data/` |
 | 2.355 BTB kararı (Ticaret Bakanlığı BTB portalı, kamuya açık; toplayan betik `scripts/scrape_all_btb_2020_2026.py`) | `data/btb_kararlari_export_2026-09-29.json` |
 | Benchmark raporları | `benchmark_results/` |
 
