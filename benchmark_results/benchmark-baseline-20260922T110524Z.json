@@ -1,0 +1,59 @@
+{
+  "generated_at": "2026-09-22T11:05:24.420615+00:00",
+  "model": "gemini-2.5-flash",
+  "extractor_model": "gemini-2.5-flash-lite",
+  "sample_size": 3,
+  "seed": 42,
+  "evidence_flags": {
+    "SELECTION_USE_RAW_TEXT": false,
+    "SELECTION_USE_PRECEDENTS": false,
+    "SELECTION_USE_CHAPTER_NOTES": false
+  },
+  "metrics": {
+    "chapter_acc": 0.0,
+    "heading_acc": 0.0,
+    "subheading_acc": 0.0,
+    "leaf_acc": 0.0,
+    "coverage": 0.0,
+    "hitl_rate": 66.67,
+    "manual_review_rate": 33.33,
+    "exception_rate": 0.0,
+    "residual_fallback_rate": 0.0,
+    "leaf_acc_of_completed": 0.0
+  },
+  "latency_ms": {
+    "p50": 9659.9,
+    "p95": 13687.0,
+    "mean": 9620.7
+  },
+  "status_breakdown": {
+    "MANUAL_REVIEW_REQUIRED": 1,
+    "WAITING_FOR_USER": 2
+  },
+  "failures": [
+    {
+      "reference_no": "TR160000260025",
+      "description": "46 parça vidalama ve lokma uç seti' ticari tanımlı eşyanın; 1 adet universal tutucu(manyetik), altıgen vidalar için lokma anahtarları, vidalama uçları ile 1 adet cırcır fonksiyonlu ve tutamağında uç d",
+      "expected_gtip": "820600000000",
+      "predicted_gtip": null,
+      "status": "MANUAL_REVIEW_REQUIRED",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR340000210168",
+      "description": "PAREKENDE SATILACAK HALE GETİRİLMİŞ 360G ‘LIK AMBALAJINDA ÇİKOLATA İÇEREN SPORCU GIDA MÜSTAHZARI",
+      "expected_gtip": "180690900000",
+      "predicted_gtip": null,
+      "status": "WAITING_FOR_USER",
+      "confidence": 0.0
+    },
+    {
+      "reference_no": "TR340000240200",
+      "description": "ERA MARKA, ERA50141 MODEL, ANALİZ RAPORUNA GÖRE GÖVDESİ ÇELİKTEN MAMUL, KENARLARI AGLOMERE EDİLMİŞ SENTETİK ELMASTAN PARÇACIKLAR BULUNAN AŞINDIRICI MADDELERLE KAPLANMIŞ, KESİCİ DİSK ŞEKLİNDE, ÜZERİNDE",
+      "expected_gtip": "680421000013",
+      "predicted_gtip": null,
+      "status": "WAITING_FOR_USER",
+      "confidence": 0.0
+    }
+  ]
+}
