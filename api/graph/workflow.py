@@ -703,7 +703,7 @@ class GTIPWorkflowEngine:
         if profile and profile.essential_material and profile.essential_material.source in {"USER", "BROKER"}:
             confirmed_material = profile.essential_material.value
         if dossier is not None:
-            material = None if dossier.is_machine else (dossier.material or confirmed_material)
+            material = dossier.material or confirmed_material
             return " ".join(p for p in (dossier.product_name, material) if p)
         if confirmed_material and confirmed_material.casefold() not in raw_text.casefold():
             return f"{raw_text} {confirmed_material}"
