@@ -62,6 +62,7 @@ class LLMFactVerifier:
         narrowing: bool = False,
         timeout_ms: Optional[int] = None,
         level: Optional[str] = None,
+        temperature: Optional[float] = None,
     ) -> Optional[Any]:
         try:
             from google.genai import types
@@ -70,11 +71,14 @@ class LLMFactVerifier:
             # hiçbir seçeneği eşleştiremediğinde çalışır; aynı promptu aynı
             # sıcaklıkta tekrar göndermek deterministik kurulumda aynı cevabı
             # üretir, bu yüzden bütçe ve sıcaklık bilinçli olarak değiştirilir.
+            thinking_budget = LLMFactVerifier._thinking_budget(narrowing, level)
             return types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(
-                    thinking_budget=LLMFactVerifier._thinking_budget(narrowing, level)
-                ),
-                temperature=0.3 if narrowing else 0.0,
+                thinking_config=types.ThinkingConfig(thinking_budget=thinking_budget),
+                temperature=temperature if temperature is not None else (0.3 if narrowing else 0.0),
+                # Normal bir yanıt ~300-600 token. Tavan yokken sıcaklık 0'da model
+                # bir gerekçe cümlesini sonsuz tekrarladı (cam balkon, CHAPTER) ve
+                # çağrı her denemede süre sınırına kadar asılı kaldı.
+                max_output_tokens=thinking_budget + settings.SELECTION_MAX_OUTPUT_TOKENS,
                 response_mime_type="application/json",
                 http_options=types.HttpOptions(
                     timeout=timeout_ms or settings.LLM_TIMEOUT_MS
@@ -82,6 +86,14 @@ class LLMFactVerifier:
             )
         except Exception:
             return None
+
+    @staticmethod
+    def _was_truncated(response: Any) -> bool:
+        try:
+            reason = response.candidates[0].finish_reason
+        except (AttributeError, IndexError, TypeError):
+            return False
+        return "MAX_TOKENS" in str(getattr(reason, "name", reason) or "")
 
     @staticmethod
     def _thinking_budget(narrowing: bool, level: Optional[str]) -> int:
@@ -334,7 +346,7 @@ class LLMFactVerifier:
             # Fasıl 73 çıktı ve müşaviriye çelişkili bir açıklama gösterildi.
             "Yalnız şu JSON biçimini, ALANLARI BU SIRAYLA yazarak döndür. Önce gerekçeni yaz, sonra kararı; "
             "karar gerekçenin vardığı sonuçla AYNI olmalı: "
-            "{\"reasoning_points\":[\"1-3 kısa Türkçe cümle: seçimi belirleyen ürün özelliği ve "
+            "{\"reasoning_points\":[\"1-3 kısa Türkçe madde, her biri en çok 2 cümle, hiçbir cümle tekrar edilmez: seçimi belirleyen ürün özelliği ve "
             "dayandığın GİR kuralı veya fasıl notu; son cümle vardığın seçeneği söylesin\"],"
             "\"applied_gir_keys\":[\"GIR_1\",\"GIR_3A\",\"GIR_3B\",\"GIR_6\"],"
             "\"cited_chapter_notes\":[\"70\",\"76\"],"
@@ -348,13 +360,26 @@ class LLMFactVerifier:
         try:
             from api.modules.vertex_client import get_genai_client
 
+            degenerate = False
             for attempt in range(1, 4):
                 try:
                     response = get_genai_client().models.generate_content(
                         model=settings.REASONING_LLM_MODEL,
                         contents=prompt,
-                        config=self._config(narrowing, self._call_timeout_ms(deadline), level),
+                        config=self._config(
+                            narrowing, self._call_timeout_ms(deadline), level,
+                            # Kesilen yanıttan sonra aynı promptu sıcaklık 0'da
+                            # göndermek aynı döngüyü üretir; örnekleme değiştirilir.
+                            temperature=0.4 if degenerate else None,
+                        ),
                     )
+                    if self._was_truncated(response) and attempt < 3:
+                        degenerate = True
+                        logger.warning(
+                            "Tariff node selection level=%s çıktı sınırında kesildi (tekrar döngüsü); "
+                            "farklı örneklemeyle yeniden deneniyor", level,
+                        )
+                        continue
                     break
                 except Exception as exc:
                     if attempt == 3:
@@ -458,6 +483,27 @@ class LLMFactVerifier:
                 for option_id in selection.alternative_candidate_ids
                 if option_id in valid_ids
             ][:4]
+            # Fasıl seviyesinde "bilgi yetersiz" yasaktır, ama model yine de
+            # verebiliyor. Her yeniden deneme ~5 sn ve canlıda analiz bütçesini
+            # tüketip kararı manuel incelemeye düşürüyordu. Model seçenek
+            # önerdiyse ilk önerisiyle devam edilir; öneri sunucunun verdiği
+            # seçeneklerden biridir (kapalı küme korunur), reddedilenler hariç.
+            if level == "CHAPTER" and selection.status == CandidateSelectionStatus.INSUFFICIENT_INFORMATION:
+                rejected = set(rejected_codes or [])
+                usable = [
+                    oid for oid in selection.alternative_candidate_ids
+                    if re.sub(r"\D", "", str(option_map[oid].get("gtip_code") or "")) not in rejected
+                ]
+                if usable:
+                    logger.info(
+                        "CHAPTER seviyesinde bilgi yetersiz; yeniden deneme yerine ilk öneriyle devam: %s", usable[0]
+                    )
+                    selection.status = CandidateSelectionStatus.SELECT
+                    selection.selected_candidate_id = usable[0]
+                    selection.reasoning_points = [
+                        *selection.reasoning_points,
+                        "Fasıl seviyesinde kesin seçim yapılamadı; modelin ilk önerdiği fasılla devam edildi.",
+                    ][:6]
             should_retry_choice = (
                 selection.status == CandidateSelectionStatus.NO_MATCH
                 or (level == "CHAPTER" and selection.status != CandidateSelectionStatus.SELECT)
@@ -553,6 +599,67 @@ class LLMFactVerifier:
             })
         except Exception as exc:
             logger.warning("Fasıl dışlama kontrolü yapılamadı (fasıl=%s): %s", chapter, exc)
+        return verdict
+
+
+    def confirm_chapter_fit(
+        self,
+        product_text: str,
+        chapter: str,
+        chapter_title: str,
+        headings: List[Dict[str, Any]],
+        deadline: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Model faslın pozisyonları arasında soru sormak isterken fasıl gerçekten doğru mu?
+
+        Canlıda "cam balkon" önce Fasıl 70'e (cam) gidiyor ve pozisyon
+        seviyesinde "float cam mı, temperli cam mı?" soruluyordu. Soru, yanlış
+        fasılda müşaviri yanlış seçenekler arasında seçime zorlar. Bu kontrol
+        faslın TÜM pozisyon metinlerini gösterip ürünün kendisinin (esas
+        niteliğiyle) bunlardan birine girip girmediğini sorar. Pozisyonlar
+        ürünün yalnız bir bileşenini veya hammaddesini tanımlıyorsa uymaz.
+        Hata olursa fasıl korunur (mevcut davranış).
+        """
+        verdict = {"belongs": True, "reason": None, "better_chapter": None}
+        if settings.USE_GCP_EMULATOR or settings.ENVIRONMENT == "testing" or not headings:
+            return verdict
+        if deadline is not None and time.monotonic() >= deadline:
+            return verdict
+        listing = "\n".join(
+            f"{re.sub(r'[^0-9]', '', str(node.get('gtip_code') or ''))}: {str(node.get('description') or '')[:300]}"
+            for node in headings
+        )[:7000]
+        prompt = (
+            "Sen Türk Gümrük Tarife Cetveli uzmanısın. Bir ürün için Fasıl "
+            f"{chapter} ({chapter_title}) seçildi, fakat bu faslın pozisyonları arasında kesin seçim yapılamadı.\n\n"
+            f"FASIL {chapter} POZİSYONLARININ RESMÎ METİNLERİ:\n{listing}\n\n"
+            f"<product_data>{product_text}</product_data>\n\n"
+            "Soru: Ürünün KENDİSİ, bütünü ve esas niteliğiyle, bu pozisyonlardan birinin tanımına giriyor mu?\n"
+            "- Pozisyonlar yalnız ürünün bir BİLEŞENİNİ veya hammaddesini tanımlıyorsa belongs=false.\n"
+            "- Eşyanın türü (ne olduğu, işlevi) başka bir fasılda daha özel tanımlanıyorsa belongs=false (GYK 1, 3(a)).\n"
+            "- Ürün bu pozisyonlardan birine açıkça giriyor ve yalnız ayrım için bilgi eksikse belongs=true.\n"
+            "Yalnız şu JSON'u döndür (önce gerekçe): "
+            "{\"reason\":\"kısa Türkçe gerekçe\",\"better_chapter\":\"daha uygun fasıl numarası veya null\",\"belongs\":true}"
+        )
+        try:
+            from api.modules.vertex_client import get_genai_client
+
+            # Tüm pozisyon listesi + düşünme payı: ölçümde 5-8 sn; 8 sn sınırı
+            # ilk denemede zaman aşımına düşürüyordu.
+            response = get_genai_client().models.generate_content(
+                model=settings.REASONING_LLM_MODEL,
+                contents=prompt,
+                config=self._config(False, min(12000, self._call_timeout_ms(deadline)), "EXCLUSION"),
+            )
+            match = re.search(r"\{.*\}", response.text or "", re.DOTALL)
+            data = json.loads(match.group(0) if match else (response.text or "{}"))
+            verdict.update({
+                "belongs": data.get("belongs") is not False,
+                "reason": (str(data.get("reason")).strip()[:400] or None) if data.get("reason") else None,
+                "better_chapter": (re.sub(r"\D", "", str(data.get("better_chapter") or "")) or None),
+            })
+        except Exception as exc:
+            logger.warning("Fasıl uygunluk kontrolü yapılamadı (fasıl=%s): %s", chapter, exc)
         return verdict
 
 

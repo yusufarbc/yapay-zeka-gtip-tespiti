@@ -83,6 +83,10 @@ class MaterialFact(ProfileFact):
         default_factory=list, max_length=4,
         description="Malzeme varsayımsa, bu parça için yaygın diğer malzemeler (teyit sorusu seçenekleri)",
     )
+    changes_classification: bool = Field(
+        default=True,
+        description="Parça alternatif malzemeden olsaydı tarife pozisyonu değişir miydi? Değişmezse teyit sorusu sorulmaz",
+    )
 
 
 class ProductProfile(BaseModel):
@@ -101,18 +105,26 @@ class ProductProfile(BaseModel):
     evidence_notes: List[str] = Field(default_factory=list, description="Delil havuzundan gelen uyarılar")
 
     def as_prompt_text(self) -> str:
-        """Sınıflandırma modeline kaynak etiketli profil metni."""
+        """Sınıflandırma modeline kaynak etiketli profil metni.
+
+        Yalnız beyan/teyit edilmiş bilgiler ve kararı etkileyen varsayım (ana
+        parça malzemesi) verilir. Modelin tahmin ettiği işlev, kullanım yeri,
+        yardımcı parça malzemeleri ve özet cümlesi verilmez: aynı 120 BTB
+        numunesinde bu "teyit edilmedi" satırları seçiciyi gereksiz soruya
+        (%5 -> %10) itti ve özet cümlesi cam balkon için fasıl seçiminde modeli
+        aynı cümleyi tekrarlayan bir döngüye soktu.
+        """
         lines = [f"EŞYA: {self.product_type.label()}"]
-        if self.function:
+        if self.function and self.function.source != "INFERRED":
             lines.append(f"İŞLEV: {self.function.label()}")
-        if self.use_place:
+        if self.use_place and self.use_place.source != "INFERRED":
             lines.append(f"KULLANIM YERİ: {self.use_place.label()}")
         lines.append("NİTELİK: makine veya cihaz" if self.is_machine else "NİTELİK: makine veya cihaz değil")
         # Esas niteliği hangi malzemenin verdiği bir tarife hükmüdür (GYK 3(b));
         # profil yalnız olguları (parça -> malzeme) verir, hükmü sınıflandırıcı kurar.
         for item in self.materials:
+            if item.source == "INFERRED" and not (item.main_part and item.changes_classification):
+                continue
             part = f"{item.part}: " if item.part else ""
             lines.append(f"MALZEME — {part}{item.label()}")
-        if self.summary:
-            lines.append(f"ÖZET: {self.summary}")
         return "\n".join(lines)

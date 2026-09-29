@@ -163,3 +163,11 @@ def test_auc_measures_ranking_not_absolute_scores():
     assert auc([0.1, 0.2], [0.8, 0.9]) == 0.0        # tersine ayrım
     assert auc([0.6, 0.6], [0.6, 0.6]) == 0.5        # hiç ayırt etmiyor
     assert auc([], [0.5]) == 0.5                      # veri yok
+
+
+def test_stratification_ignores_database_row_order():
+    """Veritabanı satır sırası değişse de aynı tohum aynı numuneleri seçmeli."""
+    corpus = _skewed_corpus()
+    first = stratify_by_chapter(corpus, 40, seed=42)
+    second = stratify_by_chapter(list(reversed(corpus)), 40, seed=42)
+    assert [item["reference_no"] for item in first] == [item["reference_no"] for item in second]

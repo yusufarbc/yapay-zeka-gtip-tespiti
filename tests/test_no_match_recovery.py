@@ -571,6 +571,9 @@ def test_first_chapter_no_match_backtracks_before_narrowing(monkeypatch):
         {"gtip_code": f"{chapter}02", "description": "b"},
     ]))
     monkeypatch.setattr(RAGEngine, "_subheading_nodes", classmethod(lambda cls, h: []))
+    # Tek başına çalışınca ortam "testing" olmadığından gerçek dışlama kontrolü
+    # çağrılıyor ve Fasıl 44'ü dışlayıp testi ağdan bağımlı yapıyordu.
+    monkeypatch.setattr(RAGEngine, "_chapter_exclusion", staticmethod(lambda *a: {"excluded": False}))
 
     result = RAGEngine().search_candidates_hierarchical(
         session_id="s1",
@@ -639,3 +642,106 @@ def test_code_outside_the_offered_set_is_ignored(monkeypatch):
     monkeypatch.setattr("api.modules.vertex_client.get_genai_client", lambda: SimpleNamespace(models=Models()))
     nodes = [{"gtip_code": "73", "description": "a"}, {"gtip_code": "76", "description": "b"}]
     assert verifier_module.llm_verifier.select_tariff_node("x", "CHAPTER", nodes).selected_candidate_id == "A"
+
+
+def _counting_models(text):
+    class Models:
+        calls = 0
+
+        def generate_content(self, **kwargs):
+            Models.calls += 1
+            return SimpleNamespace(text=text)
+
+    return Models
+
+
+def _patch_models(monkeypatch, models):
+    monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr("api.modules.vertex_client.get_genai_client",
+                        lambda: SimpleNamespace(models=models()))
+    monkeypatch.setattr(verifier_module.time, "sleep", lambda _: None)
+
+
+_CHAPTERS = [
+    {"gtip_code": "70", "description": "Cam ve cam eşya"},
+    {"gtip_code": "76", "description": "Alüminyum ve alüminyumdan eşya"},
+]
+
+
+def test_chapter_insufficient_with_suggestion_continues_without_retry(monkeypatch):
+    """
+    CHAPTER'da "bilgi yetersiz" + öneri geldiğinde iki daraltma denemesi
+    (~5 sn/deneme) canlıda bütçeyi tüketiyordu. İlk öneriyle devam edilir.
+    """
+    models = _counting_models(
+        '{"status":"INSUFFICIENT_INFORMATION","selected_candidate_id":null,'
+        '"alternative_candidate_ids":["B","A"],"question_text":"Hangisi?"}'
+    )
+    _patch_models(monkeypatch, models)
+
+    result = verifier_module.llm_verifier.select_tariff_node("cam balkon", "CHAPTER", _CHAPTERS)
+
+    assert models.calls == 1
+    assert result.status == CandidateSelectionStatus.SELECT
+    assert result.selected_candidate_id == "B"
+
+
+def test_chapter_insufficient_skips_rejected_suggestion(monkeypatch):
+    models = _counting_models(
+        '{"status":"INSUFFICIENT_INFORMATION","selected_candidate_id":null,'
+        '"alternative_candidate_ids":["A","B"],"question_text":"Hangisi?"}'
+    )
+    _patch_models(monkeypatch, models)
+
+    result = verifier_module.llm_verifier.select_tariff_node(
+        "cam balkon", "CHAPTER", _CHAPTERS, rejected_codes=["70"],
+    )
+
+    assert models.calls == 1
+    assert result.selected_candidate_id == "B"
+
+
+def test_chapter_insufficient_without_suggestion_still_retries(monkeypatch):
+    models = _counting_models(
+        '{"status":"INSUFFICIENT_INFORMATION","selected_candidate_id":null,'
+        '"alternative_candidate_ids":[],"question_text":"Hangisi?"}'
+    )
+    _patch_models(monkeypatch, models)
+
+    result = verifier_module.llm_verifier.select_tariff_node("belirsiz", "CHAPTER", _CHAPTERS)
+
+    assert models.calls == 3
+    assert result.status != CandidateSelectionStatus.SELECT
+
+
+def test_truncated_repetition_loop_is_retried_with_different_sampling(monkeypatch):
+    """
+    Canlıda cam balkon için CHAPTER çağrısı sıcaklık 0'da bir gerekçe cümlesini
+    sonsuz tekrarladı ve her deneme süre sınırına kadar asılı kaldı. Çıktı tavanı
+    döngüyü keser; kesilen yanıttan sonra farklı örneklemeyle yeniden denenir.
+    """
+    temperatures = []
+
+    class Models:
+        calls = 0
+
+        def generate_content(self, **kwargs):
+            Models.calls += 1
+            temperatures.append(kwargs["config"].temperature)
+            if Models.calls == 1:
+                return SimpleNamespace(
+                    text='{"reasoning_points":["aynı cümle aynı cümle aynı',
+                    candidates=[SimpleNamespace(finish_reason="FinishReason.MAX_TOKENS")],
+                )
+            return SimpleNamespace(
+                text='{"status":"SELECT","selected_code":"76","selected_candidate_id":"B"}',
+                candidates=[SimpleNamespace(finish_reason="FinishReason.STOP")],
+            )
+
+    _patch_models(monkeypatch, lambda: Models())
+    result = verifier_module.llm_verifier.select_tariff_node("cam balkon", "CHAPTER", _CHAPTERS)
+
+    assert Models.calls == 2
+    assert temperatures[0] == 0.0 and temperatures[1] == 0.4
+    assert result.status == CandidateSelectionStatus.SELECT and result.selected_candidate_id == "B"

@@ -871,11 +871,12 @@ def get_official_statute_records(
     # 3. İlgili Fasıl ve Dışlama Notları (Veritabanı Orijinal Not Metinleri)
     from api.modules import tariff_notes
 
-    chapters_to_cite = list(dict.fromkeys(list(cited_chapters or []) + ([clean_code[:2]] if clean_code else [])))
+    cited_chapter_codes, cited_sections = tariff_notes.cited_note_refs(cited_chapters)
+    chapters_to_cite = list(dict.fromkeys(cited_chapter_codes + ([clean_code[:2]] if clean_code else [])))
 
     # Bölüm notları kaynakta yalnız bölümün ilk faslında gömülüydü; ayrı kaynak
     # olarak gösterilir ve bölümdeki her fasıl için geçerlidir.
-    cited_sections = []
+    cited_sections = [roman for roman in cited_sections if tariff_notes.section_notes(roman)]
     for c in chapters_to_cite:
         roman = tariff_notes.section_of(str(c))
         if roman and roman not in cited_sections and tariff_notes.section_notes(roman):

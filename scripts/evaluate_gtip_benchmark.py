@@ -100,7 +100,11 @@ def stratify_by_chapter(
         return []
 
     rng = random.Random(seed)
-    pool = list(candidates)
+    # Veritabanı satırları ORDER BY olmadan fiziksel sırayla gelir ve bu sıra
+    # tablo güncellendikçe değişir; aynı tohum farklı numuneler seçiyordu
+    # (iki koşu 120 numunenin yalnız 60'ında örtüştü). Karıştırmadan önce
+    # sabit bir sıraya dizilir.
+    pool = sorted(candidates, key=lambda item: item["reference_no"])
     rng.shuffle(pool)
 
     by_chapter: Dict[str, List[Dict[str, Any]]] = collections.defaultdict(list)
@@ -236,7 +240,7 @@ ABLATION_FLAGS = (
     "SELECTION_USE_CHAPTER_NOTES",
 )
 # Kanıt değil dolaşım biçimi: baseline'a dahil değildir, ayrıca kapatılır.
-ROUTING_FLAGS = ("HEADING_ROUTING_ENABLED", "CHAPTER_EXCLUSION_CHECK_ENABLED")
+ROUTING_FLAGS = ("HEADING_ROUTING_ENABLED", "CHAPTER_EXCLUSION_CHECK_ENABLED", "CHAPTER_FIT_CHECK_ENABLED")
 # Ürün profili ve teyit sorusu; kanıt değil giriş biçimidir, ayrıca kapatılır.
 PROFILE_FLAGS = ("PRODUCT_PROFILE_ENABLED", "PROFILE_CONFIRMATION_ENABLED")
 

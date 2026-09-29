@@ -79,13 +79,18 @@ class Settings(BaseSettings):
     # Hattın TOPLAM süre bütçesi. Tek tek çağrıların timeout'u vardı ama hattın
     # bütünü için sınır yoktu: bir sağlayıcı hatası (429/504) retry'larla
     # çarpılıp dört seviyeye yayılınca analiz 91 saniyeye kadar çıkabiliyordu.
-    # Arayüz 45 saniyede vazgeçtiği için kullanıcı hiçbir şey alamıyordu.
     # Bütçe dolduğunda hat zarifçe durur ve elindeki en iyi sonucu döndürür;
     # cevapsız bir timeout yerine cevaplanabilir bir soru daha değerlidir.
-    ANALYSIS_BUDGET_MS: int = int(os.getenv("ANALYSIS_BUDGET_MS", "32000"))
-    # Arayüzün istek timeout'u 45 sn; güvenlik payı düşülmüş toplam sınır.
-    # Uluslararası arama bu bütçeden ARTAN süreyi kullanır.
-    CLIENT_REQUEST_BUDGET_MS: int = int(os.getenv("CLIENT_REQUEST_BUDGET_MS", "38000"))
+    # 32 sn idi; ürün profili, fasıl dışlama ve fasıl uygunluk kontrolleri
+    # eklenince canlıda analizler bütçeye takılıp manuel incelemeye düştü.
+    ANALYSIS_BUDGET_MS: int = int(os.getenv("ANALYSIS_BUDGET_MS", "50000"))
+    # Seçim yanıtı için düşünme payının ÜSTÜNE çıktı tavanı. Tekrar döngüsüne
+    # giren bir çağrı süre sınırı yerine birkaç saniyede kesilir.
+    SELECTION_MAX_OUTPUT_TOKENS: int = int(os.getenv("SELECTION_MAX_OUTPUT_TOKENS", "2048"))
+    # Arayüzün istek timeout'u 75 sn; güvenlik payı düşülmüş toplam sınır
+    # (profil adımı + dolaşım + uluslararası arama). nginx ve Cloud Run
+    # sınırları 300 sn olduğundan asıl sınır arayüzdür.
+    CLIENT_REQUEST_BUDGET_MS: int = int(os.getenv("CLIENT_REQUEST_BUDGET_MS", "65000"))
     # CHAPTER seçenek listesi hattın en yavaş ve 504 alan çağrısıydı (~21.000
     # token). Kapsam LİSTESİNİ kesmek yanlış çözümdü: Fasıl 61'de 6109 (tişört)
     # gibi yaygın pozisyonlar listeden düşüyordu. Bunun yerine pozisyon
@@ -148,6 +153,10 @@ class Settings(BaseSettings):
     # kısa bir kontrol. Fasıl seçimi notsuz yapıldığı için yanlış fasıl ancak
     # pozisyon seviyesinde anlaşılıyor ve bir tur kaybediliyordu.
     CHAPTER_EXCLUSION_CHECK_ENABLED: bool = os.getenv("CHAPTER_EXCLUSION_CHECK_ENABLED", "true").lower() == "true"
+    # Model kendi seçtiği ilk fasılda pozisyon sorusu sormak isterse, soru
+    # müşaviriye gösterilmeden önce faslın ürüne uyup uymadığı sorgulanır.
+    # Cam balkon Fasıl 70'te "float mı, temperli mi?" sorusuna takılıyordu.
+    CHAPTER_FIT_CHECK_ENABLED: bool = os.getenv("CHAPTER_FIT_CHECK_ENABLED", "true").lower() == "true"
 
     HEADING_ROUTING_ENABLED: bool = os.getenv("HEADING_ROUTING_ENABLED", "true").lower() == "true"
     HEADING_ROUTING_MIN_BTB: float = float(os.getenv("HEADING_ROUTING_MIN_BTB", "0.80"))

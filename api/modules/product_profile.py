@@ -118,7 +118,8 @@ panel, gövde, kaplama, dolgu). Her parça için malzemeyi ve kaynağını ver. 
 "alternatives" alanına bu parça için yaygın DİĞER malzemeleri yaz (en çok 3). Kullanıcı beyanında geçen
 parçayı atlama; beyanda geçmeyen ama bu tür üründe bulunan parçayı da ekle. "main_part": parça eşyanın
 gövdesini, taşıyıcı yapısını veya hacminin/ağırlığının büyük kısmını oluşturuyorsa true; bağlantı elemanı,
-conta, vida, bağcık, etiket gibi yardımcı parçalar için false.
+conta, vida, bağcık, etiket gibi yardımcı parçalar için false. Eşyanın içinde satıldığı ambalaj (kutu, poşet,
+şişe, kap) eşyanın parçası değildir; eşyanın kendisi bir kap değilse ambalajı materials'a yazma.
 
 product_type_alternatives: eşyanın NE OLDUĞU delillerden anlaşılmıyorsa (yalnız ticari kod, marka, model
 numarası vb.) olası eşya türleri (en çok 3). Eşya açıkça adlandırılmışsa boş bırak.
@@ -296,6 +297,61 @@ def _material_key(fact: MaterialFact) -> str:
     return f"material:{_fold(fact.part or '')}"
 
 
+_MATERIAL_CHECK_PROMPT = """Gümrük tarife sınıflandırması uzmanısın (Armonize Sistem / Türk Gümrük Tarife Cetveli).
+Eşya: {product_type}
+{function_line}Soru: Eşyanın "{part}" kısmı aşağıdaki malzemelerin hangisinden yapılırsa yapılsın, eşya aynı 6 haneli
+alt pozisyona mı girer?
+Malzemeler: {values}
+
+Tarife eşyayı malzemesinden bağımsız kendi adıyla veya işleviyle tanımlıyorsa malzeme alt pozisyonu değiştirmez.
+Eşya malzemesine göre ayrılıyorsa (malzemenin faslında "…dan eşya" olarak veya malzemeye göre ayrılan alt
+pozisyonlarda) değiştirir. Emin değilsen değiştirir kabul et. Kod yazma.
+Önce kısa gerekçe yaz. Yalnız şu JSON'u döndür:
+{{"reasoning":"1-2 cümle","same_subheading":true}}"""
+
+
+def _material_changes_classification(profile: ProductProfile, fact: MaterialFact, values: List[str]) -> bool:
+    """Tahmin edilen malzeme yerine alternatifler olsaydı sınıflandırma değişir miydi?
+
+    Profil çağrısı hız için düşünmeden çalışır ve bu karşı-olgusal soruda her ana
+    parçaya "değişir" diyordu (melodika, kitap, mum dahil). Soru sorulmadan hemen
+    önce, kısa gerekçeli ayrı bir çağrıyla sorulur. Hata veya belirsizlikte soru
+    sorulur (güvenli taraf).
+    """
+    if settings.USE_GCP_EMULATOR or settings.ENVIRONMENT == "testing":
+        return True
+    try:
+        from google.genai import types
+
+        from api.modules.vertex_client import get_genai_client
+
+        prompt = _MATERIAL_CHECK_PROMPT.format(
+            product_type=profile.product_type.value,
+            function_line=f"İşlev: {profile.function.value}\n" if profile.function else "",
+            part=fact.part or "ürün",
+            values=", ".join(values),
+        )
+        response = get_genai_client().models.generate_content(
+            model=settings.REASONING_LLM_MODEL,
+            contents=[prompt],
+            config=types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(thinking_budget=512),
+                temperature=0.0,
+                response_mime_type="application/json",
+                http_options=types.HttpOptions(timeout=settings.PROFILE_TIMEOUT_MS),
+            ),
+        )
+        match = re.search(r"\{.*\}", response.text or "", re.DOTALL)
+        data = json.loads(match.group(0) if match else (response.text or "{}"))
+        same = data.get("same_subheading") is True
+        if same:
+            logger.info("Malzeme sorusu atlandı (%s / %s): %s", profile.product_type.value, fact.part, data.get("reasoning"))
+        return not same
+    except Exception as exc:
+        logger.warning("Malzeme belirleyicilik kontrolü başarısız; soru sorulacak: %s", exc)
+        return True
+
+
 def confirmation_question(profile: ProductProfile, skip: Optional[Set[str]] = None) -> Optional[Dict[str, Any]]:
     """Kararı etkileyen bilgi yalnız varsayıma dayanıyorsa sorulacak TEK soru.
 
@@ -324,10 +380,16 @@ def confirmation_question(profile: ProductProfile, skip: Optional[Set[str]] = No
     if profile.is_machine or any(key.startswith("material:") for key in skip):
         return None
     for fact in profile.materials:
-        if fact.source != "INFERRED" or not fact.main_part:
+        # Eşya türü malzemesinden bağımsız tanımlanıyorsa (ölçümde: melodika,
+        # çocuk kitabı, mum, SUP seti) cevap kararı değiştirmez; BTB numunelerinin
+        # %13'ünde gereksiz soru soruluyor ve analiz duruyordu.
+        if fact.source != "INFERRED" or not fact.main_part or not fact.changes_classification:
             continue
         values = _dedupe([fact.value, *fact.alternatives])[:4]
         if len(values) < 2:
+            continue
+        if not _material_changes_classification(profile, fact, values):
+            fact.changes_classification = False
             continue
         part = fact.part or "ürün"
         return {
@@ -379,7 +441,9 @@ def has_unconfirmed_decisive_fact(profile: ProductProfile) -> bool:
     """Karar, teyit edilmemiş bir varsayıma mı dayanıyor? (müşavir inceleme işareti)"""
     if profile.product_type.source == "INFERRED":
         return True
-    return not profile.is_machine and any(m.source == "INFERRED" and m.main_part for m in profile.materials)
+    return not profile.is_machine and any(
+        m.source == "INFERRED" and m.main_part and m.changes_classification for m in profile.materials
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
