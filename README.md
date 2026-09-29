@@ -49,7 +49,7 @@ Tasarımın ana ilkesi: **model yalnız seçer, kodu sunucu üretir ve doğrular
 
 ## Ölçüm
 
-Her önemli değişiklik aynı holdout üzerinde ölçüldü: **120 gerçek BTB kararı**, fasıllara dengeli dağıtılmış, tohum 42. Numunenin kendi kararı emsal havuzundan çıkarılır (sızıntı yok). Ham raporlar [`benchmark_results/`](benchmark_results/) altında.
+Her önemli değişiklik aynı holdout üzerinde ölçüldü: **120 gerçek BTB kararı**, fasıllara dengeli dağıtılmış, tohum 42. Numunenin kendi kararı emsal havuzundan çıkarılır (sızıntı yok). 22 koşunun tamamı: [docs/BENCHMARK_SONUCLARI.md](docs/BENCHMARK_SONUCLARI.md).
 
 **Seçim modeli karşılaştırması** (aynı kod ve imaj, yalnız model değişti):
 
@@ -82,7 +82,6 @@ Her önemli değişiklik aynı holdout üzerinde ölçüldü: **120 gerçek BTB 
 |---|---|
 | 2026 Türk Gümrük Tarife Cetveli (97 fasıl, 964 pozisyon, 19.704 GTİP) ve fasıl/bölüm notları; Ticaret Bakanlığı'nın Excel dosyalarından dönüştürüldü | `data/tgtc_2026_*.json`, `api/data/` |
 | 2.355 BTB kararı (Ticaret Bakanlığı BTB portalı, kamuya açık; toplayan betik `scripts/scrape_all_btb_2020_2026.py`) | `data/btb_kararlari_export_2026-09-29.json` |
-| Benchmark raporları | `benchmark_results/` |
 
 ## Yerelde çalıştırma
 
@@ -144,7 +143,6 @@ api/            FastAPI uygulaması
 web/            React arayüzü
 scripts/        ETL, benchmark, dağıtım ve veri yükleme betikleri
 tests/          pytest
-benchmark_results/  ölçüm raporları
 docs/           ekran görüntüleri ve GCP dağıtım notları
 ```
 

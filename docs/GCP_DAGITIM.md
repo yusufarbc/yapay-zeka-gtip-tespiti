@@ -78,7 +78,7 @@ $env:DATABASE_URL = 'postgresql+psycopg2://postgres:<parola>@127.0.0.1:5432/gtip
 .\.venv\Scripts\python.exe -m scripts.evaluate_gtip_benchmark --sample 300
 ```
 
-Sonuç `benchmark_results/benchmark-<zaman>.json` altına yazılır. Bir önceki ölçümle
+Sonuç `benchmark_results/benchmark-<zaman>.json` altına yazılır (git'e girmez; geçmiş ölçümlerin özeti [BENCHMARK_SONUCLARI.md](BENCHMARK_SONUCLARI.md)). Bir önceki ölçümle
 karşılaştırmak için:
 
 ```powershell
