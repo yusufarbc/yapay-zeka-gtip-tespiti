@@ -937,6 +937,10 @@ class RAGEngine:
         rejected_chapters: List[str] = []
         max_chapter_attempts = 2
         exclusion_checked = False
+        # Fasıl uygunluk kontrolü yalnız modelin seçtiği fasılda yapılır;
+        # müşavirin seçtiği (HITL) fasıl sorgulanmaz.
+        chapter_from_model = False
+        pending_rejection_reason: Optional[str] = None
 
         for attempt in range(max_chapter_attempts):
             if not locked_chapter:
@@ -946,6 +950,7 @@ class RAGEngine:
                     session_id, product_text, "CHAPTER", self._chapter_nodes(),
                     traversal=traversal, precedents=precedents,
                     rejected_codes=rejected_chapters or None, deadline=deadline,
+                    rejection_reason=pending_rejection_reason,
                 )
                 _merge_rules(g_keys, c_notes)
                 if question:
@@ -954,6 +959,7 @@ class RAGEngine:
                 if not node:
                     return HierarchicalSearchResult(traversal_state=traversal)
                 locked_chapter = _digits(node["gtip_code"]).zfill(2)
+                chapter_from_model = True
 
                 # Fasıl notsuz seçildi; dışlama hükümleri ürünü AÇIKÇA dışlıyorsa
                 # pozisyon seviyesine inmeden geri al. Her analizde en çok bir kez.
@@ -1007,6 +1013,25 @@ class RAGEngine:
             )
             _merge_rules(g_keys, c_notes)
             if question:
+                # Soru müşaviriye gösterilmeden önce: fasıl gerçekten doğru mu?
+                # Yanlış fasılda soru, müşaviri yanlış seçenekler arasında seçime
+                # zorlar (cam balkon -> Fasıl 70 -> "float mı, temperli mi?").
+                budget_left = deadline is None or time.monotonic() < deadline
+                if can_backtrack and chapter_from_model and settings.CHAPTER_FIT_CHECK_ENABLED and budget_left:
+                    fit = llm_verifier.confirm_chapter_fit(
+                        product_text, locked_chapter,
+                        load_tgtc_chapters().get(locked_chapter, f"Fasıl {locked_chapter}"),
+                        heading_nodes, deadline,
+                    )
+                    if not fit.get("belongs", True):
+                        reason = str(fit.get("reason") or "faslın pozisyonları ürünün kendisini tanımlamıyor")[:300]
+                        logger.warning("Fasıl %s ürüne uymuyor; soru yerine geri alınıyor: %s", locked_chapter, reason)
+                        rejected_chapters.append(locked_chapter)
+                        traversal["rejected_chapters"] = list(rejected_chapters)
+                        traversal["chapter_fit_rejected"] = {"chapter": locked_chapter, "reason": reason}
+                        pending_rejection_reason = f"Fasıl {locked_chapter} ürüne uymuyor: {reason}"
+                        locked_chapter = None
+                        continue
                 traversal.update({"pending_level": "HEADING", "branches": self._question_branches(question)})
                 return HierarchicalSearchResult(discriminator_question=question, traversal_state=traversal)
             if node:

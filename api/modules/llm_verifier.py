@@ -556,4 +556,65 @@ class LLMFactVerifier:
         return verdict
 
 
+    def confirm_chapter_fit(
+        self,
+        product_text: str,
+        chapter: str,
+        chapter_title: str,
+        headings: List[Dict[str, Any]],
+        deadline: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Model faslın pozisyonları arasında soru sormak isterken fasıl gerçekten doğru mu?
+
+        Canlıda "cam balkon" önce Fasıl 70'e (cam) gidiyor ve pozisyon
+        seviyesinde "float cam mı, temperli cam mı?" soruluyordu. Soru, yanlış
+        fasılda müşaviri yanlış seçenekler arasında seçime zorlar. Bu kontrol
+        faslın TÜM pozisyon metinlerini gösterip ürünün kendisinin (esas
+        niteliğiyle) bunlardan birine girip girmediğini sorar. Pozisyonlar
+        ürünün yalnız bir bileşenini veya hammaddesini tanımlıyorsa uymaz.
+        Hata olursa fasıl korunur (mevcut davranış).
+        """
+        verdict = {"belongs": True, "reason": None, "better_chapter": None}
+        if settings.USE_GCP_EMULATOR or settings.ENVIRONMENT == "testing" or not headings:
+            return verdict
+        if deadline is not None and time.monotonic() >= deadline:
+            return verdict
+        listing = "\n".join(
+            f"{re.sub(r'[^0-9]', '', str(node.get('gtip_code') or ''))}: {str(node.get('description') or '')[:300]}"
+            for node in headings
+        )[:7000]
+        prompt = (
+            "Sen Türk Gümrük Tarife Cetveli uzmanısın. Bir ürün için Fasıl "
+            f"{chapter} ({chapter_title}) seçildi, fakat bu faslın pozisyonları arasında kesin seçim yapılamadı.\n\n"
+            f"FASIL {chapter} POZİSYONLARININ RESMÎ METİNLERİ:\n{listing}\n\n"
+            f"<product_data>{product_text}</product_data>\n\n"
+            "Soru: Ürünün KENDİSİ, bütünü ve esas niteliğiyle, bu pozisyonlardan birinin tanımına giriyor mu?\n"
+            "- Pozisyonlar yalnız ürünün bir BİLEŞENİNİ veya hammaddesini tanımlıyorsa belongs=false.\n"
+            "- Eşyanın türü (ne olduğu, işlevi) başka bir fasılda daha özel tanımlanıyorsa belongs=false (GYK 1, 3(a)).\n"
+            "- Ürün bu pozisyonlardan birine açıkça giriyor ve yalnız ayrım için bilgi eksikse belongs=true.\n"
+            "Yalnız şu JSON'u döndür (önce gerekçe): "
+            "{\"reason\":\"kısa Türkçe gerekçe\",\"better_chapter\":\"daha uygun fasıl numarası veya null\",\"belongs\":true}"
+        )
+        try:
+            from api.modules.vertex_client import get_genai_client
+
+            # Tüm pozisyon listesi + düşünme payı: ölçümde 5-8 sn; 8 sn sınırı
+            # ilk denemede zaman aşımına düşürüyordu.
+            response = get_genai_client().models.generate_content(
+                model=settings.REASONING_LLM_MODEL,
+                contents=prompt,
+                config=self._config(False, min(12000, self._call_timeout_ms(deadline)), "EXCLUSION"),
+            )
+            match = re.search(r"\{.*\}", response.text or "", re.DOTALL)
+            data = json.loads(match.group(0) if match else (response.text or "{}"))
+            verdict.update({
+                "belongs": data.get("belongs") is not False,
+                "reason": (str(data.get("reason")).strip()[:400] or None) if data.get("reason") else None,
+                "better_chapter": (re.sub(r"\D", "", str(data.get("better_chapter") or "")) or None),
+            })
+        except Exception as exc:
+            logger.warning("Fasıl uygunluk kontrolü yapılamadı (fasıl=%s): %s", chapter, exc)
+        return verdict
+
+
 llm_verifier = LLMFactVerifier()

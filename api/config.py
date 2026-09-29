@@ -148,6 +148,10 @@ class Settings(BaseSettings):
     # kısa bir kontrol. Fasıl seçimi notsuz yapıldığı için yanlış fasıl ancak
     # pozisyon seviyesinde anlaşılıyor ve bir tur kaybediliyordu.
     CHAPTER_EXCLUSION_CHECK_ENABLED: bool = os.getenv("CHAPTER_EXCLUSION_CHECK_ENABLED", "true").lower() == "true"
+    # Model kendi seçtiği ilk fasılda pozisyon sorusu sormak isterse, soru
+    # müşaviriye gösterilmeden önce faslın ürüne uyup uymadığı sorgulanır.
+    # Cam balkon Fasıl 70'te "float mı, temperli mi?" sorusuna takılıyordu.
+    CHAPTER_FIT_CHECK_ENABLED: bool = os.getenv("CHAPTER_FIT_CHECK_ENABLED", "true").lower() == "true"
 
     HEADING_ROUTING_ENABLED: bool = os.getenv("HEADING_ROUTING_ENABLED", "true").lower() == "true"
     HEADING_ROUTING_MIN_BTB: float = float(os.getenv("HEADING_ROUTING_MIN_BTB", "0.80"))
