@@ -133,7 +133,7 @@ flowchart TD
 | **Web sunumu** | Nginx (`web/nginx.conf.template`) | Statik dosyalar ve `/api/v1` → `BACKEND_ORIGIN` proxy. İmaja ortam URL'si gömülmez. |
 | **API** | FastAPI (sürüm `1.1.0`), Uvicorn, Pydantic v2 | REST uç noktaları, SSE, toplu analiz, PDF. |
 | **Orkestrasyon** | Düz Python sınıfı `GTIPWorkflowEngine` | Analizi başlatma, duraklatma, devam ettirme. (LangGraph kullanılmaz; senkron akış `asyncio.to_thread` ile çalışır.) |
-| **LLM** | Google GenAI SDK, Vertex AI (ADC) | `REASONING_LLM_MODEL = gemini-2.5-flash` (seçim), `EXTRACTOR_LLM_MODEL = gemini-2.5-flash-lite` (çıkarım). |
+| **LLM** | Google GenAI SDK, Vertex AI (ADC) | `REASONING_LLM_MODEL = gemini-3.5-flash` (seçim; aynı 120 BTB numunesinde GTİP %52.5, 2.5-flash %34.2), `EXTRACTOR_LLM_MODEL = gemini-2.5-flash-lite` (çıkarım). |
 | **Veritabanı** | Cloud SQL PostgreSQL, SQLAlchemy 2, `vector`, `ltree`, `uuid-ossp` uzantıları | Tarife yaprakları, emsaller, oturum durumu, karar kayıtları. |
 | **Dosya deposu** | Cloud Storage | Görsel yüklemeleri (`uploads/YYYY/MM/DD/`), ETL ham JSONL arşivi. |
 | **Denetim** | Cloud SQL `audit_logs` (varsayılan) veya Firestore `gtip_audit_logs` | `AUDIT_BACKEND` ile seçilir. |
