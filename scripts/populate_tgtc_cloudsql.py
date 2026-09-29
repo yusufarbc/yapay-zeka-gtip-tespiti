@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.db.database import engine, init_orm_tables, TgtcRuleModel, TgtcNoteModel, TgtcGtipModel
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TGTC_DIR = os.path.join(BASE_DIR, "2026 TGTC")
+TGTC_DIR = os.path.join(BASE_DIR, "data")
 
 def clean_turkish(text_input):
     if not isinstance(text_input, str):

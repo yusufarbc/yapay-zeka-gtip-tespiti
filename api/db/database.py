@@ -653,7 +653,7 @@ def init_orm_tables():
                 count_gtip = session.query(TgtcGtipModel).count()
                 auto_seed_enabled = os.getenv("SKIP_TGTC_AUTO_SEED", "false").lower() != "true"
                 if count_gtip == 0 and auto_seed_enabled:
-                    logger.info("[SQLAlchemy ORM] Cloud SQL Tarife Ağacı boş! '2026 TGTC' dizininden 01-99 Fasıllar ve GTİP tohumlaması başlatılıyor...")
+                    logger.info("[SQLAlchemy ORM] Cloud SQL Tarife Ağacı boş! 'data/' dizinindeki 2026 TGTC kataloğundan 01-99 Fasıllar ve GTİP tohumlaması başlatılıyor...")
                     from scripts.populate_tgtc_cloudsql import extract_gir_rules, extract_chapter_notes, populate_gtip_tree
                     extract_gir_rules(session)
                     extract_chapter_notes(session)

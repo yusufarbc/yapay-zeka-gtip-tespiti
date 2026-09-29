@@ -31,7 +31,7 @@ htmlcov/
 
 # Large Raw PDFs and temporary data dumps
 *.pdf
-2026 TGTC/*.pdf
+data/tgtc_xls/
 curl_output*.json
 curl_output_*.json
 

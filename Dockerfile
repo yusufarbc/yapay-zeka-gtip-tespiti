@@ -41,9 +41,9 @@ ENV PATH="/venv/bin:$PATH"
 # Uygulama kodunu kopyala (tests/, .venv/, archieve/ dışarıda kalır → .dockerignore)
 COPY --chown=app:app api/ /app/api/
 COPY --chown=app:app scripts/ /app/scripts/
-RUN mkdir -p "/app/2026 TGTC"
-COPY --chown=app:app ["2026 TGTC/tgtc_2026_full_database.json", "/app/2026 TGTC/tgtc_2026_full_database.json"]
-COPY --chown=app:app ["2026 TGTC/tgtc_2026_rules_and_notes.json", "/app/2026 TGTC/tgtc_2026_rules_and_notes.json"]
+RUN mkdir -p /app/data
+COPY --chown=app:app ["data/tgtc_2026_full_database.json", "/app/data/tgtc_2026_full_database.json"]
+COPY --chown=app:app ["data/tgtc_2026_rules_and_notes.json", "/app/data/tgtc_2026_rules_and_notes.json"]
 
 ENV PORT=8080
 ENV PYTHONUNBUFFERED=1

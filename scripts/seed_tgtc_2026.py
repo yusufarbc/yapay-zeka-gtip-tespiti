@@ -34,7 +34,7 @@ from api.db.database import (
 )
 from api.config import settings
 
-TGTC_DIR = os.path.join(ROOT_DIR, "2026 TGTC")
+TGTC_DIR = os.path.join(ROOT_DIR, "data")
 
 
 def get_embedding_batches(texts: List[str], batch_size: int = 100) -> List[Optional[List[float]]]:

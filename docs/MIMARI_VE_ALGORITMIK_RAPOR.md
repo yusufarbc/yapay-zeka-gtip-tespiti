@@ -111,7 +111,7 @@ flowchart TD
 
     subgraph Data ["VERİ"]
         SQL[("Cloud SQL PostgreSQL\npgvector + ltree")]
-        JSON["İmaja gömülü katalog\n2026 TGTC/*.json\napi/data/*.json"]
+        JSON["İmaja gömülü katalog\ndata/tgtc_2026_*.json\napi/data/*.json"]
         GCS["Cloud Storage\n(yüklemeler, ham ETL arşivi)"]
     end
 
@@ -275,7 +275,7 @@ flowchart TD
 | Seviye | Kaynak | Not |
 | :--- | :--- | :--- |
 | `CHAPTER` | `load_tgtc_chapters()` + `get_local_tgtc_headings()` | Her fasıl için başlık ve pozisyon kapsamı verilir. Pozisyon **listesi kesilmez**, yalnız etiketler kısaltılır (`CHAPTER_HEADING_LABEL_CHARS=20`, fasıl başına ≤ `CHAPTER_SCOPE_CHARS=2600`). Prompt ~21.000 token'dan ~11.300 token'a indi ve Fasıl 61'de 6109 gibi pozisyonlar görünür kaldı. |
-| `HEADING` | `2026 TGTC/tgtc_2026_full_database.json` içindeki 4 haneli kayıtlar | 964 pozisyon. |
+| `HEADING` | `data/tgtc_2026_full_database.json` içindeki 4 haneli kayıtlar | 964 pozisyon. |
 | `SUBHEADING` | `tgtc_gtip` (`level='SUBHEADING'`), `tariff_hierarchy` (`level=6`), eksikse yapraklardan türetme | [tgtc_subheading_context.json](../api/data/tgtc_subheading_context.json) bağlamı `branch_context` olarak eklenir. |
 | `GTIP` | `tgtc_gtip` (`level='GTIP'`, `is_active`) + `tariff_hierarchy` (`is_leaf`) | Açıklamalar kökten yaprağa tam yolu taşır (`scripts/rebuild_tgtc_catalog.py`). |
 
@@ -461,10 +461,10 @@ stateDiagram-v2
 ### 6.1. Katalog kaynakları
 | Kaynak | İçerik | Kullanım |
 | :--- | :--- | :--- |
-| `2026 TGTC/tgtc_2026_full_database.json` (imaja gömülü) | 19.704 kayıt: 964 pozisyon (4 hane), 3.008 alt pozisyon (6 hane), 15.717 yaprak (12 hane) | Fasıl ve pozisyon seçenek listeleri (`get_local_tgtc_headings`). |
-| `2026 TGTC/tgtc_2026_rules_and_notes.json` (imaja gömülü) | 48 yorum kuralı maddesi, 36 ölçü birimi, 96 fasıl notu | Seçim promptundaki fasıl notları ve `FASIL_NOTU` kaynakları. |
+| `data/tgtc_2026_full_database.json` (imaja gömülü) | 19.704 kayıt: 964 pozisyon (4 hane), 3.008 alt pozisyon (6 hane), 15.717 yaprak (12 hane) | Fasıl ve pozisyon seçenek listeleri (`get_local_tgtc_headings`). |
+| `data/tgtc_2026_rules_and_notes.json` (imaja gömülü) | 48 yorum kuralı maddesi, 36 ölçü birimi, 96 fasıl notu | Seçim promptundaki fasıl notları ve `FASIL_NOTU` kaynakları. |
 | [api/data/tgtc_subheading_context.json](../api/data/tgtc_subheading_context.json) | Alt pozisyon bağlam metinleri | SUBHEADING düğümlerine `branch_context`. |
-| `2026 TGTC/2026 TGTC/*.xls`, `2026 FASIL NOTLARI/*.xls` (repoda tutulmaz) | Ham resmî cetvel ve fasıl notları; içerikleri `2026 TGTC/*.json` dosyalarındadır | Ticaret Bakanlığı'ndan indirilip `scripts/rebuild_tgtc_catalog.py` ile hiyerarşisi korunarak yeniden çıkarılabilir. |
+| Ham `*.xls` cetvel ve fasıl notu dosyaları (repoda tutulmaz; `data/tgtc_xls/` altına indirilir) | Ham resmî cetvel ve fasıl notları; içerikleri `data/tgtc_2026_*.json` dosyalarındadır | Ticaret Bakanlığı'ndan indirilip `scripts/rebuild_tgtc_catalog.py` ile hiyerarşisi korunarak yeniden çıkarılabilir. |
 
 **Katalog yeniden çıkarımı:** Önceki katalog, ham cetveldeki ara grup başlıklarını ve satır devamlarını atmıştı.
 15.718 yaprağın 3.645'i (%23.2) kardeşiyle aynı metne sahipti; örneğin `841370` altındaki 22 yaprağın tamamı
