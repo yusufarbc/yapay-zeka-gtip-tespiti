@@ -83,6 +83,10 @@ class MaterialFact(ProfileFact):
         default_factory=list, max_length=4,
         description="Malzeme varsayımsa, bu parça için yaygın diğer malzemeler (teyit sorusu seçenekleri)",
     )
+    changes_classification: bool = Field(
+        default=True,
+        description="Parça alternatif malzemeden olsaydı tarife pozisyonu değişir miydi? Değişmezse teyit sorusu sorulmaz",
+    )
 
 
 class ProductProfile(BaseModel):

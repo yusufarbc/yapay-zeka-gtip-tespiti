@@ -18,6 +18,7 @@ def _model_profile(monkeypatch, data):
     monkeypatch.setattr(pp.settings, "USE_GCP_EMULATOR", False)
     monkeypatch.setattr(pp.settings, "ENVIRONMENT", "production")
     monkeypatch.setattr(pp, "_call_model", lambda user_text, pool: data)
+    monkeypatch.setattr(pp, "_material_changes_classification", lambda profile, fact, values: True)
 
 
 def _cam_balkon(frame_source="INFERRED"):
@@ -84,6 +85,28 @@ def test_machines_are_not_asked_about_material(monkeypatch):
         "materials": [{"part": "gövde", "value": "plastik", "source": "INFERRED", "alternatives": ["metal"]}],
     })
     assert pp.confirmation_question(pp.build_profile("kablosuz kulaklık")) is None
+
+
+def test_material_is_not_asked_when_it_does_not_decide_the_classification(monkeypatch):
+    """BTB ölçümünde melodika, kitap, mum gibi eşyalarda malzeme soruluyordu."""
+    _model_profile(monkeypatch, {
+        "product_type": {"value": "melodika", "source": "USER"},
+        "is_machine": False,
+        "materials": [{"part": "gövde", "value": "plastik", "source": "INFERRED", "main_part": True,
+                       "alternatives": ["metal", "ahşap"]}],
+    })
+    monkeypatch.setattr(pp, "_material_changes_classification", lambda profile, fact, values: False)
+    profile = pp.build_profile("32 tuşlu melodika")
+    assert pp.confirmation_question(profile) is None
+    assert not pp.has_unconfirmed_decisive_fact(profile)
+
+
+def test_material_question_is_kept_when_the_check_says_it_matters(monkeypatch):
+    """Kontrol "değişir" derse (cam balkon: çerçeve alüminyum mu PVC mi) soru sorulur."""
+    _model_profile(monkeypatch, CAM_BALKON)
+    profile = pp.build_profile("cam balkon sistemi")
+    assert all(m.changes_classification for m in profile.materials)
+    assert pp.confirmation_question(profile) is not None
 
 
 def test_unclear_product_type_is_asked_first_and_only_one_material_question(monkeypatch):
