@@ -3,7 +3,7 @@
 > Bu belge sistem Google Cloud üzerinde çalışırken yazıldı. Servisler Eylül 2026 sonunda kapatıldı; komutlar referans için korunuyor.
 
 FastAPI backend, React/Vite arayüz ve TGTC/BTB veri işleme araçları.
-Üretim mimarisi ve veri kaynakları için [mimari rapora](../MIMARI_VE_ALGORITMIK_RAPOR.md) bakın.
+Üretim mimarisi ve veri kaynakları için [mimari rapora](MIMARI_VE_ALGORITMIK_RAPOR.md) bakın.
 
 ## Yerel geliştirme (Windows / PowerShell)
 
@@ -209,8 +209,9 @@ Dağıtım betiği trafiği kaydırdıktan sonra eski `candidate-*` etiketlerini
 Etiketli revizyonlar `min-instances=1` ile adreslenebilir kaldığında trafik almasalar
 bile sürekli açık instance olarak faturalanır.
 
-Ayrıntılı geri yükleme, IAM, smoke test ve rollback kapıları için
-[GCP dağıtım planına](gcp_deploy_plan.md) bakın.
+Ayrıntılı geri yükleme, IAM, smoke test ve rollback adımları için
+`scripts/deploy_cloud_run.ps1`, `scripts/restore_cloud_sql.ps1` ve
+`scripts/verify_deployment.ps1` betiklerine bakın.
 
 ## İzleme ve alarm
 

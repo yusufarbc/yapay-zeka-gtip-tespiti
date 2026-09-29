@@ -45,7 +45,7 @@ flowchart LR
     E --> F[Karar + gerekçe<br/>+ kaynaklar + PDF]
 ```
 
-Tasarımın ana ilkesi: **model yalnız seçer, kodu sunucu üretir ve doğrular.** Model her seviyede önce gerekçesini, sonra kararını yazar (aksi halde gerekçe ile karar çelişebiliyordu). Ayrıntılı tasarım, veri katmanı ve her kararın ölçüm gerekçesi [mimari raporda](MIMARI_VE_ALGORITMIK_RAPOR.md).
+Tasarımın ana ilkesi: **model yalnız seçer, kodu sunucu üretir ve doğrular.** Model her seviyede önce gerekçesini, sonra kararını yazar (aksi halde gerekçe ile karar çelişebiliyordu). Ayrıntılı tasarım, veri katmanı ve her kararın ölçüm gerekçesi [mimari raporda](docs/MIMARI_VE_ALGORITMIK_RAPOR.md).
 
 ## Ölçüm
 
@@ -81,7 +81,7 @@ Her önemli değişiklik aynı holdout üzerinde ölçüldü: **120 gerçek BTB 
 | Kaynak | Konum |
 |---|---|
 | 2026 Türk Gümrük Tarife Cetveli (97 fasıl, 964 pozisyon, 19.704 GTİP) ve fasıl/bölüm notları | `2026 TGTC/`, `api/data/` |
-| 2.355 BTB kararı (Ticaret Bakanlığı, kamuya açık) | `data/btb_kararlari_export_2026-09-29.json` |
+| 2.355 BTB kararı (Ticaret Bakanlığı BTB portalı, kamuya açık; toplayan betik `scripts/scrape_all_btb_2020_2026.py`) | `data/btb_kararlari_export_2026-09-29.json` |
 | Benchmark raporları | `benchmark_results/` |
 
 ## Yerelde çalıştırma
