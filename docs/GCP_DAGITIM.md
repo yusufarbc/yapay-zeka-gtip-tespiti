@@ -3,7 +3,7 @@
 > Bu belge sistem Google Cloud üzerinde çalışırken yazıldı. Servisler Eylül 2026 sonunda kapatıldı; komutlar referans için korunuyor.
 
 FastAPI backend, React/Vite arayüz ve TGTC/BTB veri işleme araçları.
-Üretim mimarisi ve veri kaynakları için [mimari rapora](../MIMARI_VE_ALGORITMIK_RAPOR.md) bakın.
+Üretim mimarisi ve veri kaynakları için [mimari rapora](MIMARI_VE_ALGORITMIK_RAPOR.md) bakın.
 
 ## Yerel geliştirme (Windows / PowerShell)
 
