@@ -48,8 +48,10 @@ class Settings(BaseSettings):
     FAST_LLM_MODEL: str = os.getenv("FAST_LLM_MODEL", "gemini-2.5-flash-lite")
     EXTRACTOR_LLM_MODEL: str = os.getenv("EXTRACTOR_LLM_MODEL", "gemini-2.5-flash-lite")
     # Kapalı küme tarife seçimi. Aynı 120 BTB numunesinde (29 Eylül 2026):
-    # 2.5-flash GTİP %34.2, 3.5-flash-lite %40.0, 3.5-flash %52.5.
-    REASONING_LLM_MODEL: str = os.getenv("REASONING_LLM_MODEL", "gemini-3.5-flash")
+    # 2.5-flash GTİP %34.2, 3.5-flash-lite %40.0, 3.5-flash %52.5. 3.5-flash
+    # ~5 kat pahalı olduğu için maliyet/doğruluk dengesinde flash-lite seçildi
+    # (ortanca süre 16.6 -> 9.1 sn).
+    REASONING_LLM_MODEL: str = os.getenv("REASONING_LLM_MODEL", "gemini-3.5-flash-lite")
     AUDITOR_LLM_MODEL: str = os.getenv("AUDITOR_LLM_MODEL", "gemini-2.5-flash")
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-005")
     EBTI_EMBEDDING_MODEL: str = os.getenv("EBTI_EMBEDDING_MODEL", "text-multilingual-embedding-002")

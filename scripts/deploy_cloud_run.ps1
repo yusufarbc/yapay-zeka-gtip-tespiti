@@ -275,7 +275,7 @@ try {
         WEB_CONCURRENCY = "1"
         PRIMARY_AI_MODEL = "gemini-2.5-flash"
         EXTRACTOR_LLM_MODEL = "gemini-2.5-flash-lite"
-        REASONING_LLM_MODEL = "gemini-3.5-flash"
+        REASONING_LLM_MODEL = "gemini-3.5-flash-lite"
         AUDITOR_LLM_MODEL = "gemini-2.5-flash"
         EMBEDDING_MODEL = "text-embedding-005"
         CORS_ALLOWED_ORIGINS = ($AdditionalCorsOrigins -join ",")
