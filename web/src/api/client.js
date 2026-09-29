@@ -19,11 +19,12 @@ export const getAPIErrorMessage = (error, fallback) => {
 
 // Ürün dosyası: yalnız form alanları. Fotoğraf/katalog ekleme arayüzden
 // kaldırıldı; API ek kabul etmeye devam eder (attachment_uris).
+// 75 sn: sunucunun toplam bütçesi (CLIENT_REQUEST_BUDGET_MS=65 sn) + ağ payı.
 export const analyzeProduct = async (dossierFields) => {
   const response = await axios.post(`${API_BASE_URL}/analyze-json`, {
     dossier: dossierFields,
   }, {
-    timeout: 45000
+    timeout: 75000
   });
   return response.data;
 };
@@ -39,7 +40,7 @@ export const respondHITL = async (sessionId, questionId, selectedOptionId, custo
     selected_option_id: selectedOptionId,
     custom_note: customNote,
   }, {
-    timeout: 45000
+    timeout: 75000
   });
   return response.data;
 };

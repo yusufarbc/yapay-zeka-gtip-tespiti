@@ -458,6 +458,27 @@ class LLMFactVerifier:
                 for option_id in selection.alternative_candidate_ids
                 if option_id in valid_ids
             ][:4]
+            # Fasıl seviyesinde "bilgi yetersiz" yasaktır, ama model yine de
+            # verebiliyor. Her yeniden deneme ~5 sn ve canlıda analiz bütçesini
+            # tüketip kararı manuel incelemeye düşürüyordu. Model seçenek
+            # önerdiyse ilk önerisiyle devam edilir; öneri sunucunun verdiği
+            # seçeneklerden biridir (kapalı küme korunur), reddedilenler hariç.
+            if level == "CHAPTER" and selection.status == CandidateSelectionStatus.INSUFFICIENT_INFORMATION:
+                rejected = set(rejected_codes or [])
+                usable = [
+                    oid for oid in selection.alternative_candidate_ids
+                    if re.sub(r"\D", "", str(option_map[oid].get("gtip_code") or "")) not in rejected
+                ]
+                if usable:
+                    logger.info(
+                        "CHAPTER seviyesinde bilgi yetersiz; yeniden deneme yerine ilk öneriyle devam: %s", usable[0]
+                    )
+                    selection.status = CandidateSelectionStatus.SELECT
+                    selection.selected_candidate_id = usable[0]
+                    selection.reasoning_points = [
+                        *selection.reasoning_points,
+                        "Fasıl seviyesinde kesin seçim yapılamadı; modelin ilk önerdiği fasılla devam edildi.",
+                    ][:6]
             should_retry_choice = (
                 selection.status == CandidateSelectionStatus.NO_MATCH
                 or (level == "CHAPTER" and selection.status != CandidateSelectionStatus.SELECT)

@@ -129,7 +129,7 @@ flowchart TD
 
 | Katman | Teknoloji | Rolü |
 | :--- | :--- | :--- |
-| **Frontend** | React 18, Vite 8, axios, lucide-react | Analiz paneli, HITL modalı, sonuç kartı, bilgi gezgini. İstek zaman aşımı 45 sn. |
+| **Frontend** | React 18, Vite 8, axios, lucide-react | Analiz paneli, HITL modalı, sonuç kartı, bilgi gezgini. İstek zaman aşımı 75 sn. |
 | **Web sunumu** | Nginx (`web/nginx.conf.template`) | Statik dosyalar ve `/api/v1` → `BACKEND_ORIGIN` proxy. İmaja ortam URL'si gömülmez. |
 | **API** | FastAPI (sürüm `1.1.0`), Uvicorn, Pydantic v2 | REST uç noktaları, SSE, toplu analiz, PDF. |
 | **Orkestrasyon** | Düz Python sınıfı `GTIPWorkflowEngine` | Analizi başlatma, duraklatma, devam ettirme. (LangGraph kullanılmaz; senkron akış `asyncio.to_thread` ile çalışır.) |
@@ -165,7 +165,7 @@ Sistem ürün metnini LLM'e verip "GTİP nedir?" diye sormaz. Akış aşağıdak
         ├── Tüm birebir BTB eşleşmeleri aynı aktif yaprağı mı gösteriyor? ── Evet ──┐
         │                                                                          │
         ▼ Hayır                                                                    │
- Aşama 3  Kapalı küme ağaç dolaşımı (32 sn bütçe)                                  │
+ Aşama 3  Kapalı küme ağaç dolaşımı (50 sn bütçe)                                  │
           En iyi BTB ≥ 0.80 ise: emsallerin ilk 3 pozisyonu → HEADING'den başla   │
             (bağlanamazsa tam dolaşıma dön)                                        │
           Aksi halde: CHAPTER → HEADING → SUBHEADING → GTIP                        │
@@ -237,7 +237,7 @@ Sistem ürün metnini LLM'e verip "GTİP nedir?" diye sormaz. Akış aşağıdak
 
 ```mermaid
 flowchart TD
-    Start["Ürün metni + emsaller + bütçe saati (32 sn)"] --> C["CHAPTER: 97 fasıl\n(etiket + kısaltılmış pozisyon kapsamı)"]
+    Start["Ürün metni + emsaller + bütçe saati (50 sn)"] --> C["CHAPTER: 97 fasıl\n(etiket + kısaltılmış pozisyon kapsamı)"]
     C -->|SELECT| H["HEADING: seçilen faslın 4 haneli pozisyonları"]
     H -->|SELECT| S["SUBHEADING: 6 haneli alt pozisyonlar\n(+ alt pozisyon bağlamı)"]
     H -->|hiçbir pozisyon uymadı| BT["Fasıl geri alması (1 kez)\nreddedilen fasıl modele bildirilir"]
@@ -293,7 +293,7 @@ Tek seçenekli seviyede model çağrılmaz; düğüm doğrudan seçilir (`GIR_1`
    yazılır; belirli ürün veya kod için kural yazılmaz. **Atıf dürüstlüğü:** Model yalnız promptta kendisine verilen resmî
    metne, nota veya emsale atıf yapabilir; verilmeyen bir hükmü "fasıl notları uyarınca" diye yazamaz. Dar/istisnai dallar ancak olumlu
    kanıtla seçilir, aksi halde "diğerleri" dalı seçilir. Soru yalnız kullanıcının gözlemleyebileceği bir fiziksel/teknik
-   özellik için sorulur. `CHAPTER` seviyesinde `INSUFFICIENT_INFORMATION` yasaktır.
+   özellik için sorulur. `CHAPTER` seviyesinde `INSUFFICIENT_INFORMATION` yasaktır; model yine de verirse ve seçenek önerdiyse yeniden deneme yapılmadan ilk önerilen fasılla devam edilir (reddedilen fasıllar hariç).
 2. **Resmî kapalı seçenekler:** `option_id`, `official_code`, `official_description` (≤1800 karakter, en fazla 250 düğüm).
 3. **Fasıl notları** (`SELECTION_USE_CHAPTER_NOTES`): Seçeneklerin tamamı tek bir fasla aitse o faslın resmî notu
    eklenir (≤6000 karakter). `CHAPTER` seviyesinde eklenmez.
@@ -320,7 +320,7 @@ Liste alanları şema doğrulamasından **önce** kırpılır (alternatifler ≤
 #### 3.4. Hata toleransı ve süre bütçesi
 | Mekanizma | Değer | Amaç |
 | :--- | :--- | :--- |
-| Toplam bütçe | `ANALYSIS_BUDGET_MS = 32000`, ağaç dolaşımı başlarken kurulur | Arayüz 45 sn'de vazgeçer. Bütçe dolunca hat eldeki en iyi sonucu döndürür. |
+| Toplam bütçe | `ANALYSIS_BUDGET_MS = 50000` (en çok `CLIENT_REQUEST_BUDGET_MS = 65000` eksi profil süresi), ağaç dolaşımı başlarken kurulur | Arayüz 75 sn'de vazgeçer. Bütçe dolunca hat eldeki en iyi sonucu döndürür. |
 | Çağrı başına timeout | `max(4 sn, min(LLM_TIMEOUT_MS=15 sn, kalan × 0.6))` | Tek yavaş çağrı tüm bütçeyi yemesin. |
 | Sağlayıcı hatası (429/504) | 3 deneme, üstel bekleme `1.2 sn · 2^(n-1)` | Bütçe yetmiyorsa beklemeden vazgeçer. |
 | İlk deneme | `thinking_budget=0`, `temperature=0.0` | Hızlı ve deterministik. |
@@ -444,7 +444,7 @@ stateDiagram-v2
 2. **Yanıt (`POST /api/v1/hitl/respond`):** Oturum `WAITING_FOR_USER` durumunda değilse, `question_id` güncel değilse veya
    seçenek soruya ait değilse `409` döner. Oturum yoksa `404` döner.
 3. **Devam (`resume_analysis`):** `pending_level` değerine göre seçilen dal kilitlenir. Örneğin HEADING'de fasıl ve pozisyon
-   kilitlenir, alt seviyeler sıfırlanır. Ağaç dolaşımı kalan seviyelerden, yeni bir 32 sn bütçeyle sürer.
+   kilitlenir, alt seviyeler sıfırlanır. Ağaç dolaşımı kalan seviyelerden, yeni bir 50 sn bütçeyle sürer.
    * Emsaller **yeniden aranmaz**, oturumdan geri yüklenir. Böylece HITL'li ve HITL'siz yol aynı kanıtla karar verir.
    * `applied_gir_keys`, `cited_chapter_notes`, `used_residual_fallback` taşınır. `hitl_answer_count` bir artırılır ve güven skoruna +0.08 olarak girer.
    * Yeni bir soru çıkarsa oturum tekrar duraklatılır. Birden fazla seviyede soru sorulabilir.

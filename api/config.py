@@ -79,13 +79,15 @@ class Settings(BaseSettings):
     # Hattın TOPLAM süre bütçesi. Tek tek çağrıların timeout'u vardı ama hattın
     # bütünü için sınır yoktu: bir sağlayıcı hatası (429/504) retry'larla
     # çarpılıp dört seviyeye yayılınca analiz 91 saniyeye kadar çıkabiliyordu.
-    # Arayüz 45 saniyede vazgeçtiği için kullanıcı hiçbir şey alamıyordu.
     # Bütçe dolduğunda hat zarifçe durur ve elindeki en iyi sonucu döndürür;
     # cevapsız bir timeout yerine cevaplanabilir bir soru daha değerlidir.
-    ANALYSIS_BUDGET_MS: int = int(os.getenv("ANALYSIS_BUDGET_MS", "32000"))
-    # Arayüzün istek timeout'u 45 sn; güvenlik payı düşülmüş toplam sınır.
-    # Uluslararası arama bu bütçeden ARTAN süreyi kullanır.
-    CLIENT_REQUEST_BUDGET_MS: int = int(os.getenv("CLIENT_REQUEST_BUDGET_MS", "38000"))
+    # 32 sn idi; ürün profili, fasıl dışlama ve fasıl uygunluk kontrolleri
+    # eklenince canlıda analizler bütçeye takılıp manuel incelemeye düştü.
+    ANALYSIS_BUDGET_MS: int = int(os.getenv("ANALYSIS_BUDGET_MS", "50000"))
+    # Arayüzün istek timeout'u 75 sn; güvenlik payı düşülmüş toplam sınır
+    # (profil adımı + dolaşım + uluslararası arama). nginx ve Cloud Run
+    # sınırları 300 sn olduğundan asıl sınır arayüzdür.
+    CLIENT_REQUEST_BUDGET_MS: int = int(os.getenv("CLIENT_REQUEST_BUDGET_MS", "65000"))
     # CHAPTER seçenek listesi hattın en yavaş ve 504 alan çağrısıydı (~21.000
     # token). Kapsam LİSTESİNİ kesmek yanlış çözümdü: Fasıl 61'de 6109 (tişört)
     # gibi yaygın pozisyonlar listeden düşüyordu. Bunun yerine pozisyon

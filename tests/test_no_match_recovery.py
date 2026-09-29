@@ -639,3 +639,74 @@ def test_code_outside_the_offered_set_is_ignored(monkeypatch):
     monkeypatch.setattr("api.modules.vertex_client.get_genai_client", lambda: SimpleNamespace(models=Models()))
     nodes = [{"gtip_code": "73", "description": "a"}, {"gtip_code": "76", "description": "b"}]
     assert verifier_module.llm_verifier.select_tariff_node("x", "CHAPTER", nodes).selected_candidate_id == "A"
+
+
+def _counting_models(text):
+    class Models:
+        calls = 0
+
+        def generate_content(self, **kwargs):
+            Models.calls += 1
+            return SimpleNamespace(text=text)
+
+    return Models
+
+
+def _patch_models(monkeypatch, models):
+    monkeypatch.setattr(verifier_module.settings, "USE_GCP_EMULATOR", False)
+    monkeypatch.setattr(verifier_module.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr("api.modules.vertex_client.get_genai_client",
+                        lambda: SimpleNamespace(models=models()))
+    monkeypatch.setattr(verifier_module.time, "sleep", lambda _: None)
+
+
+_CHAPTERS = [
+    {"gtip_code": "70", "description": "Cam ve cam eşya"},
+    {"gtip_code": "76", "description": "Alüminyum ve alüminyumdan eşya"},
+]
+
+
+def test_chapter_insufficient_with_suggestion_continues_without_retry(monkeypatch):
+    """
+    CHAPTER'da "bilgi yetersiz" + öneri geldiğinde iki daraltma denemesi
+    (~5 sn/deneme) canlıda bütçeyi tüketiyordu. İlk öneriyle devam edilir.
+    """
+    models = _counting_models(
+        '{"status":"INSUFFICIENT_INFORMATION","selected_candidate_id":null,'
+        '"alternative_candidate_ids":["B","A"],"question_text":"Hangisi?"}'
+    )
+    _patch_models(monkeypatch, models)
+
+    result = verifier_module.llm_verifier.select_tariff_node("cam balkon", "CHAPTER", _CHAPTERS)
+
+    assert models.calls == 1
+    assert result.status == CandidateSelectionStatus.SELECT
+    assert result.selected_candidate_id == "B"
+
+
+def test_chapter_insufficient_skips_rejected_suggestion(monkeypatch):
+    models = _counting_models(
+        '{"status":"INSUFFICIENT_INFORMATION","selected_candidate_id":null,'
+        '"alternative_candidate_ids":["A","B"],"question_text":"Hangisi?"}'
+    )
+    _patch_models(monkeypatch, models)
+
+    result = verifier_module.llm_verifier.select_tariff_node(
+        "cam balkon", "CHAPTER", _CHAPTERS, rejected_codes=["70"],
+    )
+
+    assert models.calls == 1
+    assert result.selected_candidate_id == "B"
+
+
+def test_chapter_insufficient_without_suggestion_still_retries(monkeypatch):
+    models = _counting_models(
+        '{"status":"INSUFFICIENT_INFORMATION","selected_candidate_id":null,'
+        '"alternative_candidate_ids":[],"question_text":"Hangisi?"}'
+    )
+    _patch_models(monkeypatch, models)
+
+    result = verifier_module.llm_verifier.select_tariff_node("belirsiz", "CHAPTER", _CHAPTERS)
+
+    assert models.calls == 3
+    assert result.status != CandidateSelectionStatus.SELECT
