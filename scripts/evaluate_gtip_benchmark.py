@@ -100,7 +100,11 @@ def stratify_by_chapter(
         return []
 
     rng = random.Random(seed)
-    pool = list(candidates)
+    # Veritabanı satırları ORDER BY olmadan fiziksel sırayla gelir ve bu sıra
+    # tablo güncellendikçe değişir; aynı tohum farklı numuneler seçiyordu
+    # (iki koşu 120 numunenin yalnız 60'ında örtüştü). Karıştırmadan önce
+    # sabit bir sıraya dizilir.
+    pool = sorted(candidates, key=lambda item: item["reference_no"])
     rng.shuffle(pool)
 
     by_chapter: Dict[str, List[Dict[str, Any]]] = collections.defaultdict(list)
