@@ -49,12 +49,12 @@ export function App() {
     if (AUDIT_LOGS_ENABLED) fetchLogs();
   }, []);
 
-  const handleStartAnalysis = async (dossierFields, files) => {
+  const handleStartAnalysis = async (dossierFields) => {
     setIsAnalyzing(true);
     setDecision(null);
 
     try {
-      const result = await analyzeProduct(dossierFields, files);
+      const result = await analyzeProduct(dossierFields);
       setDecision(result);
     } catch (err) {
       console.error(err);

@@ -1,9 +1,6 @@
 import React, { useState } from 'react';
-import { Sparkles, FileSearch, Paperclip, X } from 'lucide-react';
+import { Sparkles, FileSearch } from 'lucide-react';
 
-const MAX_FILES = 3;
-const MAX_FILE_BYTES = 10 * 1024 * 1024;
-const ACCEPTED = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
 
 const labelStyle = {
   display: 'block', fontSize: '0.84rem', color: 'var(--text-primary)', marginBottom: '6px', fontWeight: 600,
@@ -31,23 +28,9 @@ export const ProductInputForm = ({ onStartAnalysis, isLoading }) => {
   const [useAndFunction, setUseAndFunction] = useState('');
   const [isMachine, setIsMachine] = useState(false);
   const [material, setMaterial] = useState('');
-  const [files, setFiles] = useState([]);
   const [extra, setExtra] = useState('');
-  const [fileError, setFileError] = useState('');
 
   const canSubmit = !isLoading && productName.trim().length >= 2;
-
-  const handleFiles = (event) => {
-    const picked = Array.from(event.target.files || []);
-    event.target.value = '';
-    const rejected = picked.filter((f) => !ACCEPTED.includes(f.type) || f.size > MAX_FILE_BYTES);
-    const valid = picked.filter((f) => !rejected.includes(f));
-    const next = [...files, ...valid].slice(0, MAX_FILES);
-    setFiles(next);
-    if (rejected.length) setFileError('Yalnız JPEG, PNG, WEBP veya PDF; dosya başına en çok 10 MB.');
-    else if (files.length + valid.length > MAX_FILES) setFileError(`En çok ${MAX_FILES} dosya eklenebilir.`);
-    else setFileError('');
-  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -58,7 +41,7 @@ export const ProductInputForm = ({ onStartAnalysis, isLoading }) => {
       is_machine: isMachine,
       material: isMachine ? null : (material.trim() || null),
       extra_description: extra.trim() || null,
-    }, files);
+    });
   };
 
   return (
@@ -96,34 +79,6 @@ export const ProductInputForm = ({ onStartAnalysis, isLoading }) => {
                 placeholder="ör. Alüminyum profil, temperli cam panel" style={inputStyle} />
             </div>
           )}
-        </div>
-
-        <div style={{ marginBottom: '14px' }}>
-          <div>
-            <span style={labelStyle}>
-              Fotoğraf, katalog, broşür, teknik resim<span style={hintStyle}>en çok {MAX_FILES}; görsel veya PDF</span>
-            </span>
-            <label className="btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: files.length >= MAX_FILES ? 'not-allowed' : 'pointer', padding: '8px 12px', fontSize: '0.82rem', opacity: files.length >= MAX_FILES ? 0.5 : 1 }}>
-              <Paperclip size={14} />
-              <span>Dosya ekle</span>
-              <input type="file" multiple accept={ACCEPTED.join(',')} onChange={handleFiles}
-                disabled={files.length >= MAX_FILES} style={{ display: 'none' }} />
-            </label>
-            {files.length > 0 && (
-              <ul style={{ listStyle: 'none', padding: 0, margin: '8px 0 0', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                {files.map((file, idx) => (
-                  <li key={`${file.name}-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</span>
-                    <button type="button" aria-label={`${file.name} dosyasını kaldır`} onClick={() => setFiles(files.filter((_, i) => i !== idx))}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'inline-flex' }}>
-                      <X size={14} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {fileError && <p style={{ fontSize: '0.78rem', color: 'var(--status-amber)', margin: '6px 0 0' }}>{fileError}</p>}
-          </div>
         </div>
 
         <div style={{ marginBottom: '16px' }}>
