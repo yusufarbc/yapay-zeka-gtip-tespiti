@@ -464,7 +464,7 @@ stateDiagram-v2
 | `2026 TGTC/tgtc_2026_full_database.json` (imaja gömülü) | 19.704 kayıt: 964 pozisyon (4 hane), 3.008 alt pozisyon (6 hane), 15.717 yaprak (12 hane) | Fasıl ve pozisyon seçenek listeleri (`get_local_tgtc_headings`). |
 | `2026 TGTC/tgtc_2026_rules_and_notes.json` (imaja gömülü) | 48 yorum kuralı maddesi, 36 ölçü birimi, 96 fasıl notu | Seçim promptundaki fasıl notları ve `FASIL_NOTU` kaynakları. |
 | [api/data/tgtc_subheading_context.json](../api/data/tgtc_subheading_context.json) | Alt pozisyon bağlam metinleri | SUBHEADING düğümlerine `branch_context`. |
-| `2026 TGTC/2026 TGTC/*.xls`, `2026 FASIL NOTLARI/*.xls` | Ham resmî cetvel ve fasıl notları | `scripts/rebuild_tgtc_catalog.py` ile hiyerarşisi korunarak yeniden çıkarım. |
+| `2026 TGTC/2026 TGTC/*.xls`, `2026 FASIL NOTLARI/*.xls` (repoda tutulmaz) | Ham resmî cetvel ve fasıl notları; içerikleri `2026 TGTC/*.json` dosyalarındadır | Ticaret Bakanlığı'ndan indirilip `scripts/rebuild_tgtc_catalog.py` ile hiyerarşisi korunarak yeniden çıkarılabilir. |
 
 **Katalog yeniden çıkarımı:** Önceki katalog, ham cetveldeki ara grup başlıklarını ve satır devamlarını atmıştı.
 15.718 yaprağın 3.645'i (%23.2) kardeşiyle aynı metne sahipti; örneğin `841370` altındaki 22 yaprağın tamamı

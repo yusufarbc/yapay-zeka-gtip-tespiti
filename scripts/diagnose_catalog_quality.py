@@ -1,6 +1,9 @@
 """
 TGTC kataloğu metin kalitesi teşhisi.
 
+Ham Excel dosyaları repoda tutulmaz. Bu betiği çalıştırmak için Ticaret Bakanlığı'nın
+yayımladığı 2026 TGTC fasıl dosyalarını (*.xls) '2026 TGTC/2026 TGTC/' dizinine indirin.
+
 Sınıflandırmanın tavanını model değil, modelin okuduğu metin belirler. Bu araç
 kataloğun seçim yapılabilir olup olmadığını ölçer ve ham Excel kaynağıyla
 karşılaştırarak ne kadar ayırt edici metnin çıkarım sırasında kaybolduğunu

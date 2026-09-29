@@ -1,8 +1,6 @@
 import os
 import sys
 import json
-import glob
-import pandas as pd
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
@@ -51,84 +49,47 @@ def extract_gir_rules(session: Session):
     session.commit()
     print("GİR Rules inserted.")
 
-def extract_general_explanations(session: Session):
-    print("Extracting General Explanations...")
-    session.query(TgtcRuleModel).filter_by(rule_type="EXPLANATION").delete()
-    session.commit()
-    
-    xls_path = os.path.join(TGTC_DIR, "açıklamalar.xls")
-    try:
-        if os.path.exists(xls_path):
-            df = pd.read_excel(xls_path)
-            lines = df.iloc[:, 0].dropna().tolist()
-            text_val = "\n".join(str(l).strip() for l in lines if str(l).strip())
-            if text_val:
-                obj = TgtcRuleModel(
-                    rule_type="EXPLANATION",
-                    rule_number="A-D",
-                    title="İstatistik Pozisyonlarına Bölünmüş Türk Gümrük Tarife Cetveli Genel Açıklamaları",
-                    text=text_val
-                )
-                session.add(obj)
-                session.commit()
-                print("General Explanations inserted.")
-    except Exception as e:
-        print(f"Error parsing açıklamalar.xls: {e}")
+def _rules_and_notes() -> dict:
+    """Resmî TGTC ekleri (yorum kuralları, ölçü birimleri, 96 fasıl notu).
+
+    Ham Excel dosyaları repodan kaldırıldı; aynı içerik bu JSON'dadır ve
+    sınıflandırma fasıl notlarını zaten buradan okur (api/modules/tariff_notes.py).
+    """
+    path = os.path.join(TGTC_DIR, "tgtc_2026_rules_and_notes.json")
+    with open(path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
 
 def extract_measurements(session: Session):
     print("Extracting Measurements...")
     if session.query(TgtcRuleModel).filter_by(rule_type="MEASUREMENT").count() > 0:
         print("Measurements already exist in DB. Skipping.")
         return
-        
-    xls_path = os.path.join(TGTC_DIR, "ölçü birimleri.xls")
-    try:
-        df = pd.read_excel(xls_path)
-        text_lines = df.iloc[:, 0].dropna().tolist()
-        for idx, line in enumerate(text_lines):
-            val = str(line).strip()
-            if val:
-                obj = TgtcRuleModel(
-                    rule_type="MEASUREMENT",
-                    rule_number=str(idx+1),
-                    title="Ölçü Birimi" if idx == 0 else f"Ölçü Birimi {idx}",
-                    text=val
-                )
-                session.add(obj)
-        session.commit()
-        print("Measurements inserted.")
-    except Exception as e:
-        print(f"Error parsing measurements: {e}")
+    lines = [str(line).strip() for line in _rules_and_notes().get("olcu_birimleri", []) if str(line).strip()]
+    for idx, val in enumerate(lines):
+        session.add(TgtcRuleModel(
+            rule_type="MEASUREMENT",
+            rule_number=str(idx + 1),
+            title="Ölçü Birimi" if idx == 0 else f"Ölçü Birimi {idx}",
+            text=val,
+        ))
+    session.commit()
+    print("Measurements inserted.")
+
 
 def extract_chapter_notes(session: Session):
     print("Extracting Chapter Notes...")
     session.query(TgtcNoteModel).delete()
     session.commit()
 
-    notes_dir = os.path.join(TGTC_DIR, "2026 FASIL NOTLARI")
-    xls_files = glob.glob(os.path.join(notes_dir, "Fasıl *.xls"))
-    
-    for f in xls_files:
-        basename = os.path.basename(f)
-        chap_num_str = basename.replace("Fasıl ", "").replace(".xls", "").strip()
+    for chapter, raw_text in _rules_and_notes().get("fasil_notlari", {}).items():
         try:
-            chap_num = int(chap_num_str)
-            chapter_code = f"{chap_num:02d}"
-        except:
+            chapter_code = f"{int(str(chapter)):02d}"
+        except ValueError:
             continue
-        
-        try:
-            df = pd.read_excel(f)
-            text_lines = df.iloc[:, 0].dropna().tolist()
-            full_text = "\n".join(str(line).strip() for line in text_lines if str(line).strip())
-            
-            obj = TgtcNoteModel(
-                chapter_code=chapter_code,
-                text=full_text
-            )
-            session.add(obj)
-        except Exception as e:
-            print(f"Error parsing {basename}: {e}")
+        text_val = str(raw_text or "").strip()
+        if text_val:
+            session.add(TgtcNoteModel(chapter_code=chapter_code, text=text_val))
 
     session.commit()
     print("Chapter Notes inserted.")

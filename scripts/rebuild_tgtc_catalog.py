@@ -1,6 +1,9 @@
 """
 2026 TGTC kataloğunu ham Excel'den hiyerarşisi korunarak yeniden çıkarır.
 
+Ham Excel dosyaları repoda tutulmaz. Bu betiği çalıştırmak için Ticaret Bakanlığı'nın
+yayımladığı 2026 TGTC fasıl dosyalarını (*.xls) '2026 TGTC/2026 TGTC/' dizinine indirin.
+
 SORUN
 -----
 Mevcut katalog, ham cetveldeki iki satır türünü atmış:
