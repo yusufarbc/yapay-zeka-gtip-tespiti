@@ -84,6 +84,9 @@ class Settings(BaseSettings):
     # 32 sn idi; ürün profili, fasıl dışlama ve fasıl uygunluk kontrolleri
     # eklenince canlıda analizler bütçeye takılıp manuel incelemeye düştü.
     ANALYSIS_BUDGET_MS: int = int(os.getenv("ANALYSIS_BUDGET_MS", "50000"))
+    # Seçim yanıtı için düşünme payının ÜSTÜNE çıktı tavanı. Tekrar döngüsüne
+    # giren bir çağrı süre sınırı yerine birkaç saniyede kesilir.
+    SELECTION_MAX_OUTPUT_TOKENS: int = int(os.getenv("SELECTION_MAX_OUTPUT_TOKENS", "2048"))
     # Arayüzün istek timeout'u 75 sn; güvenlik payı düşülmüş toplam sınır
     # (profil adımı + dolaşım + uluslararası arama). nginx ve Cloud Run
     # sınırları 300 sn olduğundan asıl sınır arayüzdür.

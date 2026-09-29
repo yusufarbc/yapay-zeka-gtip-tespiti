@@ -186,6 +186,25 @@ def test_prompt_text_labels_every_fact_with_its_source():
     assert "ESAS NİTELİĞİ" not in text
 
 
+def test_prompt_text_drops_model_prose_and_minor_guesses():
+    """Tahmin edilen işlev/özet/yardımcı parça seçiciyi gereksiz soruya itiyordu."""
+    profile = ProductProfile(
+        product_type=ProfileFact(value="cam balkon", source="USER"),
+        function=ProfileFact(value="balkonu dış etkenlerden korumak", source="INFERRED"),
+        use_place=ProfileFact(value="balkon", source="USER"),
+        materials=[
+            MaterialFact(part="çerçeve", value="alüminyum", source="INFERRED"),
+            MaterialFact(part="conta", value="EPDM", source="INFERRED", main_part=False),
+            MaterialFact(part="panel", value="cam", source="USER"),
+        ],
+        summary="Alüminyum çerçeveli cam balkon.",
+    )
+    text = profile.as_prompt_text()
+    assert "İŞLEV" not in text and "ÖZET" not in text and "EPDM" not in text
+    assert "KULLANIM YERİ: balkon (kullanıcı beyanı)" in text
+    assert "çerçeve: alüminyum" in text and "panel: cam" in text
+
+
 # ── İş akışı: PROFILE sorusu ──────────────────────────────────────────────────
 
 def test_workflow_asks_before_classifying_and_resumes_with_the_answer(monkeypatch):

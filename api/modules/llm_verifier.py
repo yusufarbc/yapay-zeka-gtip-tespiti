@@ -62,6 +62,7 @@ class LLMFactVerifier:
         narrowing: bool = False,
         timeout_ms: Optional[int] = None,
         level: Optional[str] = None,
+        temperature: Optional[float] = None,
     ) -> Optional[Any]:
         try:
             from google.genai import types
@@ -70,11 +71,14 @@ class LLMFactVerifier:
             # hiçbir seçeneği eşleştiremediğinde çalışır; aynı promptu aynı
             # sıcaklıkta tekrar göndermek deterministik kurulumda aynı cevabı
             # üretir, bu yüzden bütçe ve sıcaklık bilinçli olarak değiştirilir.
+            thinking_budget = LLMFactVerifier._thinking_budget(narrowing, level)
             return types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(
-                    thinking_budget=LLMFactVerifier._thinking_budget(narrowing, level)
-                ),
-                temperature=0.3 if narrowing else 0.0,
+                thinking_config=types.ThinkingConfig(thinking_budget=thinking_budget),
+                temperature=temperature if temperature is not None else (0.3 if narrowing else 0.0),
+                # Normal bir yanıt ~300-600 token. Tavan yokken sıcaklık 0'da model
+                # bir gerekçe cümlesini sonsuz tekrarladı (cam balkon, CHAPTER) ve
+                # çağrı her denemede süre sınırına kadar asılı kaldı.
+                max_output_tokens=thinking_budget + settings.SELECTION_MAX_OUTPUT_TOKENS,
                 response_mime_type="application/json",
                 http_options=types.HttpOptions(
                     timeout=timeout_ms or settings.LLM_TIMEOUT_MS
@@ -82,6 +86,14 @@ class LLMFactVerifier:
             )
         except Exception:
             return None
+
+    @staticmethod
+    def _was_truncated(response: Any) -> bool:
+        try:
+            reason = response.candidates[0].finish_reason
+        except (AttributeError, IndexError, TypeError):
+            return False
+        return "MAX_TOKENS" in str(getattr(reason, "name", reason) or "")
 
     @staticmethod
     def _thinking_budget(narrowing: bool, level: Optional[str]) -> int:
@@ -334,7 +346,7 @@ class LLMFactVerifier:
             # Fasıl 73 çıktı ve müşaviriye çelişkili bir açıklama gösterildi.
             "Yalnız şu JSON biçimini, ALANLARI BU SIRAYLA yazarak döndür. Önce gerekçeni yaz, sonra kararı; "
             "karar gerekçenin vardığı sonuçla AYNI olmalı: "
-            "{\"reasoning_points\":[\"1-3 kısa Türkçe cümle: seçimi belirleyen ürün özelliği ve "
+            "{\"reasoning_points\":[\"1-3 kısa Türkçe madde, her biri en çok 2 cümle, hiçbir cümle tekrar edilmez: seçimi belirleyen ürün özelliği ve "
             "dayandığın GİR kuralı veya fasıl notu; son cümle vardığın seçeneği söylesin\"],"
             "\"applied_gir_keys\":[\"GIR_1\",\"GIR_3A\",\"GIR_3B\",\"GIR_6\"],"
             "\"cited_chapter_notes\":[\"70\",\"76\"],"
@@ -348,13 +360,26 @@ class LLMFactVerifier:
         try:
             from api.modules.vertex_client import get_genai_client
 
+            degenerate = False
             for attempt in range(1, 4):
                 try:
                     response = get_genai_client().models.generate_content(
                         model=settings.REASONING_LLM_MODEL,
                         contents=prompt,
-                        config=self._config(narrowing, self._call_timeout_ms(deadline), level),
+                        config=self._config(
+                            narrowing, self._call_timeout_ms(deadline), level,
+                            # Kesilen yanıttan sonra aynı promptu sıcaklık 0'da
+                            # göndermek aynı döngüyü üretir; örnekleme değiştirilir.
+                            temperature=0.4 if degenerate else None,
+                        ),
                     )
+                    if self._was_truncated(response) and attempt < 3:
+                        degenerate = True
+                        logger.warning(
+                            "Tariff node selection level=%s çıktı sınırında kesildi (tekrar döngüsü); "
+                            "farklı örneklemeyle yeniden deneniyor", level,
+                        )
+                        continue
                     break
                 except Exception as exc:
                     if attempt == 3:

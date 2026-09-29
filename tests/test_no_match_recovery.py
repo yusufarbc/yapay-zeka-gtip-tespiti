@@ -571,6 +571,9 @@ def test_first_chapter_no_match_backtracks_before_narrowing(monkeypatch):
         {"gtip_code": f"{chapter}02", "description": "b"},
     ]))
     monkeypatch.setattr(RAGEngine, "_subheading_nodes", classmethod(lambda cls, h: []))
+    # Tek başına çalışınca ortam "testing" olmadığından gerçek dışlama kontrolü
+    # çağrılıyor ve Fasıl 44'ü dışlayıp testi ağdan bağımlı yapıyordu.
+    monkeypatch.setattr(RAGEngine, "_chapter_exclusion", staticmethod(lambda *a: {"excluded": False}))
 
     result = RAGEngine().search_candidates_hierarchical(
         session_id="s1",
@@ -710,3 +713,35 @@ def test_chapter_insufficient_without_suggestion_still_retries(monkeypatch):
 
     assert models.calls == 3
     assert result.status != CandidateSelectionStatus.SELECT
+
+
+def test_truncated_repetition_loop_is_retried_with_different_sampling(monkeypatch):
+    """
+    Canlıda cam balkon için CHAPTER çağrısı sıcaklık 0'da bir gerekçe cümlesini
+    sonsuz tekrarladı ve her deneme süre sınırına kadar asılı kaldı. Çıktı tavanı
+    döngüyü keser; kesilen yanıttan sonra farklı örneklemeyle yeniden denenir.
+    """
+    temperatures = []
+
+    class Models:
+        calls = 0
+
+        def generate_content(self, **kwargs):
+            Models.calls += 1
+            temperatures.append(kwargs["config"].temperature)
+            if Models.calls == 1:
+                return SimpleNamespace(
+                    text='{"reasoning_points":["aynı cümle aynı cümle aynı',
+                    candidates=[SimpleNamespace(finish_reason="FinishReason.MAX_TOKENS")],
+                )
+            return SimpleNamespace(
+                text='{"status":"SELECT","selected_code":"76","selected_candidate_id":"B"}',
+                candidates=[SimpleNamespace(finish_reason="FinishReason.STOP")],
+            )
+
+    _patch_models(monkeypatch, lambda: Models())
+    result = verifier_module.llm_verifier.select_tariff_node("cam balkon", "CHAPTER", _CHAPTERS)
+
+    assert Models.calls == 2
+    assert temperatures[0] == 0.0 and temperatures[1] == 0.4
+    assert result.status == CandidateSelectionStatus.SELECT and result.selected_candidate_id == "B"
