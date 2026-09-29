@@ -186,8 +186,8 @@ def test_prompt_text_labels_every_fact_with_its_source():
     assert "ESAS NİTELİĞİ" not in text
 
 
-def test_prompt_text_drops_model_prose_and_minor_guesses():
-    """Tahmin edilen işlev/özet/yardımcı parça seçiciyi gereksiz soruya itiyordu."""
+def test_prompt_text_drops_summary_and_minor_guesses_but_keeps_function():
+    """Özet cümlesi tekrar döngüsünü tetikledi; tahmini işlev ise doğruluğa katkı veriyor."""
     profile = ProductProfile(
         product_type=ProfileFact(value="cam balkon", source="USER"),
         function=ProfileFact(value="balkonu dış etkenlerden korumak", source="INFERRED"),
@@ -200,7 +200,8 @@ def test_prompt_text_drops_model_prose_and_minor_guesses():
         summary="Alüminyum çerçeveli cam balkon.",
     )
     text = profile.as_prompt_text()
-    assert "İŞLEV" not in text and "ÖZET" not in text and "EPDM" not in text
+    assert "ÖZET" not in text and "EPDM" not in text
+    assert "İŞLEV: balkonu dış etkenlerden korumak (model varsayımı, teyit edilmedi)" in text
     assert "KULLANIM YERİ: balkon (kullanıcı beyanı)" in text
     assert "çerçeve: alüminyum" in text and "panel: cam" in text
 

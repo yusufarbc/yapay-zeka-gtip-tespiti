@@ -107,17 +107,16 @@ class ProductProfile(BaseModel):
     def as_prompt_text(self) -> str:
         """Sınıflandırma modeline kaynak etiketli profil metni.
 
-        Yalnız beyan/teyit edilmiş bilgiler ve kararı etkileyen varsayım (ana
-        parça malzemesi) verilir. Modelin tahmin ettiği işlev, kullanım yeri,
-        yardımcı parça malzemeleri ve özet cümlesi verilmez: aynı 120 BTB
-        numunesinde bu "teyit edilmedi" satırları seçiciyi gereksiz soruya
-        (%5 -> %10) itti ve özet cümlesi cam balkon için fasıl seçiminde modeli
-        aynı cümleyi tekrarlayan bir döngüye soktu.
+        Yardımcı parçaların tahmin edilen malzemeleri ve özet cümlesi verilmez:
+        özet cümlesi cam balkon için fasıl seçiminde modeli aynı cümleyi
+        tekrarlayan bir döngüye soktu. Tahmin edilen işlev ve kullanım yeri
+        KALIR: bunlar da çıkarılınca aynı 120 BTB numunesinde fasıl doğruluğu
+        %62.5'ten %55.8'e düştü (ör. airsoft bilyesi 9306 yerine 3926).
         """
         lines = [f"EŞYA: {self.product_type.label()}"]
-        if self.function and self.function.source != "INFERRED":
+        if self.function:
             lines.append(f"İŞLEV: {self.function.label()}")
-        if self.use_place and self.use_place.source != "INFERRED":
+        if self.use_place:
             lines.append(f"KULLANIM YERİ: {self.use_place.label()}")
         lines.append("NİTELİK: makine veya cihaz" if self.is_machine else "NİTELİK: makine veya cihaz değil")
         # Esas niteliği hangi malzemenin verdiği bir tarife hükmüdür (GYK 3(b));
