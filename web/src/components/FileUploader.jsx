@@ -56,12 +56,12 @@ export const ProductInputForm = ({ onStartAnalysis, isLoading }) => {
           <div>
             <label style={labelStyle} htmlFor="productName">Eşya adı *</label>
             <input id="productName" required minLength={2} maxLength={300} value={productName}
-              onChange={(e) => setProductName(e.target.value)} placeholder="ör. Cam balkon sistemi" style={inputStyle} />
+              onChange={(e) => setProductName(e.target.value)} placeholder="ör. Tencere seti" style={inputStyle} />
           </div>
           <div>
             <label style={labelStyle} htmlFor="useAndFunction">Kullanım yeri ve işlevi</label>
             <input id="useAndFunction" maxLength={1000} value={useAndFunction}
-              onChange={(e) => setUseAndFunction(e.target.value)} placeholder="ör. Konut balkonlarını kapatmak" style={inputStyle} />
+              onChange={(e) => setUseAndFunction(e.target.value)} placeholder="ör. Mutfakta yemek pişirmek" style={inputStyle} />
           </div>
         </div>
 
@@ -76,7 +76,7 @@ export const ProductInputForm = ({ onStartAnalysis, isLoading }) => {
                 Yapıldığı malzeme<span style={hintStyle}>plastik, çelik, kauçuk vb.; parçalı ise hepsini yazın</span>
               </label>
               <input id="material" maxLength={500} value={material} onChange={(e) => setMaterial(e.target.value)}
-                placeholder="ör. Alüminyum profil, temperli cam panel" style={inputStyle} />
+                placeholder="ör. Paslanmaz çelik gövde, cam kapak" style={inputStyle} />
             </div>
           )}
         </div>
@@ -84,7 +84,7 @@ export const ProductInputForm = ({ onStartAnalysis, isLoading }) => {
         <div style={{ marginBottom: '16px' }}>
           <label style={labelStyle} htmlFor="extra">Ek açıklama<span style={hintStyle}>teknik özellikler, ölçüler, fatura tanımı</span></label>
           <textarea id="extra" maxLength={5000} rows={3} value={extra} onChange={(e) => setExtra(e.target.value)}
-            placeholder="ör. 8 mm temperli cam, katlanır, 6 kanatlı" style={{ ...inputStyle, resize: 'vertical' }} />
+            placeholder="ör. 3 parça, 18-20-24 cm çap, indüksiyon uyumlu taban" style={{ ...inputStyle, resize: 'vertical' }} />
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', borderTop: '1px solid var(--border-subtle)', paddingTop: '16px' }}>
