@@ -14,7 +14,7 @@ diğer maddeler sığdığı kadar; atlanan madde sayısı belirtilir.
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # Armonize Sistem bölüm yapısı (TGTC ile aynı). Fasıl 77 ayrılmıştır.
 SECTION_RANGES: Dict[str, Tuple[int, int]] = {
@@ -44,6 +44,38 @@ def section_of(chapter: str) -> Optional[str]:
         if start <= number <= end:
             return roman
     return None
+
+
+def cited_note_refs(entries: Any) -> Tuple[List[str], List[str]]:
+    """Modelin atıf listesini (fasıllar, bölümler) olarak ayırır.
+
+    Model atıfları serbest biçimde yazıyor ("73", "XV_1f", "FASIL 73 NOTLARI 1",
+    "BÖLÜM XV NOTLARI 3"). Rakamları toplamak "XV_1f"i Fasıl 01'e, dolayısıyla
+    Bölüm I'e (canlı hayvanlar) çeviriyordu ve tencere kararının kaynaklarında
+    Bölüm I notları görünüyordu. Yalnız açıkça fasıl veya bölüm bildiren atıf
+    kabul edilir; gerisi yok sayılır.
+    """
+    chapters: List[str] = []
+    sections: List[str] = []
+    for entry in entries or []:
+        text = str(entry or "").strip()
+        folded = text.casefold()
+        chapter = None
+        if re.fullmatch(r"\d{1,2}", text):
+            chapter = text
+        else:
+            match = re.search(r"fas[iı]l\s*(\d{1,2})\b", folded)
+            chapter = match.group(1) if match else None
+        if chapter and 1 <= int(chapter) <= 97:
+            code = chapter.zfill(2)
+            if code not in chapters:
+                chapters.append(code)
+            continue
+        match = re.search(r"b[öo]l[üu]m\s+([ivxl]+)\b", folded) or re.match(r"([ivxl]+)(?:[_\s.]|$)", folded)
+        roman = match.group(1).upper() if match else None
+        if roman in SECTION_RANGES and roman not in sections:
+            sections.append(roman)
+    return chapters, sections
 
 
 def _first_chapter(roman: str) -> str:

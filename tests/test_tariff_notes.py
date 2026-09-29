@@ -165,3 +165,12 @@ def test_cited_section_note_is_listed_as_its_own_source():
     types = {s.source_type: s for s in sources}
     assert types["BOLUM_NOTU"].reference_no == "Bölüm XV Notları"
     assert "BÖLÜM XV" not in types["FASIL_NOTU"].excerpt
+
+
+def test_cited_note_refs_does_not_turn_section_citations_into_chapter_01():
+    """Canlıda tencere kararının kaynaklarında Bölüm I (canlı hayvanlar) görünüyordu."""
+    chapters, sections = tn.cited_note_refs(
+        ["73", "XV_1f", "FASIL 73 NOTLARI 1", "BÖLÜM XV NOTLARI 3", "Fasıl 76", "GYK 1", "7"]
+    )
+    assert chapters == ["73", "76", "07"]
+    assert sections == ["XV"]
