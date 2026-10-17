@@ -12,7 +12,7 @@ jobs:
       # Çevrimdışı mod: Vertex AI çağrısı yapılmaz (llm_verifier kapalı-küme
       # stub'ına düşer) ve veritabanı geçici SQLite'a bağlanır.
       # Doğruluk ölçümü burada YAPILMAZ; o, canlı Vertex ve Cloud SQL gerektiren
-      # `gtip-benchmark` Cloud Run Job'udur (bkz. README).
+      # `gtip-benchmark` Cloud Run Job'udur (bkz. docs/GCP_DAGITIM.md).
       ENVIRONMENT: testing
       USE_GCP_EMULATOR: "true"
       PYTHONPATH: .
