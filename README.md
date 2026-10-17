@@ -143,7 +143,7 @@ api/            FastAPI uygulaması
 web/            React arayüzü
 scripts/        ETL, benchmark, dağıtım ve veri yükleme betikleri
 tests/          pytest
-docs/           ekran görüntüleri ve GCP dağıtım notları
+docs/           mimari rapor, benchmark sonuçları, GCP dağıtım notları, ekran görüntüleri
 ```
 
 ## Lisans
